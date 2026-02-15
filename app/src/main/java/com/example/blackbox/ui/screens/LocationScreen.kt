@@ -45,9 +45,6 @@ fun LocationScreen(modifier: Modifier = Modifier) {
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) {
         permissionGranted = context.hasAnyLocationPermission()
-        if (permissionGranted && !state.engineEnabled) {
-            LocationEngine.setEngineEnabled(true)
-        }
     }
 
     LaunchedEffect(context) {
@@ -130,26 +127,6 @@ fun LocationScreen(modifier: Modifier = Modifier) {
                 ) {
                     Text("Grant Location Permission")
                 }
-            }
-        }
-        item {
-            Button(
-                onClick = {
-                    if (state.engineEnabled) {
-                        LocationEngine.setEngineEnabled(false)
-                    } else if (permissionGranted) {
-                        LocationEngine.setEngineEnabled(true)
-                    } else {
-                        permissionLauncher.launch(
-                            arrayOf(
-                                Manifest.permission.ACCESS_FINE_LOCATION,
-                                Manifest.permission.ACCESS_COARSE_LOCATION
-                            )
-                        )
-                    }
-                }
-            ) {
-                Text(if (state.engineEnabled) "Turn Engine Off" else "Turn Engine On")
             }
         }
         item {

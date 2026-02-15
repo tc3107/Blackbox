@@ -72,7 +72,6 @@ class LocationEngineForegroundService : Service() {
             return
         }
 
-        LocationEngine.setEngineEnabled(true)
         if (!NotificationManagerCompat.from(this).areNotificationsEnabled()) {
             LocationEngineForegroundController.markRunning(
                 "Keepalive active, but app notifications are disabled."
@@ -84,9 +83,6 @@ class LocationEngineForegroundService : Service() {
         if (engineStateJob == null) {
             engineStateJob = serviceScope.launch {
                 LocationEngine.state.collectLatest { engineState ->
-                    if (!engineState.engineEnabled) {
-                        LocationEngine.setEngineEnabled(true)
-                    }
                     val notificationText = buildNotificationText(engineState)
                     updateNotification(notificationText)
                     LocationEngineForegroundController.markRunning(
@@ -161,6 +157,9 @@ class LocationEngineForegroundService : Service() {
     }
 
     private fun buildNotificationText(state: LocationEngineState): String {
+        if (!state.engineEnabled) {
+            return "Keepalive active. Engine is off."
+        }
         val position = state.bestPositionFix
         return if (position == null) {
             "Mode ${state.engineMode.name}. Waiting for valid fix."
