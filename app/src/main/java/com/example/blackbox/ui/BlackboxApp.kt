@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import com.example.blackbox.R
 import com.example.blackbox.data.settings.UiSettings
 import com.example.blackbox.ui.screens.DataValuesScreen
+import com.example.blackbox.ui.screens.LocationScreen
 import com.example.blackbox.ui.screens.SettingsScreen
 import kotlinx.coroutines.launch
 
@@ -53,7 +54,7 @@ fun BlackboxApp(
 ) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
-    var currentRoute by rememberSaveable { mutableStateOf(AppDestination.DATA_VALUES.route) }
+    var currentRoute by rememberSaveable { mutableStateOf(AppDestination.LOCATION.route) }
     val currentDestination = AppDestination.fromRoute(currentRoute)
     val openMenuLabel = stringResource(R.string.menu_open_navigation)
 
@@ -123,6 +124,7 @@ fun BlackboxApp(
                 .background(MaterialTheme.colorScheme.background)
 
             when (currentDestination) {
+                AppDestination.LOCATION -> LocationScreen(modifier = contentModifier)
                 AppDestination.DATA_VALUES -> DataValuesScreen(modifier = contentModifier)
                 AppDestination.SETTINGS -> SettingsScreen(
                     settings = settings,
@@ -158,12 +160,13 @@ private enum class AppDestination(
     val route: String,
     @StringRes val titleRes: Int
 ) {
+    LOCATION(route = "location", titleRes = R.string.nav_location),
     DATA_VALUES(route = "data_values", titleRes = R.string.nav_data_values),
     SETTINGS(route = "settings", titleRes = R.string.nav_settings);
 
     companion object {
         fun fromRoute(route: String): AppDestination {
-            return entries.firstOrNull { it.route == route } ?: DATA_VALUES
+            return entries.firstOrNull { it.route == route } ?: LOCATION
         }
     }
 }
