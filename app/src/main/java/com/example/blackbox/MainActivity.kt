@@ -8,12 +8,16 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import com.example.blackbox.data.settings.UiSettingsStore
+import com.example.blackbox.location.LocationEngine
+import com.example.blackbox.location.LocationEngineForegroundController
 import com.example.blackbox.ui.BlackboxApp
 import com.example.blackbox.ui.theme.BlackboxTheme
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        LocationEngine.initialize(applicationContext)
+        LocationEngineForegroundController.initialize(applicationContext)
         enableEdgeToEdge()
         setContent {
             val settingsStore = remember { UiSettingsStore(applicationContext) }

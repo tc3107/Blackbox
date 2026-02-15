@@ -1,6 +1,7 @@
 <resources>
     <string name="app_name">Blackbox</string>
     <string name="app_brand_upper">BLACKBOX</string>
+    <string name="nav_location_engine">Location Engine</string>
     <string name="nav_location">Location</string>
     <string name="nav_data_values">Data Values</string>
     <string name="nav_settings">Settings</string>

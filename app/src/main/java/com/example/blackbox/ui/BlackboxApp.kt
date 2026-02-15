@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import com.example.blackbox.R
 import com.example.blackbox.data.settings.UiSettings
 import com.example.blackbox.ui.screens.DataValuesScreen
+import com.example.blackbox.ui.screens.LocationEngineScreen
 import com.example.blackbox.ui.screens.LocationScreen
 import com.example.blackbox.ui.screens.SettingsScreen
 import kotlinx.coroutines.launch
@@ -124,6 +125,7 @@ fun BlackboxApp(
                 .background(MaterialTheme.colorScheme.background)
 
             when (currentDestination) {
+                AppDestination.LOCATION_ENGINE -> LocationEngineScreen(modifier = contentModifier)
                 AppDestination.LOCATION -> LocationScreen(modifier = contentModifier)
                 AppDestination.DATA_VALUES -> DataValuesScreen(modifier = contentModifier)
                 AppDestination.SETTINGS -> SettingsScreen(
@@ -160,6 +162,7 @@ private enum class AppDestination(
     val route: String,
     @StringRes val titleRes: Int
 ) {
+    LOCATION_ENGINE(route = "location_engine", titleRes = R.string.nav_location_engine),
     LOCATION(route = "location", titleRes = R.string.nav_location),
     DATA_VALUES(route = "data_values", titleRes = R.string.nav_data_values),
     SETTINGS(route = "settings", titleRes = R.string.nav_settings);

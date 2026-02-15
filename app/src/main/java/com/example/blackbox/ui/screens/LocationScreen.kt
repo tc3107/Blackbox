@@ -15,51 +15,71 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import com.example.blackbox.location.LocationServiceController
+import com.example.blackbox.location.LocationEngine
 import com.example.blackbox.location.hasAnyLocationPermission
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
+
+private const val LOCATION_SCREEN_CONSUMER_ID = "screen_location"
 
 @Composable
 fun LocationScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val state by LocationServiceController.state.collectAsState()
+    val state by LocationEngine.state.collectAsState()
     var permissionGranted by rememberSaveable { mutableStateOf(context.hasAnyLocationPermission()) }
-    var shouldAutoStartAfterPermission by rememberSaveable { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) {
         permissionGranted = context.hasAnyLocationPermission()
-        if (permissionGranted && shouldAutoStartAfterPermission) {
-            LocationServiceController.start(context)
+        if (permissionGranted && !state.engineEnabled) {
+            LocationEngine.setEngineEnabled(true)
         }
-        shouldAutoStartAfterPermission = false
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(context) {
+        LocationEngine.initialize(context.applicationContext)
         permissionGranted = context.hasAnyLocationPermission()
     }
 
-    val location = state.lastLocation
-    val primaryBlockRows = listOf(
-        "Latitude" to formatDouble(location?.latitude, 6),
-        "Longitude" to formatDouble(location?.longitude, 6),
-        "Altitude (m)" to formatDouble(location?.altitudeMeters, 2),
-        "Bearing (deg)" to formatFloat(location?.bearingDegrees, 2)
+    DisposableEffect(Unit) {
+        LocationEngine.registerHighDemandConsumer(LOCATION_SCREEN_CONSUMER_ID)
+        onDispose {
+            LocationEngine.unregisterHighDemandConsumer(LOCATION_SCREEN_CONSUMER_ID)
+        }
+    }
+
+    val position = state.bestPositionFix
+    val positionRows = listOf(
+        "Latitude" to formatDouble(position?.location?.latitude, 6),
+        "Longitude" to formatDouble(position?.location?.longitude, 6),
+        "Altitude (m)" to position?.location?.takeIf { it.hasAltitude() }?.altitude?.let {
+            formatDouble(it, 2)
+        }.orUnavailable(),
+        "Accuracy (m)" to position?.accuracyMeters?.let { formatFloat(it, 2) }.orUnavailable(),
+        "Age (ms)" to position?.ageMillis?.toString().orUnavailable(),
+        "Provider" to (position?.provider ?: "Unavailable"),
+        "Fix Time" to position?.fixTimeMillis?.let(::formatTime).orUnavailable()
     )
-    val secondaryBlockRows = listOf(
-        "Accuracy (m)" to formatFloat(location?.accuracyMeters, 2),
-        "Provider" to (location?.provider ?: "Unavailable")
+
+    val motion = state.bestMotionFix
+    val motionRows = listOf(
+        "Speed (m/s)" to motion?.speedMetersPerSecond?.let { formatFloat(it, 3) }.orUnavailable(),
+        "Bearing (deg)" to motion?.bearingDegrees?.let { formatFloat(it, 2) }.orUnavailable(),
+        "Status" to state.motionStatus
     )
 
     LazyColumn(
@@ -69,29 +89,57 @@ fun LocationScreen(modifier: Modifier = Modifier) {
     ) {
         item {
             Text(
-                text = state.statusMessage,
+                text = "Engine mode: ${state.engineMode.name}",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurface
             )
         }
-        if (state.errorMessage != null) {
+        item {
+            Text(
+                text = "Subscribed providers: ${state.subscribedProviders.joinToString(", ").ifBlank { "None" }}",
+                style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        if (state.lastErrorMessage != null) {
             item {
                 Text(
-                    text = state.errorMessage ?: "",
+                    text = state.lastErrorMessage ?: "",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.tertiary
                 )
             }
         }
+        if (!permissionGranted) {
+            item {
+                Text(
+                    text = "Location permission is required for provider subscriptions.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Button(
+                    onClick = {
+                        permissionLauncher.launch(
+                            arrayOf(
+                                Manifest.permission.ACCESS_FINE_LOCATION,
+                                Manifest.permission.ACCESS_COARSE_LOCATION
+                            )
+                        )
+                    },
+                    modifier = Modifier.padding(top = 8.dp)
+                ) {
+                    Text("Grant Location Permission")
+                }
+            }
+        }
         item {
             Button(
                 onClick = {
-                    if (state.isRunning) {
-                        LocationServiceController.stop(context)
+                    if (state.engineEnabled) {
+                        LocationEngine.setEngineEnabled(false)
                     } else if (permissionGranted) {
-                        LocationServiceController.start(context)
+                        LocationEngine.setEngineEnabled(true)
                     } else {
-                        shouldAutoStartAfterPermission = true
                         permissionLauncher.launch(
                             arrayOf(
                                 Manifest.permission.ACCESS_FINE_LOCATION,
@@ -101,38 +149,14 @@ fun LocationScreen(modifier: Modifier = Modifier) {
                     }
                 }
             ) {
-                Text(
-                    if (state.isRunning) {
-                        "Stop Location + Logging"
-                    } else {
-                        "Start Location + Logging"
-                    }
-                )
-            }
-        }
-        if (!permissionGranted) {
-            item {
-                Text(
-                    text = "Location permission is required to start foreground tracking.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Text(if (state.engineEnabled) "Turn Engine Off" else "Turn Engine On")
             }
         }
         item {
-            LocationInfoBlock(title = "Position", rows = primaryBlockRows)
+            LocationInfoBlock(title = "Best Position", rows = positionRows)
         }
         item {
-            LocationInfoBlock(title = "Signal", rows = secondaryBlockRows)
-        }
-        if (state.activeProviders.isNotEmpty()) {
-            item {
-                Text(
-                    text = "Active Providers: ${state.activeProviders.joinToString(", ")}",
-                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+            LocationInfoBlock(title = "Best Motion", rows = motionRows)
         }
     }
 }
@@ -182,3 +206,12 @@ private fun formatDouble(value: Double?, digits: Int): String {
 private fun formatFloat(value: Float?, digits: Int): String {
     return value?.let { "%.${digits}f".format(Locale.US, it) } ?: "Unavailable"
 }
+
+private fun formatTime(timestampMillis: Long): String {
+    val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+        .withLocale(Locale.US)
+        .withZone(ZoneId.systemDefault())
+    return formatter.format(Instant.ofEpochMilli(timestampMillis))
+}
+
+private fun String?.orUnavailable(): String = this ?: "Unavailable"

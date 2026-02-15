@@ -1,0 +1,939 @@
+package com.example.blackbox.location
+
+import android.content.Context
+import android.hardware.Sensor
+import android.hardware.SensorManager
+import android.hardware.TriggerEvent
+import android.hardware.TriggerEventListener
+import android.location.GnssStatus
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
+import android.location.LocationRequest
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import androidx.core.content.ContextCompat
+import java.util.Locale
+import kotlin.math.abs
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+
+private const val ACTIVE_UPDATE_INTERVAL_MS = 1_000L
+private const val LOW_POWER_NETWORK_INTERVAL_MS = 3 * 60_000L
+private const val FIX_MAX_AGE_ACTIVE_MS = 30_000L
+private const val FIX_MAX_AGE_LOW_POWER_MS = 10 * 60_000L
+private const val ACCURACY_SIMILARITY_TOLERANCE_METERS = 10f
+private const val MOTION_MAX_ACCURACY_METERS = 50f
+private const val MOTION_MAX_AGE_MS = 30_000L
+private const val PROVIDER_SWITCH_IMPROVEMENT_METERS = 8f
+private const val PROVIDER_SWITCH_STABILITY_MS = 5_000L
+private const val SIGNIFICANT_MOTION_ACTIVE_WINDOW_MS = 2 * 60_000L
+private const val ENGINE_TICK_INTERVAL_MS = 1_000L
+private const val MAX_STATUS_HISTORY = 100
+
+object LocationEngine {
+    private data class CandidateFix(
+        val provider: String,
+        val sample: ProviderSample,
+        val accuracyMeters: Float,
+        val ageMillis: Long
+    )
+
+    private data class ProviderSample(
+        val location: Location,
+        val receivedAtMillis: Long
+    )
+
+    private val _state = MutableStateFlow(LocationEngineState())
+    val state: StateFlow<LocationEngineState> = _state.asStateFlow()
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    private var appContext: Context? = null
+    private var locationManager: LocationManager? = null
+    private var sensorManager: SensorManager? = null
+    private var significantMotionSensor: Sensor? = null
+    private var significantMotionListener: TriggerEventListener? = null
+    private var significantMotionArmed = false
+    private var significantMotionLastTriggeredAtMillis: Long? = null
+    private var gnssStatusCallback: GnssStatus.Callback? = null
+    private var gnssStatusRegistered = false
+    private var satelliteSummaryState = SatelliteSummaryState(statusMessage = "GNSS status unavailable.")
+
+    private var engineEnabled = true
+    private var allowLowPowerBackground = true
+    private var forceActive = false
+    private var engineMode = LocationEngineMode.Off
+    private val highDemandConsumers = linkedSetOf<String>()
+
+    private val latestFixByProvider = linkedMapOf<String, ProviderSample>()
+    private val providerListeners = linkedMapOf<String, LocationListener>()
+    private var enabledProviders: Set<String> = emptySet()
+
+    private var motionBoostUntilElapsedRealtimeNanos: Long? = null
+    private var bestPositionFix: PositionFix? = null
+    private var bestMotionFix: MotionFix? = null
+    private var motionStatus: String = "Unavailable: no eligible fix."
+    private var pendingSwitchProvider: String? = null
+    private var pendingSwitchSinceMillis: Long? = null
+
+    private val statusHistory = ArrayDeque<LocationEngineMessage>(MAX_STATUS_HISTORY)
+    private var statusHistorySnapshot: List<LocationEngineMessage> = emptyList()
+    private var lastStatusMessage: String = "Engine initializing."
+    private var lastErrorMessage: String? = null
+
+    private var tickScheduled = false
+    private val tickRunnable = Runnable {
+        tickScheduled = false
+        onTick()
+    }
+
+    fun initialize(context: Context) {
+        postToMain {
+            if (appContext != null) {
+                return@postToMain
+            }
+
+            appContext = context.applicationContext
+            locationManager = appContext?.getSystemService(LocationManager::class.java)
+            sensorManager = appContext?.getSystemService(SensorManager::class.java)
+            significantMotionSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_SIGNIFICANT_MOTION)
+
+            if (locationManager == null) {
+                recordError("LocationEngine could not access LocationManager.")
+            } else {
+                recordStatus("LocationEngine initialized.", clearError = true)
+            }
+
+            if (significantMotionSensor == null) {
+                recordStatus("Significant motion sensor not available on this device.")
+            } else {
+                recordStatus("Significant motion sensor detected: ${significantMotionSensor?.name}.")
+            }
+
+            refreshEnabledProviders()
+            reevaluateAndApply("Initialization")
+        }
+    }
+
+    fun setEngineEnabled(enabled: Boolean) {
+        postToMain {
+            if (engineEnabled == enabled) return@postToMain
+            engineEnabled = enabled
+            if (!enabled) {
+                motionBoostUntilElapsedRealtimeNanos = null
+                latestFixByProvider.clear()
+            }
+            recordStatus(if (enabled) "Engine enabled." else "Engine disabled.", clearError = enabled)
+            reevaluateAndApply("Engine toggle")
+        }
+    }
+
+    fun setAllowLowPowerBackground(enabled: Boolean) {
+        postToMain {
+            if (allowLowPowerBackground == enabled) return@postToMain
+            allowLowPowerBackground = enabled
+            recordStatus(
+                if (enabled) {
+                    "Low-power background mode enabled."
+                } else {
+                    "Low-power background mode disabled."
+                }
+            )
+            reevaluateAndApply("Low-power preference changed")
+        }
+    }
+
+    fun setForceActive(enabled: Boolean) {
+        postToMain {
+            if (forceActive == enabled) return@postToMain
+            forceActive = enabled
+            recordStatus(if (enabled) "Force Active enabled." else "Force Active disabled.")
+            reevaluateAndApply("Force Active changed")
+        }
+    }
+
+    fun registerHighDemandConsumer(consumerId: String) {
+        postToMain {
+            if (consumerId.isBlank()) return@postToMain
+            val changed = highDemandConsumers.add(consumerId)
+            if (changed) {
+                recordStatus("High-demand consumer added: $consumerId")
+                reevaluateAndApply("Demand increased")
+            }
+        }
+    }
+
+    fun unregisterHighDemandConsumer(consumerId: String) {
+        postToMain {
+            if (consumerId.isBlank()) return@postToMain
+            val changed = highDemandConsumers.remove(consumerId)
+            if (changed) {
+                recordStatus("High-demand consumer removed: $consumerId")
+                reevaluateAndApply("Demand reduced")
+            }
+        }
+    }
+
+    private fun onTick() {
+        val nowElapsedNanos = SystemClock.elapsedRealtimeNanos()
+        val boostUntil = motionBoostUntilElapsedRealtimeNanos
+        if (boostUntil != null && nowElapsedNanos >= boostUntil) {
+            motionBoostUntilElapsedRealtimeNanos = null
+            recordStatus("Significant motion boost elapsed.")
+            reevaluateAndApply("Motion boost expired")
+            return
+        }
+
+        recomputeAndPublishState()
+    }
+
+    private fun reevaluateAndApply(reason: String) {
+        val newMode = computeTargetMode()
+        val modeChanged = newMode != engineMode
+        if (modeChanged) {
+            engineMode = newMode
+            recordStatus("Engine mode -> ${newMode.name} ($reason).", clearError = true)
+        }
+
+        refreshEnabledProviders()
+
+        when (engineMode) {
+            LocationEngineMode.Off -> {
+                stopAllLocationSubscriptions()
+                stopGnssStatusUpdates("GNSS stopped: engine is off.")
+                disarmSignificantMotion()
+                bestPositionFix = null
+                bestMotionFix = null
+                motionStatus = "Unavailable: engine is off."
+                clearPendingSwitch()
+            }
+
+            LocationEngineMode.LowPower -> {
+                syncLocationSubscriptions()
+                syncGnssStatusUpdates()
+                armSignificantMotionIfAvailable()
+            }
+
+            LocationEngineMode.Active -> {
+                syncLocationSubscriptions()
+                syncGnssStatusUpdates()
+                disarmSignificantMotion()
+            }
+        }
+
+        recomputeAndPublishState()
+    }
+
+    private fun computeTargetMode(): LocationEngineMode {
+        if (!engineEnabled) return LocationEngineMode.Off
+        if (forceActive) return LocationEngineMode.Active
+        if (highDemandConsumers.isNotEmpty()) return LocationEngineMode.Active
+
+        val nowElapsedNanos = SystemClock.elapsedRealtimeNanos()
+        val boostUntil = motionBoostUntilElapsedRealtimeNanos
+        if (boostUntil != null && nowElapsedNanos < boostUntil) {
+            return LocationEngineMode.Active
+        }
+
+        return if (allowLowPowerBackground) LocationEngineMode.LowPower else LocationEngineMode.Off
+    }
+
+    private fun syncLocationSubscriptions() {
+        stopAllLocationSubscriptions()
+
+        val context = appContext
+        val manager = locationManager
+        if (context == null || manager == null) {
+            recordError("LocationEngine is missing Context/LocationManager.")
+            return
+        }
+
+        if (!context.hasAnyLocationPermission()) {
+            recordError("Location permission is missing. Grant coarse or fine location.")
+            return
+        }
+
+        val desiredProviders = when (engineMode) {
+            LocationEngineMode.Off -> emptyList()
+            LocationEngineMode.LowPower -> listOf(
+                LocationManager.PASSIVE_PROVIDER,
+                LocationManager.NETWORK_PROVIDER
+            )
+
+            LocationEngineMode.Active -> listOf(
+                LocationManager.PASSIVE_PROVIDER,
+                LocationManager.NETWORK_PROVIDER,
+                LocationManager.GPS_PROVIDER
+            )
+        }
+
+        desiredProviders.forEach { provider ->
+            if (provider != LocationManager.PASSIVE_PROVIDER && !enabledProviders.contains(provider)) {
+                recordStatus("Provider unavailable in current system settings: $provider")
+                return@forEach
+            }
+
+            val listener = object : LocationListener {
+                override fun onLocationChanged(location: Location) {
+                    ingestLocation(provider = provider, location = location)
+                }
+
+                override fun onProviderEnabled(provider: String) {
+                    recordStatus("Provider enabled: $provider")
+                    reevaluateAndApply("Provider enabled")
+                }
+
+                override fun onProviderDisabled(provider: String) {
+                    recordStatus("Provider disabled: $provider")
+                    reevaluateAndApply("Provider disabled")
+                }
+            }
+
+            val requested = requestProviderUpdates(
+                manager = manager,
+                context = context,
+                provider = provider,
+                listener = listener
+            )
+
+            if (requested) {
+                providerListeners[provider] = listener
+            } else {
+                recordError("Failed to request updates for provider '$provider'.")
+            }
+        }
+
+        if (providerListeners.isEmpty() && engineMode != LocationEngineMode.Off) {
+            recordError("No providers are currently subscribed.")
+        } else if (providerListeners.isNotEmpty()) {
+            recordStatus("Subscribed providers: ${providerListeners.keys.joinToString(", ")}", clearError = true)
+            publishBestLastKnownLocations()
+        }
+    }
+
+    private fun requestProviderUpdates(
+        manager: LocationManager,
+        context: Context,
+        provider: String,
+        listener: LocationListener
+    ): Boolean {
+        val (intervalMillis, quality) = when {
+            provider == LocationManager.PASSIVE_PROVIDER -> 0L to LocationRequest.QUALITY_LOW_POWER
+            engineMode == LocationEngineMode.LowPower && provider == LocationManager.NETWORK_PROVIDER -> {
+                LOW_POWER_NETWORK_INTERVAL_MS to LocationRequest.QUALITY_LOW_POWER
+            }
+
+            provider == LocationManager.GPS_PROVIDER -> ACTIVE_UPDATE_INTERVAL_MS to LocationRequest.QUALITY_HIGH_ACCURACY
+            else -> ACTIVE_UPDATE_INTERVAL_MS to LocationRequest.QUALITY_BALANCED_POWER_ACCURACY
+        }
+
+        val requestResult = runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val request = LocationRequest.Builder(intervalMillis)
+                    .setMinUpdateDistanceMeters(0f)
+                    .setMinUpdateIntervalMillis(intervalMillis)
+                    .setQuality(quality)
+                    .build()
+                manager.requestLocationUpdates(
+                    provider,
+                    request,
+                    ContextCompat.getMainExecutor(context),
+                    listener
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                manager.requestLocationUpdates(
+                    provider,
+                    intervalMillis,
+                    0f,
+                    listener,
+                    Looper.getMainLooper()
+                )
+            }
+        }
+
+        if (requestResult.isSuccess) {
+            return true
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val fallback = runCatching {
+                @Suppress("DEPRECATION")
+                manager.requestLocationUpdates(
+                    provider,
+                    intervalMillis,
+                    0f,
+                    listener,
+                    Looper.getMainLooper()
+                )
+            }
+            return fallback.isSuccess
+        }
+
+        return false
+    }
+
+    private fun publishBestLastKnownLocations() {
+        val manager = locationManager ?: return
+        val nowMillis = System.currentTimeMillis()
+        providerListeners.keys.forEach { provider ->
+            val lastKnown = runCatching { manager.getLastKnownLocation(provider) }.getOrNull() ?: return@forEach
+            latestFixByProvider[provider] = ProviderSample(
+                location = Location(lastKnown),
+                receivedAtMillis = nowMillis
+            )
+        }
+    }
+
+    private fun stopAllLocationSubscriptions() {
+        val manager = locationManager ?: return
+        providerListeners.values.forEach { listener ->
+            runCatching { manager.removeUpdates(listener) }
+        }
+        providerListeners.clear()
+    }
+
+    private fun ingestLocation(provider: String, location: Location) {
+        latestFixByProvider[provider] = ProviderSample(
+            location = Location(location),
+            receivedAtMillis = System.currentTimeMillis()
+        )
+        recomputeAndPublishState()
+    }
+
+    private fun recomputeAndPublishState() {
+        recomputeBestFixes()
+        val nowMillis = System.currentTimeMillis()
+        _state.value = LocationEngineState(
+            engineEnabled = engineEnabled,
+            allowLowPowerBackground = allowLowPowerBackground,
+            forceActive = forceActive,
+            engineMode = engineMode,
+            bestPositionFix = bestPositionFix,
+            bestMotionFix = bestMotionFix,
+            motionStatus = motionStatus,
+            enabledProviders = enabledProviders,
+            subscribedProviders = providerListeners.keys.toSet(),
+            highDemandConsumers = highDemandConsumers.toSet(),
+            significantMotion = SignificantMotionSummary(
+                available = significantMotionSensor != null,
+                sensorName = significantMotionSensor?.name,
+                armed = significantMotionArmed,
+                lastTriggeredAtMillis = significantMotionLastTriggeredAtMillis
+            ),
+            satelliteSummary = satelliteSummaryState,
+            lastStatusMessage = lastStatusMessage,
+            lastErrorMessage = lastErrorMessage,
+            statusHistory = statusHistorySnapshot,
+            lastUpdatedAtMillis = nowMillis
+        )
+        scheduleTickIfNeeded()
+    }
+
+    private fun recomputeBestFixes() {
+        if (!engineEnabled || engineMode == LocationEngineMode.Off) {
+            bestPositionFix = null
+            bestMotionFix = null
+            motionStatus = "Unavailable: engine is off."
+            clearPendingSwitch()
+            return
+        }
+
+        val nowWallMillis = System.currentTimeMillis()
+        val nowElapsedNanos = SystemClock.elapsedRealtimeNanos()
+
+        val maxFixAgeMillis = when (engineMode) {
+            LocationEngineMode.Active -> FIX_MAX_AGE_ACTIVE_MS
+            LocationEngineMode.LowPower -> FIX_MAX_AGE_LOW_POWER_MS
+            LocationEngineMode.Off -> FIX_MAX_AGE_ACTIVE_MS
+        }
+
+        var candidate = chooseBestCandidate(
+            nowWallMillis = nowWallMillis,
+            nowElapsedNanos = nowElapsedNanos,
+            maxFixAgeMillis = maxFixAgeMillis
+        )
+        if (candidate == null) {
+            bestPositionFix = null
+            bestMotionFix = null
+            motionStatus = "Unavailable: no valid fix (accuracy <= 0 or age above mode threshold)."
+            clearPendingSwitch()
+            return
+        }
+
+        if (engineMode == LocationEngineMode.Active) {
+            candidate = applyProviderSwitchStickiness(
+                candidate = candidate,
+                nowWallMillis = nowWallMillis,
+                nowElapsedNanos = nowElapsedNanos,
+                maxFixAgeMillis = maxFixAgeMillis
+            )
+        } else {
+            clearPendingSwitch()
+        }
+
+        val chosenLocation = Location(candidate.sample.location)
+        val resolvedProvider = chosenLocation.provider ?: candidate.provider
+        val positionFix = PositionFix(
+            location = chosenLocation,
+            provider = resolvedProvider,
+            accuracyMeters = candidate.accuracyMeters,
+            fixTimeMillis = chosenLocation.time,
+            receivedAtMillis = candidate.sample.receivedAtMillis,
+            ageMillis = candidate.ageMillis
+        )
+        bestPositionFix = positionFix
+
+        if (positionFix.accuracyMeters > MOTION_MAX_ACCURACY_METERS) {
+            bestMotionFix = null
+            motionStatus = "Unavailable: motion accuracy gate failed (${formatOneDecimal(positionFix.accuracyMeters)}m > ${formatOneDecimal(MOTION_MAX_ACCURACY_METERS)}m)."
+            return
+        }
+
+        if (positionFix.ageMillis > MOTION_MAX_AGE_MS) {
+            bestMotionFix = null
+            motionStatus = "Unavailable: motion fix is stale (${positionFix.ageMillis}ms > ${MOTION_MAX_AGE_MS}ms)."
+            return
+        }
+
+        if (!chosenLocation.hasSpeed() || !chosenLocation.hasBearing()) {
+            bestMotionFix = null
+            motionStatus = "Unavailable: speed/bearing are not present in the current fix."
+            return
+        }
+
+        bestMotionFix = MotionFix(
+            speedMetersPerSecond = chosenLocation.speed,
+            bearingDegrees = chosenLocation.bearing,
+            speedAccuracyMetersPerSecond = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                chosenLocation.hasSpeedAccuracy()
+            ) {
+                chosenLocation.speedAccuracyMetersPerSecond
+            } else {
+                null
+            },
+            bearingAccuracyDegrees = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                chosenLocation.hasBearingAccuracy()
+            ) {
+                chosenLocation.bearingAccuracyDegrees
+            } else {
+                null
+            },
+            provider = resolvedProvider,
+            fixTimeMillis = chosenLocation.time,
+            ageMillis = candidate.ageMillis
+        )
+        motionStatus = "Available"
+    }
+
+    private fun chooseBestCandidate(
+        nowWallMillis: Long,
+        nowElapsedNanos: Long,
+        maxFixAgeMillis: Long
+    ): CandidateFix? {
+        var selected: CandidateFix? = null
+
+        latestFixByProvider.forEach { (provider, sample) ->
+            val candidate = buildCandidateFix(
+                provider = provider,
+                sample = sample,
+                nowWallMillis = nowWallMillis,
+                nowElapsedNanos = nowElapsedNanos,
+                maxFixAgeMillis = maxFixAgeMillis
+            ) ?: return@forEach
+
+            if (selected == null) {
+                selected = candidate
+                return@forEach
+            }
+
+            val current = selected!!
+            val accuracyDelta = abs(candidate.accuracyMeters - current.accuracyMeters)
+            val isMuchMoreAccurate =
+                candidate.accuracyMeters + ACCURACY_SIMILARITY_TOLERANCE_METERS < current.accuracyMeters
+            val isSimilarAccuracy = accuracyDelta <= ACCURACY_SIMILARITY_TOLERANCE_METERS
+
+            when {
+                isMuchMoreAccurate -> selected = candidate
+                isSimilarAccuracy && isNewer(candidate.sample.location, current.sample.location) -> {
+                    selected = candidate
+                }
+            }
+        }
+
+        return selected
+    }
+
+    private fun buildCandidateFix(
+        provider: String,
+        sample: ProviderSample,
+        nowWallMillis: Long,
+        nowElapsedNanos: Long,
+        maxFixAgeMillis: Long
+    ): CandidateFix? {
+        val location = sample.location
+        if (!location.hasAccuracy()) return null
+        if (location.accuracy <= 0f) return null
+
+        val ageMillis = computeAgeMillis(
+            location = location,
+            nowWallMillis = nowWallMillis,
+            nowElapsedNanos = nowElapsedNanos
+        )
+        if (ageMillis > maxFixAgeMillis) return null
+
+        return CandidateFix(
+            provider = provider,
+            sample = sample,
+            accuracyMeters = location.accuracy,
+            ageMillis = ageMillis
+        )
+    }
+
+    private fun applyProviderSwitchStickiness(
+        candidate: CandidateFix,
+        nowWallMillis: Long,
+        nowElapsedNanos: Long,
+        maxFixAgeMillis: Long
+    ): CandidateFix {
+        val previousProvider = bestPositionFix?.provider
+        if (previousProvider == null || previousProvider == candidate.provider) {
+            clearPendingSwitch()
+            return candidate
+        }
+
+        val previousSample = latestFixByProvider[previousProvider]
+            ?.let {
+                buildCandidateFix(
+                    provider = previousProvider,
+                    sample = it,
+                    nowWallMillis = nowWallMillis,
+                    nowElapsedNanos = nowElapsedNanos,
+                    maxFixAgeMillis = maxFixAgeMillis
+                )
+            }
+
+        if (previousSample == null) {
+            clearPendingSwitch()
+            return candidate
+        }
+
+        val shouldSwitchImmediately =
+            candidate.accuracyMeters + PROVIDER_SWITCH_IMPROVEMENT_METERS < previousSample.accuracyMeters
+        if (shouldSwitchImmediately) {
+            clearPendingSwitch()
+            return candidate
+        }
+
+        val now = nowWallMillis
+        if (pendingSwitchProvider == candidate.provider) {
+            val pendingSince = pendingSwitchSinceMillis ?: now
+            return if (now - pendingSince >= PROVIDER_SWITCH_STABILITY_MS) {
+                clearPendingSwitch()
+                candidate
+            } else {
+                previousSample
+            }
+        }
+
+        pendingSwitchProvider = candidate.provider
+        pendingSwitchSinceMillis = now
+        return previousSample
+    }
+
+    private fun clearPendingSwitch() {
+        pendingSwitchProvider = null
+        pendingSwitchSinceMillis = null
+    }
+
+    private fun armSignificantMotionIfAvailable() {
+        val manager = sensorManager
+        val sensor = significantMotionSensor
+        if (manager == null || sensor == null) {
+            significantMotionArmed = false
+            return
+        }
+        if (significantMotionArmed) return
+
+        val listener = significantMotionListener ?: object : TriggerEventListener() {
+            override fun onTrigger(event: TriggerEvent?) {
+                postToMain {
+                    significantMotionArmed = false
+                    significantMotionLastTriggeredAtMillis = System.currentTimeMillis()
+                    motionBoostUntilElapsedRealtimeNanos =
+                        SystemClock.elapsedRealtimeNanos() + SIGNIFICANT_MOTION_ACTIVE_WINDOW_MS * 1_000_000L
+                    recordStatus("Significant motion triggered. Switching to Active mode.")
+                    reevaluateAndApply("Significant motion trigger")
+                }
+            }
+        }.also { significantMotionListener = it }
+
+        val armed = runCatching {
+            manager.requestTriggerSensor(listener, sensor)
+        }.getOrDefault(false)
+
+        significantMotionArmed = armed
+        if (armed) {
+            recordStatus("Significant motion armed.", clearError = true)
+        } else {
+            recordError("Failed to arm significant motion trigger sensor.")
+        }
+    }
+
+    private fun disarmSignificantMotion() {
+        val manager = sensorManager ?: return
+        val sensor = significantMotionSensor ?: return
+        val listener = significantMotionListener ?: return
+
+        runCatching { manager.cancelTriggerSensor(listener, sensor) }
+        significantMotionArmed = false
+    }
+
+    private fun syncGnssStatusUpdates() {
+        val context = appContext
+        val manager = locationManager
+        if (context == null || manager == null) {
+            satelliteSummaryState = SatelliteSummaryState(
+                statusMessage = "GNSS unavailable: LocationManager not ready."
+            )
+            return
+        }
+
+        if (!context.hasAnyLocationPermission()) {
+            stopGnssStatusUpdates("GNSS unavailable: location permission denied.")
+            return
+        }
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            stopGnssStatusUpdates("GNSS status callbacks require Android API 24+.")
+            return
+        }
+
+        if (gnssStatusRegistered) return
+
+        val callback = createGnssStatusCallback()
+        val registered = runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                manager.registerGnssStatusCallback(ContextCompat.getMainExecutor(context), callback)
+            } else {
+                @Suppress("DEPRECATION")
+                manager.registerGnssStatusCallback(
+                    callback,
+                    Handler(Looper.getMainLooper())
+                )
+            }
+        }.getOrDefault(false)
+
+        if (!registered) {
+            satelliteSummaryState = SatelliteSummaryState(
+                statusMessage = "GNSS callback registration failed."
+            )
+            recordError("Failed to register GNSS status callback.")
+            return
+        }
+
+        gnssStatusCallback = callback
+        gnssStatusRegistered = true
+        satelliteSummaryState = satelliteSummaryState.copy(
+            statusMessage = "Listening for GNSS status."
+        )
+        recordStatus("GNSS status callback registered.", clearError = true)
+    }
+
+    private fun stopGnssStatusUpdates(statusMessage: String) {
+        val manager = locationManager
+        val callback = gnssStatusCallback
+        if (manager != null && callback != null && gnssStatusRegistered) {
+            runCatching { manager.unregisterGnssStatusCallback(callback) }
+        }
+        gnssStatusRegistered = false
+        gnssStatusCallback = null
+        satelliteSummaryState = SatelliteSummaryState(statusMessage = statusMessage)
+    }
+
+    private fun createGnssStatusCallback(): GnssStatus.Callback {
+        return object : GnssStatus.Callback() {
+            override fun onStarted() {
+                satelliteSummaryState = satelliteSummaryState.copy(
+                    statusMessage = "GNSS started.",
+                    lastUpdatedAtMillis = System.currentTimeMillis()
+                )
+                recomputeAndPublishState()
+            }
+
+            override fun onStopped() {
+                satelliteSummaryState = satelliteSummaryState.copy(
+                    statusMessage = "GNSS stopped.",
+                    lastUpdatedAtMillis = System.currentTimeMillis()
+                )
+                recomputeAndPublishState()
+            }
+
+            override fun onFirstFix(ttffMillis: Int) {
+                satelliteSummaryState = satelliteSummaryState.copy(
+                    statusMessage = "GNSS first fix in ${ttffMillis}ms.",
+                    lastUpdatedAtMillis = System.currentTimeMillis()
+                )
+                recomputeAndPublishState()
+            }
+
+            override fun onSatelliteStatusChanged(status: GnssStatus) {
+                val visibleCount = status.satelliteCount
+                var usedInFixCount = 0
+                var usedCn0Sum = 0f
+                val constellationCounts = linkedMapOf<String, Int>()
+
+                for (index in 0 until status.satelliteCount) {
+                    val constellationName = constellationName(status.getConstellationType(index))
+                    constellationCounts[constellationName] =
+                        (constellationCounts[constellationName] ?: 0) + 1
+
+                    if (status.usedInFix(index)) {
+                        usedInFixCount += 1
+                        usedCn0Sum += status.getCn0DbHz(index)
+                    }
+                }
+
+                satelliteSummaryState = SatelliteSummaryState(
+                    visibleCount = visibleCount,
+                    usedInFixCount = usedInFixCount,
+                    avgCn0Used = if (usedInFixCount > 0) {
+                        usedCn0Sum / usedInFixCount.toFloat()
+                    } else {
+                        null
+                    },
+                    constellationCounts = constellationCounts,
+                    lastUpdatedAtMillis = System.currentTimeMillis(),
+                    statusMessage = "Live GNSS satellite status."
+                )
+                recomputeAndPublishState()
+            }
+        }
+    }
+
+    private fun constellationName(constellationType: Int): String {
+        return when (constellationType) {
+            GnssStatus.CONSTELLATION_GPS -> "GPS"
+            GnssStatus.CONSTELLATION_GLONASS -> "GLONASS"
+            GnssStatus.CONSTELLATION_BEIDOU -> "BEIDOU"
+            GnssStatus.CONSTELLATION_GALILEO -> "GALILEO"
+            GnssStatus.CONSTELLATION_QZSS -> "QZSS"
+            GnssStatus.CONSTELLATION_SBAS -> "SBAS"
+            GnssStatus.CONSTELLATION_IRNSS -> "IRNSS"
+            else -> "UNKNOWN"
+        }
+    }
+
+    private fun refreshEnabledProviders() {
+        val manager = locationManager ?: return
+        enabledProviders = runCatching {
+            manager.getProviders(true).toSet()
+        }.getOrElse {
+            recordError("Failed to query enabled providers: ${it.message ?: "unknown error"}")
+            emptySet()
+        }
+    }
+
+    private fun scheduleTickIfNeeded() {
+        val shouldTick = (engineMode != LocationEngineMode.Off && bestPositionFix != null) ||
+            motionBoostUntilElapsedRealtimeNanos != null
+        if (shouldTick && !tickScheduled) {
+            tickScheduled = true
+            mainHandler.postDelayed(tickRunnable, ENGINE_TICK_INTERVAL_MS)
+        } else if (!shouldTick && tickScheduled) {
+            mainHandler.removeCallbacks(tickRunnable)
+            tickScheduled = false
+        }
+    }
+
+    private fun recordStatus(message: String, clearError: Boolean = false) {
+        if (message.isBlank()) return
+        val previous = statusHistory.lastOrNull()
+        if (previous?.message == message && !previous.isError) {
+            if (clearError) {
+                lastErrorMessage = null
+            }
+            lastStatusMessage = message
+            return
+        }
+
+        appendHistoryEntry(
+            LocationEngineMessage(
+                timestampMillis = System.currentTimeMillis(),
+                message = message,
+                isError = false
+            )
+        )
+        lastStatusMessage = message
+        if (clearError) {
+            lastErrorMessage = null
+        }
+    }
+
+    private fun recordError(message: String) {
+        if (message.isBlank()) return
+        val previous = statusHistory.lastOrNull()
+        if (previous?.message == message && previous.isError) {
+            lastStatusMessage = message
+            lastErrorMessage = message
+            return
+        }
+
+        appendHistoryEntry(
+            LocationEngineMessage(
+                timestampMillis = System.currentTimeMillis(),
+                message = message,
+                isError = true
+            )
+        )
+        lastStatusMessage = message
+        lastErrorMessage = message
+    }
+
+    private fun appendHistoryEntry(entry: LocationEngineMessage) {
+        statusHistory.addLast(entry)
+        while (statusHistory.size > MAX_STATUS_HISTORY) {
+            statusHistory.removeFirst()
+        }
+        statusHistorySnapshot = statusHistory.toList()
+    }
+
+    private fun postToMain(block: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            block()
+        } else {
+            mainHandler.post(block)
+        }
+    }
+
+    private fun computeAgeMillis(
+        location: Location,
+        nowWallMillis: Long,
+        nowElapsedNanos: Long
+    ): Long {
+        val elapsedRealtimeNanos = location.elapsedRealtimeNanos
+        if (elapsedRealtimeNanos > 0L && nowElapsedNanos >= elapsedRealtimeNanos) {
+            return (nowElapsedNanos - elapsedRealtimeNanos) / 1_000_000L
+        }
+
+        val wallAge = nowWallMillis - location.time
+        return if (wallAge < 0L) 0L else wallAge
+    }
+
+    private fun isNewer(left: Location, right: Location): Boolean {
+        val leftElapsed = left.elapsedRealtimeNanos
+        val rightElapsed = right.elapsedRealtimeNanos
+        return when {
+            leftElapsed > 0L && rightElapsed > 0L && leftElapsed != rightElapsed -> leftElapsed > rightElapsed
+            else -> left.time > right.time
+        }
+    }
+
+    private fun formatOneDecimal(value: Float): String {
+        return String.format(Locale.US, "%.1f", value)
+    }
+}
