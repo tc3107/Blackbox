@@ -6,11 +6,17 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.hardware.Sensor
+import android.hardware.SensorManager
+import android.hardware.TriggerEvent
+import android.hardware.TriggerEventListener
+import android.location.GnssStatus
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Build
 import android.os.BatteryManager
+import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -43,8 +49,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
@@ -52,7 +59,9 @@ import kotlinx.coroutines.delay
 private const val LOCATION_API_SOURCE = "android.location.LocationManager + android.location.LocationListener"
 private const val BATTERY_API_SOURCE = "Intent.ACTION_BATTERY_CHANGED"
 private const val TIME_API_SOURCE = "System clock + kotlinx.coroutines.delay"
-private const val TIME_API_SOURCE_UTC = "java.text.SimpleDateFormat (UTC)"
+private const val TIME_API_SOURCE_UTC = "java.time.DateTimeFormatter.ISO_INSTANT"
+private const val GNSS_STATUS_API_SOURCE = "LocationManager.registerGnssStatusCallback + GnssStatus.Callback"
+private const val SENSOR_API_SOURCE = "SensorManager.getDefaultSensor(TYPE_SIGNIFICANT_MOTION)"
 
 @Composable
 fun DataValuesScreen(modifier: Modifier = Modifier) {
@@ -81,6 +90,8 @@ fun DataValuesScreen(modifier: Modifier = Modifier) {
     val chargingState by rememberChargingState()
     val batterySaver by rememberBatterySaverState()
     val locationState by rememberLocationState(locationPermissionGranted)
+    val gnss by rememberGnssSatelliteSummary(locationPermissionGranted)
+    val significantMotionSensor by rememberSignificantMotionSensorState()
 
     val timeReadings = listOf(
         DataReading(
@@ -164,8 +175,46 @@ fun DataValuesScreen(modifier: Modifier = Modifier) {
 
     val locationReadings = buildLocationReadings(
         locationState = locationState,
-        permissionGranted = locationPermissionGranted
+        permissionGranted = locationPermissionGranted,
+        gnssSummary = gnss
     )
+    val sensorReadings = buildList {
+        add(
+            DataReading(
+                label = "Significant Motion Sensor",
+                value = if (significantMotionSensor.available == true) "Available" else "Unavailable",
+                apiSource = SENSOR_API_SOURCE,
+                lastRetrievedAtMillis = significantMotionSensor.lastUpdatedAtMillis,
+                availabilitySummary = if (significantMotionSensor.available == true) "Available" else "Unavailable",
+                detailReason = if (significantMotionSensor.available == true) {
+                    significantMotionSensor.sensorName?.let { "Device exposes trigger sensor: $it." }
+                        ?: "Device exposes TYPE_SIGNIFICANT_MOTION trigger sensor."
+                } else {
+                    significantMotionSensor.errorMessage
+                        ?: "TYPE_SIGNIFICANT_MOTION is not exposed by this device."
+                },
+                isError = significantMotionSensor.available != true
+            )
+        )
+
+        if (significantMotionSensor.available == true) {
+            val stateValue = significantMotionSensor.sensorState ?: "Unknown"
+            add(
+                DataReading(
+                    label = "Significant Motion State",
+                    value = stateValue,
+                    apiSource = "TriggerEventListener + requestTriggerSensor/cancelTriggerSensor",
+                    lastRetrievedAtMillis = significantMotionSensor.lastUpdatedAtMillis,
+                    availabilitySummary = "Available",
+                    detailReason = significantMotionSensor.errorMessage ?: when (stateValue) {
+                        "Armed (waiting for trigger)" -> "Sensor is armed and waiting for a significant motion event."
+                        else -> "Sensor reported at least one significant motion trigger and was re-armed."
+                    },
+                    isError = stateValue.contains("failed", ignoreCase = true)
+                )
+            )
+        }
+    }
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -183,6 +232,13 @@ fun DataValuesScreen(modifier: Modifier = Modifier) {
             SectionHeader(title = "Power")
         }
         items(items = powerReadings, key = { "power_${it.label}" }) { reading ->
+            DataReadingRow(reading = reading)
+        }
+
+        item {
+            SectionHeader(title = "Sensors")
+        }
+        items(items = sensorReadings, key = { "sensor_${it.label}" }) { reading ->
             DataReadingRow(reading = reading)
         }
 
@@ -267,40 +323,179 @@ private fun DataReadingRow(reading: DataReading) {
 
 @Composable
 private fun rememberLiveTimestamp(): State<TimedValue<String>> {
-    val formatter = remember { SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US) }
-    val utcFormatter = remember {
-        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
-            timeZone = java.util.TimeZone.getTimeZone("UTC")
-        }
+    val localFormatter = remember {
+        DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+            .withLocale(Locale.US)
     }
-    val initialNow = System.currentTimeMillis()
+    val initialNowMs = System.currentTimeMillis()
+    val initialInstant = Instant.ofEpochMilli(initialNowMs)
+    val initialZoneId = ZoneId.systemDefault()
+    val initialLocalTimestamp = initialInstant.atZone(initialZoneId).format(localFormatter)
+    val initialUtcTimestamp = DateTimeFormatter.ISO_INSTANT.format(initialInstant)
 
     return produceState(
         initialValue = TimedValue(
-            value = formatter.format(Date()),
-            lastUpdatedAtMillis = initialNow,
+            value = initialLocalTimestamp,
+            lastUpdatedAtMillis = initialNowMs,
             apiSource = TIME_API_SOURCE,
             lastError = null,
-            unixEpochSeconds = initialNow / 1_000L,
-            timezoneId = java.util.TimeZone.getDefault().id,
-            utcTimestamp = utcFormatter.format(Date(initialNow))
+            unixEpochSeconds = initialNowMs / 1_000L,
+            timezoneId = initialZoneId.id,
+            utcTimestamp = initialUtcTimestamp
         )
     ) {
         while (true) {
-            val now = System.currentTimeMillis()
-            val timeZone = java.util.TimeZone.getDefault()
+            val nowMs = System.currentTimeMillis()
+            val instant = Instant.ofEpochMilli(nowMs)
+            val zoneId = ZoneId.systemDefault()
             value = TimedValue(
-                value = formatter.format(Date()),
-                lastUpdatedAtMillis = now,
+                value = instant.atZone(zoneId).format(localFormatter),
+                lastUpdatedAtMillis = nowMs,
                 apiSource = TIME_API_SOURCE,
                 lastError = null,
-                unixEpochSeconds = now / 1_000L,
-                timezoneId = timeZone.id,
-                utcTimestamp = utcFormatter.format(Date(now))
+                unixEpochSeconds = nowMs / 1_000L,
+                timezoneId = zoneId.id,
+                utcTimestamp = DateTimeFormatter.ISO_INSTANT.format(instant)
             )
             delay(1_000L)
         }
     }
+}
+
+@Composable
+private fun rememberGnssSatelliteSummary(permissionGranted: Boolean): State<GnssSatelliteSummaryState> {
+    val context = LocalContext.current
+    val gnssState = remember {
+        mutableStateOf(
+            GnssSatelliteSummaryState(
+                statusMessage = "Waiting for GNSS status.",
+                errorMessage = "No GNSS status callback registered yet."
+            )
+        )
+    }
+
+    DisposableEffect(context, permissionGranted) {
+        if (!permissionGranted) {
+            gnssState.value = GnssSatelliteSummaryState(
+                statusMessage = "Permission denied.",
+                errorMessage = "Location permission is required for GNSS status."
+            )
+            onDispose { }
+        } else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            gnssState.value = GnssSatelliteSummaryState(
+                statusMessage = "GNSS status unavailable.",
+                errorMessage = "Requires Android API 24+."
+            )
+            onDispose { }
+        } else {
+            val locationManager = context.getSystemService(LocationManager::class.java)
+            if (locationManager == null) {
+                gnssState.value = GnssSatelliteSummaryState(
+                    statusMessage = "GNSS service unavailable.",
+                    errorMessage = "LocationManager service was null."
+                )
+                onDispose { }
+            } else {
+                val callback = object : GnssStatus.Callback() {
+                    override fun onStarted() {
+                        gnssState.value = gnssState.value.copy(
+                            statusMessage = "GNSS started.",
+                            errorMessage = null,
+                            lastUpdatedAtMillis = System.currentTimeMillis()
+                        )
+                    }
+
+                    override fun onStopped() {
+                        gnssState.value = gnssState.value.copy(
+                            statusMessage = "GNSS stopped.",
+                            lastUpdatedAtMillis = System.currentTimeMillis()
+                        )
+                    }
+
+                    override fun onFirstFix(ttffMillis: Int) {
+                        gnssState.value = gnssState.value.copy(
+                            statusMessage = "First fix in ${ttffMillis}ms.",
+                            errorMessage = null,
+                            lastUpdatedAtMillis = System.currentTimeMillis()
+                        )
+                    }
+
+                    override fun onSatelliteStatusChanged(status: GnssStatus) {
+                        val visibleCount = status.satelliteCount
+                        var usedInFixCount = 0
+                        var usedCn0Sum = 0f
+
+                        for (i in 0 until status.satelliteCount) {
+                            if (status.usedInFix(i)) {
+                                usedInFixCount += 1
+                                usedCn0Sum += status.getCn0DbHz(i)
+                            }
+                        }
+
+                        val avgCn0Used = if (usedInFixCount > 0) {
+                            usedCn0Sum / usedInFixCount.toFloat()
+                        } else {
+                            null
+                        }
+
+                        gnssState.value = GnssSatelliteSummaryState(
+                            visibleCount = visibleCount,
+                            usedInFixCount = usedInFixCount,
+                            avgCn0Used = avgCn0Used,
+                            lastUpdatedAtMillis = System.currentTimeMillis(),
+                            statusMessage = "Live GNSS satellite status.",
+                            errorMessage = null
+                        )
+                    }
+                }
+
+                val registered = runCatching {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        locationManager.registerGnssStatusCallback(
+                            ContextCompat.getMainExecutor(context),
+                            callback
+                        )
+                    } else {
+                        @Suppress("DEPRECATION")
+                        locationManager.registerGnssStatusCallback(
+                            callback,
+                            Handler(Looper.getMainLooper())
+                        )
+                    }
+                }.getOrElse {
+                    gnssState.value = gnssState.value.copy(
+                        statusMessage = "GNSS registration failed.",
+                        errorMessage = it.message ?: "Unable to register GNSS callback.",
+                        lastUpdatedAtMillis = System.currentTimeMillis()
+                    )
+                    false
+                }
+
+                if (!registered) {
+                    gnssState.value = gnssState.value.copy(
+                        statusMessage = "GNSS registration failed.",
+                        errorMessage = gnssState.value.errorMessage
+                            ?: "registerGnssStatusCallback returned false.",
+                        lastUpdatedAtMillis = System.currentTimeMillis()
+                    )
+                } else {
+                    gnssState.value = gnssState.value.copy(
+                        statusMessage = "Listening for GNSS status.",
+                        errorMessage = null,
+                        lastUpdatedAtMillis = System.currentTimeMillis()
+                    )
+                }
+
+                onDispose {
+                    if (registered) {
+                        runCatching { locationManager.unregisterGnssStatusCallback(callback) }
+                    }
+                }
+            }
+        }
+    }
+
+    return gnssState
 }
 
 @Composable
@@ -470,6 +665,89 @@ private fun rememberBatterySaverState(): State<TimedValue<Boolean?>> {
 }
 
 @Composable
+private fun rememberSignificantMotionSensorState(): State<SignificantMotionSensorState> {
+    val context = LocalContext.current
+    val sensorState = remember {
+        mutableStateOf(
+            SignificantMotionSensorState(
+                available = null,
+                lastUpdatedAtMillis = null,
+                sensorName = null,
+                sensorState = null,
+                errorMessage = "Checking sensor availability."
+            )
+        )
+    }
+
+    DisposableEffect(context) {
+        val manager = context.getSystemService(SensorManager::class.java)
+        val now = System.currentTimeMillis()
+        if (manager == null) {
+            sensorState.value = SignificantMotionSensorState(
+                available = false,
+                lastUpdatedAtMillis = now,
+                sensorName = null,
+                sensorState = null,
+                errorMessage = "SensorManager service unavailable."
+            )
+            onDispose { }
+        } else {
+            val significantMotion = manager.getDefaultSensor(Sensor.TYPE_SIGNIFICANT_MOTION)
+            if (significantMotion == null) {
+                sensorState.value = SignificantMotionSensorState(
+                    available = false,
+                    lastUpdatedAtMillis = now,
+                    sensorName = null,
+                    sensorState = null,
+                    errorMessage = "TYPE_SIGNIFICANT_MOTION is not available on this device."
+                )
+                onDispose { }
+            } else {
+                lateinit var triggerListener: TriggerEventListener
+                triggerListener = object : TriggerEventListener() {
+                    override fun onTrigger(event: TriggerEvent?) {
+                        val triggeredAt = System.currentTimeMillis()
+                        val rearmSuccess = runCatching {
+                            manager.requestTriggerSensor(this, significantMotion)
+                        }.getOrElse { false }
+
+                        sensorState.value = sensorState.value.copy(
+                            available = true,
+                            sensorName = significantMotion.name,
+                            sensorState = if (rearmSuccess) "Triggered (re-armed)" else "Triggered (re-arm failed)",
+                            lastUpdatedAtMillis = triggeredAt,
+                            errorMessage = if (rearmSuccess) {
+                                null
+                            } else {
+                                "Significant motion triggered, but re-arming failed."
+                            }
+                        )
+                    }
+                }
+
+                val armed = runCatching {
+                    manager.requestTriggerSensor(triggerListener, significantMotion)
+                }.getOrElse { false }
+
+                sensorState.value = SignificantMotionSensorState(
+                    available = true,
+                    lastUpdatedAtMillis = now,
+                    sensorName = significantMotion.name,
+                    sensorState = if (armed) "Armed (waiting for trigger)" else "Not armed",
+                    errorMessage = if (armed) null else "Failed to arm significant motion trigger sensor."
+                )
+
+                onDispose {
+                    runCatching { manager.cancelTriggerSensor(triggerListener, significantMotion) }
+                }
+            }
+        }
+    }
+
+    return sensorState
+}
+
+@Composable
 private fun rememberLocationState(permissionGranted: Boolean): State<LocationState> {
     val context = LocalContext.current
     val locationState = remember { mutableStateOf(LocationState()) }
@@ -512,12 +790,18 @@ private fun rememberLocationState(permissionGranted: Boolean): State<LocationSta
                     onDispose { }
                 } else {
                     var registered = false
+                    val selectedProvider = when {
+                        enabledProviders.contains(LocationManager.GPS_PROVIDER) -> LocationManager.GPS_PROVIDER
+                        enabledProviders.contains(LocationManager.NETWORK_PROVIDER) -> LocationManager.NETWORK_PROVIDER
+                        else -> enabledProviders.first()
+                    }
+
                     val listener = object : LocationListener {
                         override fun onLocationChanged(location: Location) {
                             locationState.value = LocationState(
                                 location = location,
                                 providers = runCatching { manager.getProviders(true) }.getOrDefault(enabledProviders),
-                                statusMessage = "Live updates active.",
+                                statusMessage = "Live updates active on ${location.provider ?: selectedProvider}.",
                                 errorMessage = null,
                                 lastUpdatedAtMillis = System.currentTimeMillis()
                             )
@@ -542,27 +826,25 @@ private fun rememberLocationState(permissionGranted: Boolean): State<LocationSta
                         }
                     }
 
-                    enabledProviders.forEach { provider ->
-                        val result = runCatching {
-                            manager.requestLocationUpdates(
-                                provider,
-                                1_000L,
-                                0f,
-                                listener,
-                                Looper.getMainLooper()
-                            )
-                        }
-                        if (result.isSuccess) {
-                            registered = true
-                        } else {
-                            locationState.value = locationState.value.copy(
-                                providers = enabledProviders,
-                                statusMessage = "Update registration issue.",
-                                errorMessage = result.exceptionOrNull()?.message
-                                    ?: "Unable to register listener for provider '$provider'.",
-                                lastUpdatedAtMillis = System.currentTimeMillis()
-                            )
-                        }
+                    val registrationResult = runCatching {
+                        manager.requestLocationUpdates(
+                            selectedProvider,
+                            1_000L,
+                            0f,
+                            listener,
+                            Looper.getMainLooper()
+                        )
+                    }
+                    if (registrationResult.isSuccess) {
+                        registered = true
+                    } else {
+                        locationState.value = locationState.value.copy(
+                            providers = enabledProviders,
+                            statusMessage = "Update registration issue.",
+                            errorMessage = registrationResult.exceptionOrNull()?.message
+                                ?: "Unable to register listener for provider '$selectedProvider'.",
+                            lastUpdatedAtMillis = System.currentTimeMillis()
+                        )
                     }
 
                     val bestLastKnown = enabledProviders
@@ -574,9 +856,13 @@ private fun rememberLocationState(permissionGranted: Boolean): State<LocationSta
                     locationState.value = locationState.value.copy(
                         location = bestLastKnown ?: locationState.value.location,
                         providers = enabledProviders,
-                        statusMessage = if (registered) "Listening for updates." else "No active listeners.",
+                        statusMessage = if (registered) {
+                            "Listening on $selectedProvider."
+                        } else {
+                            "No active listener."
+                        },
                         errorMessage = if (!registered) {
-                            "Listeners failed to register for every enabled provider."
+                            "Listener registration failed for provider '$selectedProvider'."
                         } else {
                             locationState.value.errorMessage
                         },
@@ -596,7 +882,8 @@ private fun rememberLocationState(permissionGranted: Boolean): State<LocationSta
 
 private fun buildLocationReadings(
     locationState: LocationState,
-    permissionGranted: Boolean
+    permissionGranted: Boolean,
+    gnssSummary: GnssSatelliteSummaryState
 ): List<DataReading> {
     val location = locationState.location
     val hasLocation = location != null
@@ -675,6 +962,49 @@ private fun buildLocationReadings(
             "Latest location pipeline error message captured by app logic."
         },
         isError = locationState.errorMessage != null
+    )
+
+    rows += DataReading(
+        label = "Satellites Visible",
+        value = gnssSummary.visibleCount?.toString() ?: "Unavailable",
+        apiSource = GNSS_STATUS_API_SOURCE,
+        lastRetrievedAtMillis = gnssSummary.lastUpdatedAtMillis ?: locationState.lastUpdatedAtMillis,
+        availabilitySummary = if (gnssSummary.visibleCount == null) "Unavailable" else "Available",
+        detailReason = if (gnssSummary.visibleCount == null) {
+            gnssSummary.errorMessage ?: "GNSS satellite status has not been delivered yet."
+        } else {
+            "Total satellites currently reported by GnssStatus."
+        },
+        isError = gnssSummary.visibleCount == null
+    )
+
+    rows += DataReading(
+        label = "Satellites Used In Fix",
+        value = gnssSummary.usedInFixCount?.toString() ?: "Unavailable",
+        apiSource = GNSS_STATUS_API_SOURCE,
+        lastRetrievedAtMillis = gnssSummary.lastUpdatedAtMillis ?: locationState.lastUpdatedAtMillis,
+        availabilitySummary = if (gnssSummary.usedInFixCount == null) "Unavailable" else "Available",
+        detailReason = if (gnssSummary.usedInFixCount == null) {
+            gnssSummary.errorMessage ?: "GNSS fix usage data is not available yet."
+        } else {
+            "Count of satellites flagged by GnssStatus as used in the current fix."
+        },
+        isError = gnssSummary.usedInFixCount == null
+    )
+
+    rows += DataReading(
+        label = "Avg C/N0 Used (dB-Hz)",
+        value = gnssSummary.avgCn0Used?.let { formatDecimal(it.toDouble(), 2) } ?: "Unavailable",
+        apiSource = GNSS_STATUS_API_SOURCE,
+        lastRetrievedAtMillis = gnssSummary.lastUpdatedAtMillis ?: locationState.lastUpdatedAtMillis,
+        availabilitySummary = if (gnssSummary.avgCn0Used == null) "Unavailable" else "Available",
+        detailReason = if (gnssSummary.avgCn0Used == null) {
+            gnssSummary.errorMessage
+                ?: "No satellites are currently marked used in fix, so average C/N0 is undefined."
+        } else {
+            "Average carrier-to-noise density (C/N0) over satellites used in fix."
+        },
+        isError = gnssSummary.avgCn0Used == null
     )
 
     rows += readingWithLocation("Provider (Fix)", { it.provider ?: "Unknown" }, noFixReason())
@@ -848,31 +1178,6 @@ private fun buildLocationReadings(
         isError = mockValue == "true" || !hasLocation
     )
 
-    val satellitesValue = if (!hasLocation) {
-        "Unavailable"
-    } else {
-        val extras = location!!.extras
-        if (extras?.containsKey("satellites") == true) {
-            extras.getInt("satellites", -1).takeIf { it >= 0 }?.toString() ?: "Unavailable"
-        } else {
-            "Unavailable"
-        }
-    }
-
-    rows += DataReading(
-        label = "Satellites",
-        value = satellitesValue,
-        apiSource = "Location.extras[\"satellites\"] (provider-specific)",
-        lastRetrievedAtMillis = locationState.lastUpdatedAtMillis,
-        availabilitySummary = if (satellitesValue == "Unavailable") "Unavailable" else "Available",
-        detailReason = when {
-            !hasLocation -> noFixReason()
-            satellitesValue == "Unavailable" -> "Provider extras do not expose satellite count for this fix/device."
-            else -> "Satellite count exposed in location extras by provider implementation."
-        },
-        isError = satellitesValue == "Unavailable"
-    )
-
     return rows
 }
 
@@ -890,10 +1195,6 @@ private fun Context.hasLocationPermission(): Boolean {
     val fine = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
     val coarse = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
     return fine == PackageManager.PERMISSION_GRANTED || coarse == PackageManager.PERMISSION_GRANTED
-}
-
-private fun formatEpoch(epochMillis: Long): String {
-    return SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(epochMillis))
 }
 
 private fun formatDecimal(value: Double, digits: Int): String {
@@ -938,4 +1239,21 @@ private data class LocationState(
     val statusMessage: String? = null,
     val errorMessage: String? = null,
     val lastUpdatedAtMillis: Long? = null
+)
+
+private data class GnssSatelliteSummaryState(
+    val visibleCount: Int? = null,
+    val usedInFixCount: Int? = null,
+    val avgCn0Used: Float? = null,
+    val lastUpdatedAtMillis: Long? = null,
+    val statusMessage: String? = null,
+    val errorMessage: String? = null
+)
+
+private data class SignificantMotionSensorState(
+    val available: Boolean? = null,
+    val lastUpdatedAtMillis: Long? = null,
+    val sensorName: String? = null,
+    val sensorState: String? = null,
+    val errorMessage: String? = null
 )
