@@ -1007,6 +1007,25 @@ private fun buildLocationReadings(
         isError = gnssSummary.avgCn0Used == null
     )
 
+    val availableProviders = locationState.providers.distinct()
+    rows += DataReading(
+        label = "Available Providers",
+        value = if (availableProviders.isEmpty()) {
+            "Unavailable"
+        } else {
+            availableProviders.joinToString(", ")
+        },
+        apiSource = LOCATION_API_SOURCE,
+        lastRetrievedAtMillis = locationState.lastUpdatedAtMillis,
+        availabilitySummary = if (availableProviders.isEmpty()) "Unavailable" else "Available",
+        detailReason = if (availableProviders.isEmpty()) {
+            "No location providers are currently enabled."
+        } else {
+            "Providers currently enabled by Android location settings."
+        },
+        isError = availableProviders.isEmpty()
+    )
+
     rows += readingWithLocation("Provider (Fix)", { it.provider ?: "Unknown" }, noFixReason())
     rows += readingWithLocation("Latitude", { formatDecimal(it.latitude, 6) }, noFixReason())
     rows += readingWithLocation("Longitude", { formatDecimal(it.longitude, 6) }, noFixReason())
