@@ -31,7 +31,6 @@ private const val MOTION_MAX_AGE_MS = 30_000L
 private const val PROVIDER_SWITCH_IMPROVEMENT_METERS = 8f
 private const val PROVIDER_SWITCH_STABILITY_MS = 5_000L
 private const val SIGNIFICANT_MOTION_ACTIVE_WINDOW_MS = 2 * 60_000L
-private const val ENGINE_TICK_INTERVAL_MS = 1_000L
 private const val MAX_STATUS_HISTORY = 100
 
 object LocationEngine {
@@ -407,8 +406,8 @@ object LocationEngine {
 
     private fun recomputeAndPublishState() {
         recomputeBestFixes()
-        val nowMillis = System.currentTimeMillis()
-        _state.value = LocationEngineState(
+        val previous = _state.value
+        val candidate = LocationEngineState(
             engineEnabled = engineEnabled,
             allowLowPowerBackground = allowLowPowerBackground,
             forceActive = forceActive,
@@ -429,8 +428,11 @@ object LocationEngine {
             lastStatusMessage = lastStatusMessage,
             lastErrorMessage = lastErrorMessage,
             statusHistory = statusHistorySnapshot,
-            lastUpdatedAtMillis = nowMillis
+            lastUpdatedAtMillis = previous.lastUpdatedAtMillis
         )
+        if (candidate != previous) {
+            _state.value = candidate.copy(lastUpdatedAtMillis = System.currentTimeMillis())
+        }
         scheduleTickIfNeeded()
     }
 
@@ -839,15 +841,55 @@ object LocationEngine {
     }
 
     private fun scheduleTickIfNeeded() {
-        val shouldTick = (engineMode != LocationEngineMode.Off && bestPositionFix != null) ||
-            motionBoostUntilElapsedRealtimeNanos != null
-        if (shouldTick && !tickScheduled) {
-            tickScheduled = true
-            mainHandler.postDelayed(tickRunnable, ENGINE_TICK_INTERVAL_MS)
-        } else if (!shouldTick && tickScheduled) {
-            mainHandler.removeCallbacks(tickRunnable)
-            tickScheduled = false
+        val nowWallMillis = System.currentTimeMillis()
+        val nowElapsedNanos = SystemClock.elapsedRealtimeNanos()
+        val delaysMillis = mutableListOf<Long>()
+
+        motionBoostUntilElapsedRealtimeNanos?.let { boostUntil ->
+            val remainingNanos = boostUntil - nowElapsedNanos
+            val remainingMillis = if (remainingNanos <= 0L) 1L else (remainingNanos + 999_999L) / 1_000_000L
+            delaysMillis += remainingMillis
         }
+
+        if (engineMode != LocationEngineMode.Off) {
+            val maxFixAgeMillis = when (engineMode) {
+                LocationEngineMode.Active -> FIX_MAX_AGE_ACTIVE_MS
+                LocationEngineMode.LowPower -> FIX_MAX_AGE_LOW_POWER_MS
+                LocationEngineMode.Off -> FIX_MAX_AGE_ACTIVE_MS
+            }
+
+            bestPositionFix?.let { positionFix ->
+                val remaining = maxFixAgeMillis - positionFix.ageMillis
+                delaysMillis += if (remaining <= 0L) 1L else remaining + 1L
+            }
+
+            bestMotionFix?.let { motionFix ->
+                val remaining = MOTION_MAX_AGE_MS - motionFix.ageMillis
+                delaysMillis += if (remaining <= 0L) 1L else remaining + 1L
+            }
+
+            if (engineMode == LocationEngineMode.Active &&
+                pendingSwitchProvider != null &&
+                pendingSwitchSinceMillis != null
+            ) {
+                val pendingSince = pendingSwitchSinceMillis!!
+                val remaining = PROVIDER_SWITCH_STABILITY_MS - (nowWallMillis - pendingSince)
+                delaysMillis += if (remaining <= 0L) 1L else remaining + 1L
+            }
+        }
+
+        val nextDelayMillis = delaysMillis.minOrNull()
+        if (nextDelayMillis == null) {
+            if (tickScheduled) {
+                mainHandler.removeCallbacks(tickRunnable)
+                tickScheduled = false
+            }
+            return
+        }
+
+        mainHandler.removeCallbacks(tickRunnable)
+        tickScheduled = true
+        mainHandler.postDelayed(tickRunnable, nextDelayMillis)
     }
 
     private fun recordStatus(message: String, clearError: Boolean = false) {

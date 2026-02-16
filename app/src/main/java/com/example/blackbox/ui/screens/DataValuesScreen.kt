@@ -19,10 +19,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -32,6 +35,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import com.example.blackbox.location.LocationEngine
+import com.example.blackbox.location.LocationEngineState
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -41,13 +46,23 @@ import kotlinx.coroutines.delay
 
 private const val BATTERY_API_SOURCE = "Intent.ACTION_BATTERY_CHANGED"
 private const val TIME_API_SOURCE = "System clock + kotlinx.coroutines.delay"
+private const val DATA_VALUES_LOCATION_CONSUMER_ID = "DataValuesScreen.LocationCategory"
 
 @Composable
 fun DataValuesScreen(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
     val timestamp by rememberLiveTimestamp()
     val battery by rememberBatteryPercentage()
     val chargingState by rememberChargingState()
     val batterySaver by rememberBatterySaverState()
+    val locationState by LocationEngine.state.collectAsState()
+
+    LaunchedEffect(context) {
+        LocationEngine.initialize(context.applicationContext)
+    }
+
+    val nowMillis = System.currentTimeMillis()
+    val isLocationHighDemand = locationState.highDemandConsumers.contains(DATA_VALUES_LOCATION_CONSUMER_ID)
 
     val timeReadings = listOf(
         DataReading(
@@ -95,6 +110,12 @@ fun DataValuesScreen(modifier: Modifier = Modifier) {
         )
     )
 
+    val locationReadings = buildLocationReadings(
+        state = locationState,
+        nowMillis = nowMillis
+    )
+    val locationSummary = summarizeAvailability(locationReadings)
+
     val groups = listOf(
         DataGroup(
             title = "Time",
@@ -123,6 +144,26 @@ fun DataValuesScreen(modifier: Modifier = Modifier) {
                 initiallyExpanded = group.initiallyExpanded
             )
         }
+
+        item {
+            ExpandableDataBox(
+                title = "Location",
+                summary = locationSummary,
+                rows = locationReadings,
+                headerContent = {
+                    HighDemandToggleRow(
+                        checked = isLocationHighDemand,
+                        onCheckedChange = { enabled ->
+                            if (enabled) {
+                                LocationEngine.registerHighDemandConsumer(DATA_VALUES_LOCATION_CONSUMER_ID)
+                            } else {
+                                LocationEngine.unregisterHighDemandConsumer(DATA_VALUES_LOCATION_CONSUMER_ID)
+                            }
+                        }
+                    )
+                }
+            )
+        }
     }
 }
 
@@ -140,6 +181,7 @@ private fun ExpandableDataBox(
     title: String,
     summary: String,
     rows: List<DataReading>,
+    headerContent: (@Composable () -> Unit)? = null,
     initiallyExpanded: Boolean = false
 ) {
     var expanded by remember(title) { mutableStateOf(initiallyExpanded) }
@@ -178,6 +220,12 @@ private fun ExpandableDataBox(
             )
 
             if (expanded) {
+                headerContent?.let {
+                    it()
+                    if (rows.isNotEmpty()) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    }
+                }
                 if (rows.isEmpty()) {
                     Text(
                         text = "No readings yet.",
@@ -220,13 +268,220 @@ private fun DataReadingRow(reading: DataReading) {
             },
             modifier = Modifier.padding(top = 2.dp)
         )
-        Text(
-            text = "Status: ${reading.availabilitySummary}",
-            style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-            color = if (reading.isError) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.padding(top = 2.dp)
+    }
+}
+
+@Composable
+private fun HighDemandToggleRow(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(
+                text = "Treat as High-Demand Consumer",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = "Forces Location Engine to Active mode while enabled.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange
         )
     }
+}
+
+private fun buildLocationReadings(
+    state: LocationEngineState,
+    nowMillis: Long
+): List<DataReading> {
+    val readings = mutableListOf<DataReading>()
+
+    readings += DataReading(
+        label = "Last Update",
+        value = "${formatElapsed(nowMillis - state.lastUpdatedAtMillis)} ago (${formatTime(state.lastUpdatedAtMillis)})",
+        availabilitySummary = "Available"
+    )
+    readings += DataReading(
+        label = "Engine Mode",
+        value = state.engineMode.name,
+        availabilitySummary = "Available"
+    )
+    readings += DataReading(
+        label = "Motion Status",
+        value = state.motionStatus,
+        availabilitySummary = if (state.bestMotionFix == null) "Unavailable" else "Available",
+        isError = state.bestMotionFix == null
+    )
+    readings += DataReading(
+        label = "Subscribed Providers",
+        value = state.subscribedProviders.sorted().joinToString(", ").ifBlank { "None" },
+        availabilitySummary = if (state.subscribedProviders.isEmpty()) "Unavailable" else "Available",
+        isError = state.subscribedProviders.isEmpty()
+    )
+
+    val bestPosition = state.bestPositionFix
+    if (bestPosition == null) {
+        readings += DataReading(
+            label = "Best Position Fix",
+            value = "Unavailable",
+            availabilitySummary = "Unavailable",
+            isError = true
+        )
+    } else {
+        readings += DataReading(
+            label = "Best Position Provider",
+            value = bestPosition.provider,
+            availabilitySummary = "Available"
+        )
+        readings += DataReading(
+            label = "Best Position Latitude",
+            value = formatDouble(bestPosition.location.latitude, 6),
+            availabilitySummary = "Available"
+        )
+        readings += DataReading(
+            label = "Best Position Longitude",
+            value = formatDouble(bestPosition.location.longitude, 6),
+            availabilitySummary = "Available"
+        )
+        readings += DataReading(
+            label = "Best Position Accuracy (m)",
+            value = formatFloat(bestPosition.accuracyMeters, 2),
+            availabilitySummary = "Available"
+        )
+        readings += DataReading(
+            label = "Best Position Age (ms)",
+            value = bestPosition.ageMillis.toString(),
+            availabilitySummary = "Available"
+        )
+        readings += DataReading(
+            label = "Best Position Fix Time",
+            value = formatTime(bestPosition.fixTimeMillis),
+            availabilitySummary = "Available"
+        )
+        readings += DataReading(
+            label = "Best Position Received Time",
+            value = formatTime(bestPosition.receivedAtMillis),
+            availabilitySummary = "Available"
+        )
+    }
+
+    val bestMotion = state.bestMotionFix
+    if (bestMotion == null) {
+        readings += DataReading(
+            label = "Best Motion Fix",
+            value = "Unavailable",
+            availabilitySummary = "Unavailable",
+            isError = true
+        )
+    } else {
+        readings += DataReading(
+            label = "Best Motion Speed (m/s)",
+            value = formatFloat(bestMotion.speedMetersPerSecond, 3),
+            availabilitySummary = "Available"
+        )
+        readings += DataReading(
+            label = "Best Motion Bearing (deg)",
+            value = formatFloat(bestMotion.bearingDegrees, 2),
+            availabilitySummary = "Available"
+        )
+        readings += DataReading(
+            label = "Best Motion Speed Accuracy (m/s)",
+            value = bestMotion.speedAccuracyMetersPerSecond?.let { formatFloat(it, 3) } ?: "Unavailable",
+            availabilitySummary = if (bestMotion.speedAccuracyMetersPerSecond == null) "Unavailable" else "Available",
+            isError = bestMotion.speedAccuracyMetersPerSecond == null
+        )
+        readings += DataReading(
+            label = "Best Motion Bearing Accuracy (deg)",
+            value = bestMotion.bearingAccuracyDegrees?.let { formatFloat(it, 2) } ?: "Unavailable",
+            availabilitySummary = if (bestMotion.bearingAccuracyDegrees == null) "Unavailable" else "Available",
+            isError = bestMotion.bearingAccuracyDegrees == null
+        )
+        readings += DataReading(
+            label = "Best Motion Provider",
+            value = bestMotion.provider,
+            availabilitySummary = "Available"
+        )
+        readings += DataReading(
+            label = "Best Motion Age (ms)",
+            value = bestMotion.ageMillis.toString(),
+            availabilitySummary = "Available"
+        )
+        readings += DataReading(
+            label = "Best Motion Fix Time",
+            value = formatTime(bestMotion.fixTimeMillis),
+            availabilitySummary = "Available"
+        )
+    }
+
+    val significantMotion = state.significantMotion
+    readings += DataReading(
+        label = "Significant Motion Armed",
+        value = yesNo(significantMotion.armed),
+        availabilitySummary = "Available"
+    )
+    readings += DataReading(
+        label = "Significant Motion Last Trigger",
+        value = significantMotion.lastTriggeredAtMillis?.let { "${formatTime(it)} (${formatElapsed(nowMillis - it)} ago)" }
+            ?: "Never",
+        availabilitySummary = if (significantMotion.lastTriggeredAtMillis == null) "Unavailable" else "Available",
+        isError = significantMotion.lastTriggeredAtMillis == null
+    )
+
+    val satelliteSummary = state.satelliteSummary
+    readings += DataReading(
+        label = "Satellites Visible",
+        value = satelliteSummary.visibleCount?.toString() ?: "Unavailable",
+        availabilitySummary = if (satelliteSummary.visibleCount == null) "Unavailable" else "Available",
+        isError = satelliteSummary.visibleCount == null
+    )
+    readings += DataReading(
+        label = "Satellites Used In Fix",
+        value = satelliteSummary.usedInFixCount?.toString() ?: "Unavailable",
+        availabilitySummary = if (satelliteSummary.usedInFixCount == null) "Unavailable" else "Available",
+        isError = satelliteSummary.usedInFixCount == null
+    )
+    readings += DataReading(
+        label = "Satellite Avg C/N0 Used (dB-Hz)",
+        value = satelliteSummary.avgCn0Used?.let { formatFloat(it, 2) } ?: "Unavailable",
+        availabilitySummary = if (satelliteSummary.avgCn0Used == null) "Unavailable" else "Available",
+        isError = satelliteSummary.avgCn0Used == null
+    )
+    readings += DataReading(
+        label = "Satellite Constellations",
+        value = satelliteSummary.constellationCounts.entries
+            .joinToString(", ") { "${it.key}:${it.value}" }
+            .ifBlank { "Unavailable" },
+        availabilitySummary = if (satelliteSummary.constellationCounts.isEmpty()) "Unavailable" else "Available",
+        isError = satelliteSummary.constellationCounts.isEmpty()
+    )
+    readings += DataReading(
+        label = "Satellite Last Updated",
+        value = satelliteSummary.lastUpdatedAtMillis?.let { "${formatTime(it)} (${formatElapsed(nowMillis - it)} ago)" }
+            ?: "Unavailable",
+        availabilitySummary = if (satelliteSummary.lastUpdatedAtMillis == null) "Unavailable" else "Available",
+        isError = satelliteSummary.lastUpdatedAtMillis == null
+    )
+    readings += DataReading(
+        label = "Satellite Status",
+        value = satelliteSummary.statusMessage,
+        availabilitySummary = "Available"
+    )
+
+    return readings
 }
 
 @Composable
@@ -465,4 +720,32 @@ private fun summarizeAvailability(readings: List<DataReading>): String {
     if (total == 0) return "No readings."
     val available = readings.count { !it.isError && it.availabilitySummary.equals("Available", ignoreCase = true) }
     return "$available/$total available"
+}
+
+private fun yesNo(value: Boolean): String = if (value) "Yes" else "No"
+
+private fun formatDouble(value: Double, digits: Int): String {
+    return "%.${digits}f".format(Locale.US, value)
+}
+
+private fun formatFloat(value: Float, digits: Int): String {
+    return "%.${digits}f".format(Locale.US, value)
+}
+
+private fun formatTime(timestampMillis: Long): String {
+    val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+        .withLocale(Locale.US)
+        .withZone(ZoneId.systemDefault())
+    return formatter.format(Instant.ofEpochMilli(timestampMillis))
+}
+
+private fun formatElapsed(deltaMillis: Long): String {
+    val safe = deltaMillis.coerceAtLeast(0L)
+    return when {
+        safe < 1_000L -> "${safe}ms"
+        safe < 60_000L -> "${safe / 1_000L}s"
+        safe < 3_600_000L -> "${safe / 60_000L}m ${(safe % 60_000L) / 1_000L}s"
+        safe < 86_400_000L -> "${safe / 3_600_000L}h ${(safe % 3_600_000L) / 60_000L}m"
+        else -> "${safe / 86_400_000L}d ${(safe % 86_400_000L) / 3_600_000L}h"
+    }
 }
