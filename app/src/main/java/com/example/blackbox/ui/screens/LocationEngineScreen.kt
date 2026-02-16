@@ -25,6 +25,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -202,8 +203,7 @@ fun LocationEngineScreen(modifier: Modifier = Modifier) {
         InfoGroup(
             title = "Runtime",
             summary = runtimeSummary,
-            rows = runtimeRows,
-            initiallyExpanded = true
+            rows = runtimeRows
         ),
         InfoGroup(
             title = "Demand & Permissions",
@@ -376,7 +376,7 @@ private fun ExpandableInfoBox(
     rows: List<InfoItem>,
     initiallyExpanded: Boolean = false
 ) {
-    var expanded by rememberSaveable(title) { mutableStateOf(initiallyExpanded) }
+    var expanded by remember(title) { mutableStateOf(initiallyExpanded) }
 
     OutlinedCard(
         modifier = Modifier

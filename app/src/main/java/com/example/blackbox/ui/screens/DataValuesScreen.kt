@@ -6,9 +6,11 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.BatteryManager
 import android.os.PowerManager
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -16,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -24,6 +27,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -37,7 +41,6 @@ import kotlinx.coroutines.delay
 
 private const val BATTERY_API_SOURCE = "Intent.ACTION_BATTERY_CHANGED"
 private const val TIME_API_SOURCE = "System clock + kotlinx.coroutines.delay"
-private const val TIME_API_SOURCE_UTC = "java.time.DateTimeFormatter.ISO_INSTANT"
 
 @Composable
 fun DataValuesScreen(modifier: Modifier = Modifier) {
@@ -50,40 +53,24 @@ fun DataValuesScreen(modifier: Modifier = Modifier) {
         DataReading(
             label = "Timestamp",
             value = timestamp.value,
-            lastRetrievedAtMillis = timestamp.lastUpdatedAtMillis,
-            availabilitySummary = "Available",
-            detailReason = "Value updates every second while this page is open."
+            availabilitySummary = "Available"
         ),
         DataReading(
             label = "Absolute Timestamp (UTC)",
             value = timestamp.utcTimestamp ?: "Unavailable",
-            lastRetrievedAtMillis = timestamp.lastUpdatedAtMillis,
             availabilitySummary = if (timestamp.utcTimestamp == null) "Unavailable" else "Available",
-            detailReason = if (timestamp.utcTimestamp == null) {
-                "UTC timestamp formatting failed."
-            } else {
-                "Absolute timestamp formatted in UTC."
-            },
             isError = timestamp.utcTimestamp == null
         ),
         DataReading(
             label = "Unix Timestamp",
             value = timestamp.unixEpochSeconds?.toString() ?: "Unavailable",
-            lastRetrievedAtMillis = timestamp.lastUpdatedAtMillis,
             availabilitySummary = if (timestamp.unixEpochSeconds == null) "Unavailable" else "Available",
-            detailReason = if (timestamp.unixEpochSeconds == null) {
-                "System time value was unavailable."
-            } else {
-                "Unix epoch seconds derived from system wall clock."
-            },
             isError = timestamp.unixEpochSeconds == null
         ),
         DataReading(
             label = "Timezone",
             value = timestamp.timezoneId ?: "Unavailable",
-            lastRetrievedAtMillis = timestamp.lastUpdatedAtMillis,
-            availabilitySummary = if (timestamp.timezoneId == null) "Unavailable" else "Available",
-            detailReason = "Current system timezone ID."
+            availabilitySummary = if (timestamp.timezoneId == null) "Unavailable" else "Available"
         )
     )
 
@@ -91,58 +78,121 @@ fun DataValuesScreen(modifier: Modifier = Modifier) {
         DataReading(
             label = "Battery Level",
             value = battery.value?.let { "$it%" } ?: "Unavailable",
-            lastRetrievedAtMillis = battery.lastUpdatedAtMillis,
             availabilitySummary = if (battery.value == null) "Unavailable" else "Available",
-            detailReason = if (battery.value == null) {
-                battery.lastError ?: "Battery broadcast extras are missing or malformed on this device state."
-            } else {
-                "Read from ACTION_BATTERY_CHANGED sticky broadcast."
-            },
             isError = battery.value == null
         ),
         DataReading(
             label = "Is Charging",
             value = chargingState.value?.let { if (it) "Yes" else "No" } ?: "Unavailable",
-            lastRetrievedAtMillis = chargingState.lastUpdatedAtMillis,
             availabilitySummary = if (chargingState.value == null) "Unavailable" else "Available",
-            detailReason = if (chargingState.value == null) {
-                chargingState.lastError ?: "Charging status unavailable from battery broadcast."
-            } else {
-                "Derived from BatteryManager status extras in ACTION_BATTERY_CHANGED."
-            },
             isError = chargingState.value == null
         ),
         DataReading(
             label = "Battery Saver",
             value = batterySaver.value?.let { if (it) "On" else "Off" } ?: "Unavailable",
-            lastRetrievedAtMillis = batterySaver.lastUpdatedAtMillis,
             availabilitySummary = if (batterySaver.value == null) "Unavailable" else "Available",
-            detailReason = if (batterySaver.value == null) {
-                batterySaver.lastError ?: "PowerManager value unavailable."
-            } else {
-                "Read from PowerManager and updated on power-save mode change broadcasts."
-            },
             isError = batterySaver.value == null
+        )
+    )
+
+    val groups = listOf(
+        DataGroup(
+            title = "Time",
+            summary = summarizeAvailability(timeReadings),
+            rows = timeReadings
+        ),
+        DataGroup(
+            title = "Power",
+            summary = summarizeAvailability(powerReadings),
+            rows = powerReadings
         )
     )
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        item {
-            SectionHeader(title = "Time")
-        }
-        items(items = timeReadings, key = { "time_${it.label}" }) { reading ->
-            DataReadingRow(reading = reading)
-        }
+        item { SectionTitle(title = "Data Values") }
 
-        item {
-            SectionHeader(title = "Power")
+        items(items = groups, key = { it.title }) { group ->
+            ExpandableDataBox(
+                title = group.title,
+                summary = group.summary,
+                rows = group.rows,
+                initiallyExpanded = group.initiallyExpanded
+            )
         }
-        items(items = powerReadings, key = { "power_${it.label}" }) { reading ->
-            DataReadingRow(reading = reading)
+    }
+}
+
+@Composable
+private fun SectionTitle(title: String) {
+    Text(
+        text = title,
+        style = MaterialTheme.typography.titleMedium,
+        color = MaterialTheme.colorScheme.primary
+    )
+}
+
+@Composable
+private fun ExpandableDataBox(
+    title: String,
+    summary: String,
+    rows: List<DataReading>,
+    initiallyExpanded: Boolean = false
+) {
+    var expanded by remember(title) { mutableStateOf(initiallyExpanded) }
+
+    OutlinedCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { expanded = !expanded }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = if (expanded) "Collapse" else "Expand",
+                    style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            Text(
+                text = summary,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            if (expanded) {
+                if (rows.isEmpty()) {
+                    Text(
+                        text = "No readings yet.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    rows.forEachIndexed { index, row ->
+                        DataReadingRow(reading = row)
+                        if (index != rows.lastIndex) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -150,39 +200,31 @@ fun DataValuesScreen(modifier: Modifier = Modifier) {
 @Composable
 private fun DataReadingRow(reading: DataReading) {
     Column(
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
         Text(
             text = reading.label,
-            style = MaterialTheme.typography.labelLarge,
+            style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.primary
         )
         Text(
             text = reading.value,
-            style = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace),
+            style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
             color = if (reading.isError) {
                 MaterialTheme.colorScheme.tertiary
             } else {
                 MaterialTheme.colorScheme.onSurface
             },
-            modifier = Modifier.padding(top = 4.dp)
+            modifier = Modifier.padding(top = 2.dp)
         )
         Text(
             text = "Status: ${reading.availabilitySummary}",
             style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
             color = if (reading.isError) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.padding(top = 6.dp, bottom = 2.dp)
-        )
-        Text(
-            text = "Reason: ${reading.detailReason}",
-            style = MaterialTheme.typography.bodyMedium,
-            color = if (reading.isError) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
-
-        HorizontalDivider(
-            modifier = Modifier.fillMaxWidth(),
-            color = MaterialTheme.colorScheme.outlineVariant
+            modifier = Modifier.padding(top = 2.dp)
         )
     }
 }
@@ -394,16 +436,6 @@ private fun rememberBatterySaverState(): State<TimedValue<Boolean?>> {
     return batterySaver
 }
 
-@Composable
-private fun SectionHeader(title: String) {
-    Text(
-        text = title,
-        style = MaterialTheme.typography.titleLarge,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
-    )
-}
-
 private data class TimedValue<T>(
     val value: T,
     val lastUpdatedAtMillis: Long?,
@@ -417,8 +449,20 @@ private data class TimedValue<T>(
 private data class DataReading(
     val label: String,
     val value: String,
-    val lastRetrievedAtMillis: Long?,
     val availabilitySummary: String,
-    val detailReason: String,
     val isError: Boolean = false
 )
+
+private data class DataGroup(
+    val title: String,
+    val summary: String,
+    val rows: List<DataReading>,
+    val initiallyExpanded: Boolean = false
+)
+
+private fun summarizeAvailability(readings: List<DataReading>): String {
+    val total = readings.size
+    if (total == 0) return "No readings."
+    val available = readings.count { !it.isError && it.availabilitySummary.equals("Available", ignoreCase = true) }
+    return "$available/$total available"
+}
