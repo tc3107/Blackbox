@@ -33,6 +33,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.blackbox.data.settings.UiSettings
+import com.example.blackbox.ui.components.ButtonLabel
 import com.example.blackbox.ui.theme.accentColorFromHex
 import com.example.blackbox.ui.theme.normalizeAccentHex
 
@@ -94,6 +95,7 @@ fun SettingsScreen(
             )
         )
         Row(
+            modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Button(
@@ -106,18 +108,20 @@ fun SettingsScreen(
                         inputHex = normalized
                         validationError = null
                     }
-                }
+                },
+                modifier = Modifier.weight(1f)
             ) {
-                Text("Apply Override")
+                ButtonLabel("Apply Override")
             }
             OutlinedButton(
                 onClick = {
                     onCustomAccentSaved(null)
                     inputHex = ""
                     validationError = null
-                }
+                },
+                modifier = Modifier.weight(1f)
             ) {
-                Text("Use Automatic")
+                ButtonLabel("Use Automatic")
             }
         }
     }

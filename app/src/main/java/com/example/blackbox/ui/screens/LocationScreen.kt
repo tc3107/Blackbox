@@ -28,6 +28,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.example.blackbox.location.LocationEngine
 import com.example.blackbox.location.hasAnyLocationPermission
+import com.example.blackbox.ui.components.ButtonLabel
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -125,7 +126,7 @@ fun LocationScreen(modifier: Modifier = Modifier) {
                     },
                     modifier = Modifier.padding(top = 8.dp)
                 ) {
-                    Text("Grant Location Permission")
+                    ButtonLabel("Grant Location Permission")
                 }
             }
         }

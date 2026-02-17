@@ -41,6 +41,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.blackbox.R
 import com.example.blackbox.data.settings.UiSettings
+import com.example.blackbox.ui.screens.DatabaseScreen
 import com.example.blackbox.ui.screens.DataValuesScreen
 import com.example.blackbox.ui.screens.LocationEngineScreen
 import com.example.blackbox.ui.screens.LocationScreen
@@ -128,6 +129,7 @@ fun BlackboxApp(
                 AppDestination.LOCATION_ENGINE -> LocationEngineScreen(modifier = contentModifier)
                 AppDestination.LOCATION -> LocationScreen(modifier = contentModifier)
                 AppDestination.DATA_VALUES -> DataValuesScreen(modifier = contentModifier)
+                AppDestination.DATABASE -> DatabaseScreen(modifier = contentModifier)
                 AppDestination.SETTINGS -> SettingsScreen(
                     settings = settings,
                     onCustomAccentSaved = onCustomAccentSaved,
@@ -165,6 +167,7 @@ private enum class AppDestination(
     LOCATION_ENGINE(route = "location_engine", titleRes = R.string.nav_location_engine),
     LOCATION(route = "location", titleRes = R.string.nav_location),
     DATA_VALUES(route = "data_values", titleRes = R.string.nav_data_values),
+    DATABASE(route = "database", titleRes = R.string.nav_database),
     SETTINGS(route = "settings", titleRes = R.string.nav_settings);
 
     companion object {

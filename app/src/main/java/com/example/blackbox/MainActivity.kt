@@ -7,6 +7,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import com.example.blackbox.data.locationdb.LocationPersistenceController
 import com.example.blackbox.data.settings.UiSettingsStore
 import com.example.blackbox.location.LocationEngine
 import com.example.blackbox.location.LocationEngineForegroundController
@@ -18,6 +19,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         LocationEngine.initialize(applicationContext)
         LocationEngineForegroundController.initialize(applicationContext)
+        LocationPersistenceController.initialize(applicationContext)
         enableEdgeToEdge()
         setContent {
             val settingsStore = remember { UiSettingsStore(applicationContext) }

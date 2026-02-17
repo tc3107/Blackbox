@@ -36,6 +36,7 @@ import com.example.blackbox.location.LocationEngine
 import com.example.blackbox.location.LocationEngineForegroundController
 import com.example.blackbox.location.hasAnyLocationPermission
 import com.example.blackbox.location.hasNotificationPermission
+import com.example.blackbox.ui.components.ButtonLabel
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -342,7 +343,7 @@ fun LocationEngineScreen(modifier: Modifier = Modifier) {
                     },
                     modifier = Modifier.padding(top = 8.dp)
                 ) {
-                    Text("Grant Location Permission")
+                    ButtonLabel("Grant Location Permission")
                 }
             }
         }

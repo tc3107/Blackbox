@@ -17,9 +17,13 @@ import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import java.util.Locale
 import kotlin.math.abs
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 
 private const val ACTIVE_UPDATE_INTERVAL_MS = 1_000L
 private const val LOW_POWER_NETWORK_INTERVAL_MS = 3 * 60_000L
@@ -48,6 +52,12 @@ object LocationEngine {
 
     private val _state = MutableStateFlow(LocationEngineState())
     val state: StateFlow<LocationEngineState> = _state.asStateFlow()
+    private val _locationEvents = MutableSharedFlow<LocationSampleEvent>(
+        replay = 0,
+        extraBufferCapacity = 128,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
+    val locationEvents: SharedFlow<LocationSampleEvent> = _locationEvents.asSharedFlow()
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -397,9 +407,18 @@ object LocationEngine {
     }
 
     private fun ingestLocation(provider: String, location: Location) {
+        val copiedLocation = Location(location)
+        val receivedAtMillis = System.currentTimeMillis()
         latestFixByProvider[provider] = ProviderSample(
-            location = Location(location),
-            receivedAtMillis = System.currentTimeMillis()
+            location = copiedLocation,
+            receivedAtMillis = receivedAtMillis
+        )
+        _locationEvents.tryEmit(
+            buildLocationSampleEvent(
+                provider = provider,
+                location = copiedLocation,
+                receivedAtMillis = receivedAtMillis
+            )
         )
         recomputeAndPublishState()
     }
@@ -977,5 +996,35 @@ object LocationEngine {
 
     private fun formatOneDecimal(value: Float): String {
         return String.format(Locale.US, "%.1f", value)
+    }
+
+    private fun buildLocationSampleEvent(
+        provider: String,
+        location: Location,
+        receivedAtMillis: Long
+    ): LocationSampleEvent {
+        val fixTimeMillis = location.time.takeIf { it > 0L } ?: receivedAtMillis
+        return LocationSampleEvent(
+            receivedAtMs = receivedAtMillis,
+            fixTimeMs = fixTimeMillis,
+            provider = location.provider ?: provider,
+            lat = location.latitude,
+            lon = location.longitude,
+            accuracyM = if (location.hasAccuracy()) location.accuracy else 0f,
+            altitudeM = if (location.hasAltitude()) location.altitude else null,
+            speedMps = if (location.hasSpeed()) location.speed else null,
+            bearingDeg = if (location.hasBearing()) location.bearing else null,
+            speedAccuracyMps = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && location.hasSpeedAccuracy()) {
+                location.speedAccuracyMetersPerSecond
+            } else {
+                null
+            },
+            bearingAccuracyDeg = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && location.hasBearingAccuracy()) {
+                location.bearingAccuracyDegrees
+            } else {
+                null
+            },
+            engineMode = engineMode
+        )
     }
 }
