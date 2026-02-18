@@ -41,7 +41,10 @@ import com.example.blackbox.data.locationdb.ArchiveRecord
 import com.example.blackbox.data.locationdb.ArchiveStatus
 import com.example.blackbox.data.locationdb.LocationPersistenceController
 import com.example.blackbox.location.LocationEngine
+import com.example.blackbox.location.LocationEngineForegroundController
 import com.example.blackbox.location.LocationEngineState
+import com.example.blackbox.location.hasAnyLocationPermission
+import com.example.blackbox.location.hasNotificationPermission
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -61,6 +64,7 @@ fun DataValuesScreen(modifier: Modifier = Modifier) {
     val chargingState by rememberChargingState()
     val batterySaver by rememberBatterySaverState()
     val locationState by LocationEngine.state.collectAsState()
+    val foregroundState by LocationEngineForegroundController.state.collectAsState()
     val persistenceState by LocationPersistenceController.state.collectAsState()
     var scanVersion by remember { mutableIntStateOf(0) }
 
@@ -124,6 +128,169 @@ fun DataValuesScreen(modifier: Modifier = Modifier) {
         nowMillis = nowMillis
     )
     val locationSummary = summarizeAvailability(locationReadings)
+    val permissionGranted = context.hasAnyLocationPermission()
+    val notificationPermissionGranted = context.hasNotificationPermission()
+    val bestPosition = locationState.bestPositionFix
+    val bestMotion = locationState.bestMotionFix
+    val engineRuntimeRows = listOf(
+        DataReading("Force Active", yesNo(locationState.forceActive), "Available"),
+        DataReading("Engine State", locationState.engineMode.name, "Available"),
+        DataReading("Engine Enabled", yesNo(locationState.engineEnabled), "Available"),
+        DataReading("Keepalive Enabled", yesNo(foregroundState.isEnabled), "Available"),
+        DataReading("Keepalive Running", yesNo(foregroundState.isRunning), "Available"),
+        DataReading("Keepalive Status", foregroundState.statusMessage, "Available"),
+        DataReading("Low-Power Allowed", yesNo(locationState.allowLowPowerBackground), "Available"),
+        DataReading("Notification Permission", if (notificationPermissionGranted) "Granted" else "Missing", "Available")
+    )
+    val demandRows = listOf(
+        DataReading("Location Permission", if (permissionGranted) "Granted" else "Missing", "Available"),
+        DataReading("High-Demand Count", locationState.highDemandConsumers.size.toString(), "Available"),
+        DataReading(
+            "High-Demand Consumers",
+            locationState.highDemandConsumers.sorted().joinToString(", ").ifBlank { "None" },
+            "Available"
+        )
+    )
+    val providerRows = listOf(
+        DataReading(
+            "Enabled Providers",
+            locationState.enabledProviders.sorted().joinToString(", ").ifBlank { "None" },
+            "Available"
+        ),
+        DataReading(
+            "Subscribed Providers",
+            locationState.subscribedProviders.sorted().joinToString(", ").ifBlank { "None" },
+            "Available"
+        )
+    )
+    val bestPositionRows = if (bestPosition == null) {
+        listOf(
+            DataReading("Summary", "Unavailable", "Unavailable", isError = true),
+            DataReading("Reason", "No valid fix (accuracy <= 0 or age above mode threshold).", "Unavailable", isError = true)
+        )
+    } else {
+        listOf(
+            DataReading("Provider", bestPosition.provider, "Available"),
+            DataReading("Latitude", formatDouble(bestPosition.location.latitude, 6), "Available"),
+            DataReading("Longitude", formatDouble(bestPosition.location.longitude, 6), "Available"),
+            DataReading("Accuracy (m)", formatFloat(bestPosition.accuracyMeters, 2), "Available"),
+            DataReading("Age (ms)", bestPosition.ageMillis.toString(), "Available"),
+            DataReading("Fix Time", formatTime(bestPosition.fixTimeMillis), "Available")
+        )
+    }
+    val bestMotionRows = if (bestMotion == null) {
+        listOf(
+            DataReading("Summary", "Unavailable", "Unavailable", isError = true),
+            DataReading("Eligibility", locationState.motionStatus, "Unavailable", isError = true)
+        )
+    } else {
+        listOf(
+            DataReading("Speed (m/s)", formatFloat(bestMotion.speedMetersPerSecond, 3), "Available"),
+            DataReading("Bearing (deg)", formatFloat(bestMotion.bearingDegrees, 2), "Available"),
+            DataReading("Age (ms)", bestMotion.ageMillis.toString(), "Available"),
+            DataReading("Provider", bestMotion.provider, "Available"),
+            DataReading("Fix Time", formatTime(bestMotion.fixTimeMillis), "Available"),
+            DataReading(
+                "Speed Accuracy (m/s)",
+                bestMotion.speedAccuracyMetersPerSecond?.let { formatFloat(it, 3) } ?: "Unavailable",
+                if (bestMotion.speedAccuracyMetersPerSecond == null) "Unavailable" else "Available",
+                isError = bestMotion.speedAccuracyMetersPerSecond == null
+            ),
+            DataReading(
+                "Bearing Accuracy (deg)",
+                bestMotion.bearingAccuracyDegrees?.let { formatFloat(it, 2) } ?: "Unavailable",
+                if (bestMotion.bearingAccuracyDegrees == null) "Unavailable" else "Available",
+                isError = bestMotion.bearingAccuracyDegrees == null
+            )
+        )
+    }
+    val sensorSatelliteRows = listOf(
+        DataReading("Significant Motion Available", locationState.significantMotion.available.toString(), "Available"),
+        DataReading("Significant Motion Sensor", locationState.significantMotion.sensorName ?: "Unavailable", "Available"),
+        DataReading("Significant Motion Armed", locationState.significantMotion.armed.toString(), "Available"),
+        DataReading(
+            "Significant Motion Last Trigger",
+            locationState.significantMotion.lastTriggeredAtMillis?.let { formatTime(it) } ?: "Never",
+            if (locationState.significantMotion.lastTriggeredAtMillis == null) "Unavailable" else "Available",
+            isError = locationState.significantMotion.lastTriggeredAtMillis == null
+        ),
+        DataReading("Satellites Visible", locationState.satelliteSummary.visibleCount?.toString() ?: "Unavailable", "Available"),
+        DataReading("Satellites Used In Fix", locationState.satelliteSummary.usedInFixCount?.toString() ?: "Unavailable", "Available"),
+        DataReading(
+            "Avg C/N0 Used (dB-Hz)",
+            locationState.satelliteSummary.avgCn0Used?.let { formatFloat(it, 2) } ?: "Unavailable",
+            "Available"
+        ),
+        DataReading(
+            "Constellations",
+            locationState.satelliteSummary.constellationCounts.entries
+                .joinToString(", ") { "${it.key}:${it.value}" }
+                .ifBlank { "Unavailable" },
+            "Available"
+        ),
+        DataReading("Satellite Status", locationState.satelliteSummary.statusMessage, "Available")
+    )
+    val diagnosticRows = listOf(
+        DataReading("Last Status", locationState.lastStatusMessage, "Available"),
+        DataReading("Last Error", locationState.lastErrorMessage ?: "None", "Available", isError = locationState.lastErrorMessage != null)
+    )
+    val historyRows = locationState.statusHistory.reversed().map { entry ->
+        val prefix = if (entry.isError) "ERROR" else "INFO"
+        DataReading(
+            label = "$prefix @ ${formatTime(entry.timestampMillis)}",
+            value = entry.message,
+            availabilitySummary = "Available",
+            isError = entry.isError
+        )
+    }
+    val engineGroups = listOf(
+        DataGroup(
+            title = "Runtime",
+            summary = "${locationState.engineMode.name} | Engine ${yesNo(locationState.engineEnabled)} | Keepalive ${yesNo(foregroundState.isEnabled)}",
+            rows = engineRuntimeRows
+        ),
+        DataGroup(
+            title = "Demand & Permissions",
+            summary = "Demand ${locationState.highDemandConsumers.size} | Permission ${if (permissionGranted) "Granted" else "Missing"}",
+            rows = demandRows
+        ),
+        DataGroup(
+            title = "Providers",
+            summary = "Subscribed ${locationState.subscribedProviders.size}, demand ${locationState.highDemandConsumers.size}",
+            rows = providerRows
+        ),
+        DataGroup(
+            title = "Best Position Fix",
+            summary = if (bestPosition == null) {
+                "Unavailable"
+            } else {
+                "${bestPosition.provider}, ±${formatFloat(bestPosition.accuracyMeters, 1)}m, age ${bestPosition.ageMillis}ms"
+            },
+            rows = bestPositionRows
+        ),
+        DataGroup(
+            title = "Best Motion Fix",
+            summary = if (bestMotion == null) locationState.motionStatus else {
+                "${formatFloat(bestMotion.speedMetersPerSecond, 2)}m/s @ ${formatFloat(bestMotion.bearingDegrees, 1)}deg"
+            },
+            rows = bestMotionRows
+        ),
+        DataGroup(
+            title = "Sensors & Satellites",
+            summary = "SigMotion armed=${locationState.significantMotion.armed}, sats=${locationState.satelliteSummary.visibleCount ?: 0}",
+            rows = sensorSatelliteRows
+        ),
+        DataGroup(
+            title = "Diagnostics",
+            summary = "Last status + error snapshot",
+            rows = diagnosticRows
+        ),
+        DataGroup(
+            title = "Event History",
+            summary = "${historyRows.size} entries",
+            rows = historyRows
+        )
+    )
     val records by produceState(
         initialValue = emptyList<ArchiveRecord>(),
         scanVersion,
@@ -200,6 +367,16 @@ fun DataValuesScreen(modifier: Modifier = Modifier) {
                         }
                     )
                 }
+            )
+        }
+
+        item { SectionTitle(title = "Engine Data") }
+        items(items = engineGroups, key = { "engine_data_${it.title}" }) { group ->
+            ExpandableDataBox(
+                title = group.title,
+                summary = group.summary,
+                rows = group.rows,
+                initiallyExpanded = group.initiallyExpanded
             )
         }
 
