@@ -1,5 +1,7 @@
 package com.example.blackbox.ui.screens
 
+import android.net.Uri
+import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -105,13 +107,15 @@ fun DatabaseScreen(modifier: Modifier = Modifier) {
                         .padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    val archiveUri = persistenceState.archiveRootUri
+                    val archivePath = archiveUri?.let(::resolveArchivePathFromTreeUri) ?: "Not configured"
                     Text(
                         text = "Database Location",
                         style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = persistenceState.archiveRootUri?.toString() ?: "Not configured",
+                        text = archivePath,
                         style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -250,4 +254,27 @@ private fun SectionTitle(title: String) {
         style = MaterialTheme.typography.titleMedium,
         color = MaterialTheme.colorScheme.primary
     )
+}
+
+private fun resolveArchivePathFromTreeUri(uri: Uri): String {
+    val treeDocId = runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull()
+        ?: return uri.toString()
+
+    if (treeDocId.startsWith("raw:")) {
+        return treeDocId.removePrefix("raw:")
+    }
+
+    val split = treeDocId.split(':', limit = 2)
+    if (split.size != 2) {
+        return treeDocId
+    }
+
+    val volume = split[0]
+    val rel = split[1].trim('/')
+
+    return when (volume) {
+        "primary" -> if (rel.isBlank()) "/storage/emulated/0" else "/storage/emulated/0/$rel"
+        "home" -> if (rel.isBlank()) "/storage/emulated/0/Documents" else "/storage/emulated/0/Documents/$rel"
+        else -> if (rel.isBlank()) "/storage/$volume" else "/storage/$volume/$rel"
+    }
 }
