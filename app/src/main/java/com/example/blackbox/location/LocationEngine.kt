@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import androidx.core.content.ContextCompat
 import java.util.Locale
 import kotlin.math.abs
@@ -36,6 +37,7 @@ private const val PROVIDER_SWITCH_IMPROVEMENT_METERS = 8f
 private const val PROVIDER_SWITCH_STABILITY_MS = 5_000L
 private const val SIGNIFICANT_MOTION_ACTIVE_WINDOW_MS = 2 * 60_000L
 private const val MAX_STATUS_HISTORY = 100
+private const val PERSIST_DEBUG_TAG = "BlackboxPersistDebug"
 
 object LocationEngine {
     private data class CandidateFix(
@@ -413,12 +415,17 @@ object LocationEngine {
             location = copiedLocation,
             receivedAtMillis = receivedAtMillis
         )
-        _locationEvents.tryEmit(
-            buildLocationSampleEvent(
-                provider = provider,
-                location = copiedLocation,
-                receivedAtMillis = receivedAtMillis
-            )
+        val event = buildLocationSampleEvent(
+            provider = provider,
+            location = copiedLocation,
+            receivedAtMillis = receivedAtMillis
+        )
+        val emitted = _locationEvents.tryEmit(event)
+        Log.d(
+            PERSIST_DEBUG_TAG,
+            "Location update pushed emitted=$emitted provider=${event.provider} " +
+                "lat=${event.lat} lon=${event.lon} acc=${event.accuracyM} " +
+                "receivedAtMs=${event.receivedAtMs} mode=${event.engineMode}"
         )
         recomputeAndPublishState()
     }

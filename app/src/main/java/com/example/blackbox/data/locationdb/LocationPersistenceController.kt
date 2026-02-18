@@ -2,6 +2,7 @@ package com.example.blackbox.data.locationdb
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import com.example.blackbox.location.LocationEngine
 import com.example.blackbox.location.LocationSampleEvent
 import java.time.Instant
@@ -22,6 +23,7 @@ import kotlinx.coroutines.sync.withLock
 
 private const val MAX_WRITE_RATE_MS = 1_000L
 private const val ARCHIVE_RETRY_INTERVAL_MS = 60_000L
+private const val PERSIST_DEBUG_TAG = "BlackboxPersistDebug"
 
 data class LocationPersistenceState(
     val initialized: Boolean = false,
@@ -62,6 +64,8 @@ object LocationPersistenceController {
             if (initialized) return
 
             val appContext = context.applicationContext
+            // SQLCipher requires explicit native library loading before first DB open.
+            System.loadLibrary("sqlcipher")
             val localKeyManager = LocationDbKeyManager(appContext)
             val localArchiveRepository = LocationArchiveRepository(
                 context = appContext,
@@ -183,8 +187,14 @@ object LocationPersistenceController {
             return
         }
 
+        Log.d(PERSIST_DEBUG_TAG, "Starting location event collector.")
         eventCollectorJob = scope.launch {
             LocationEngine.locationEvents.collect { event ->
+                Log.d(
+                    PERSIST_DEBUG_TAG,
+                    "Location event collected provider=${event.provider} " +
+                        "receivedAtMs=${event.receivedAtMs} acc=${event.accuracyM}"
+                )
                 handleLocationEvent(event)
             }
         }
@@ -196,11 +206,16 @@ object LocationPersistenceController {
         writeThrottleMutex.withLock {
             if (cooldownJob == null) {
                 shouldPersistImmediately = true
+                Log.d(PERSIST_DEBUG_TAG, "Write throttle open; persisting immediately.")
                 cooldownJob = scope.launch {
                     runCooldownLoop()
                 }
             } else {
                 pendingEvent = event
+                Log.d(
+                    PERSIST_DEBUG_TAG,
+                    "Write throttled; queued pending event receivedAtMs=${event.receivedAtMs}."
+                )
             }
         }
 
@@ -225,20 +240,33 @@ object LocationPersistenceController {
             }
 
             if (eventToPersist == null) {
+                Log.d(PERSIST_DEBUG_TAG, "Cooldown loop idle; stopping.")
                 return
             }
+            Log.d(
+                PERSIST_DEBUG_TAG,
+                "Cooldown tick persisting queued event receivedAtMs=${eventToPersist.receivedAtMs}."
+            )
             persistEvent(eventToPersist)
         }
     }
 
     private suspend fun persistEvent(event: LocationSampleEvent) {
         val writer = writeRepository ?: return
+        Log.d(
+            PERSIST_DEBUG_TAG,
+            "DB write start provider=${event.provider} receivedAtMs=${event.receivedAtMs}."
+        )
         val result = runCatching {
             writer.ingest(event)
         }
 
         if (result.isSuccess) {
             val liveDayCount = refreshLiveDayEntryCount(Instant.ofEpochMilli(event.receivedAtMs))
+            Log.d(
+                PERSIST_DEBUG_TAG,
+                "DB write success receivedAtMs=${event.receivedAtMs} liveDayCount=$liveDayCount."
+            )
             _state.update {
                 it.copy(
                     liveDayEntryCount = liveDayCount ?: it.liveDayEntryCount,
@@ -248,9 +276,15 @@ object LocationPersistenceController {
                 )
             }
         } else {
+            val throwable = result.exceptionOrNull()
+            Log.e(
+                PERSIST_DEBUG_TAG,
+                "DB write failed receivedAtMs=${event.receivedAtMs}: ${throwable?.message ?: "unknown error"}",
+                throwable
+            )
             _state.update {
                 it.copy(
-                    lastError = result.exceptionOrNull()?.message ?: "Location write failed"
+                    lastError = throwable?.message ?: "Location write failed"
                 )
             }
         }
@@ -260,7 +294,14 @@ object LocationPersistenceController {
         val manager = dailyDbManager ?: return null
         return runCatching {
             manager.currentDayEntryCount(nowUtc)
+        }.onSuccess { count ->
+            Log.d(PERSIST_DEBUG_TAG, "Live day entry recount success count=$count nowUtc=$nowUtc")
         }.onFailure { throwable ->
+            Log.e(
+                PERSIST_DEBUG_TAG,
+                "Live day entry recount failed: ${throwable.message ?: "unknown error"}",
+                throwable
+            )
             _state.update {
                 it.copy(lastError = throwable.message ?: "Failed to read live entry count")
             }
