@@ -145,6 +145,31 @@ class LocationArchiveRepository(
         }
     }
 
+    suspend fun clearArchivedDatabases(): Result<ArchiveClearResult> {
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val archiveRoot = archivePreferences.getArchiveTreeUri()
+                    ?: return@runCatching ArchiveClearResult(attempted = 0, deleted = 0)
+                val rootDoc = DocumentFile.fromTreeUri(appContext, archiveRoot)
+                    ?: return@runCatching ArchiveClearResult(attempted = 0, deleted = 0)
+
+                val dbFiles = listArchivedDbFiles(rootDoc)
+                var deletedCount = 0
+                dbFiles.forEach { file ->
+                    val deleted = runCatching { file.delete() }.getOrDefault(false)
+                    if (deleted) {
+                        deletedCount += 1
+                    }
+                }
+                pruneEmptyDirectories(rootDoc)
+                ArchiveClearResult(
+                    attempted = dbFiles.size,
+                    deleted = deletedCount
+                )
+            }
+        }
+    }
+
     private fun enqueueDayForArchive(day: LocalDate) {
         val liveDbFile = LocationDbPaths.liveDbFile(filesDir, day)
         if (!liveDbFile.exists()) {
@@ -455,6 +480,20 @@ class LocationArchiveRepository(
         return output.sortedBy { it.uri.toString() }
     }
 
+    private fun pruneEmptyDirectories(root: DocumentFile) {
+        val children = runCatching { root.listFiles() }.getOrDefault(emptyArray())
+        children.forEach { child ->
+            if (!child.isDirectory) {
+                return@forEach
+            }
+            pruneEmptyDirectories(child)
+            val remaining = runCatching { child.listFiles() }.getOrDefault(emptyArray())
+            if (remaining.isEmpty()) {
+                runCatching { child.delete() }
+            }
+        }
+    }
+
     private fun canOpenWithKnownKeys(dbFile: File): Boolean {
         val manager = keyManager ?: return false
         val keys = manager.allKeys()
@@ -517,4 +556,9 @@ data class ArchiveIntegrityResult(
     val succeededFiles: Int,
     val failedFiles: Int,
     val detailMessage: String
+)
+
+data class ArchiveClearResult(
+    val attempted: Int,
+    val deleted: Int
 )

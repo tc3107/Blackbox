@@ -86,6 +86,45 @@ class DailyRoomDbManager(
         }
     }
 
+    suspend fun clearAllLocalDatabases(): LocalClearResult {
+        return withContext(Dispatchers.IO) {
+            mutex.withLock {
+                openDbState?.let { state ->
+                    checkpointAndClose(state.db)
+                    openDbState = null
+                }
+
+                val liveRoot = LocationDbPaths.liveRoot(filesDir)
+                val pendingRoot = LocationDbPaths.pendingArchiveRoot(filesDir)
+                val liveFileCount = countFilesUnder(liveRoot)
+                val pendingFileCount = countFilesUnder(pendingRoot)
+
+                val liveDeleteSuccess = runCatching {
+                    if (liveRoot.exists()) {
+                        liveRoot.deleteRecursively()
+                    } else {
+                        true
+                    }
+                }.getOrDefault(false)
+                val pendingDeleteSuccess = runCatching {
+                    if (pendingRoot.exists()) {
+                        pendingRoot.deleteRecursively()
+                    } else {
+                        true
+                    }
+                }.getOrDefault(false)
+
+                startupSweepDone = false
+
+                LocalClearResult(
+                    deletedLiveFiles = if (liveDeleteSuccess) liveFileCount else 0,
+                    deletedPendingFiles = if (pendingDeleteSuccess) pendingFileCount else 0,
+                    success = liveDeleteSuccess && pendingDeleteSuccess
+                )
+            }
+        }
+    }
+
     private suspend fun queueStaleLiveDays(todayUtc: LocalDate) {
         val liveRoot = LocationDbPaths.liveRoot(filesDir)
         if (!liveRoot.exists()) {
@@ -180,6 +219,13 @@ class DailyRoomDbManager(
         }
     }
 
+    private fun countFilesUnder(root: File): Int {
+        if (!root.exists()) {
+            return 0
+        }
+        return root.walkTopDown().count { it.isFile }
+    }
+
     private data class OpenDbState(
         val dayUtc: LocalDate,
         val file: File,
@@ -187,3 +233,9 @@ class DailyRoomDbManager(
         val keyId: String
     )
 }
+
+data class LocalClearResult(
+    val deletedLiveFiles: Int,
+    val deletedPendingFiles: Int,
+    val success: Boolean
+)

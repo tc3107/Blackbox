@@ -1,10 +1,13 @@
 package com.example.blackbox.data.locationdb
 
 import android.content.Context
+import android.content.ContentValues
+import android.database.sqlite.SQLiteDatabase
 import android.net.Uri
 import android.util.Log
 import com.example.blackbox.location.LocationEngine
 import com.example.blackbox.location.LocationSampleEvent
+import java.io.File
 import java.time.Instant
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -20,6 +23,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 private const val MAX_WRITE_RATE_MS = 1_000L
 private const val ARCHIVE_RETRY_INTERVAL_MS = 60_000L
@@ -43,6 +47,13 @@ data class LocationPersistenceState(
     val lastError: String? = null
 )
 
+data class ClearAllResult(
+    val deletedLiveFiles: Int,
+    val deletedPendingFiles: Int,
+    val deletedArchivedFiles: Int,
+    val success: Boolean
+)
+
 object LocationPersistenceController {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val writeThrottleMutex = Mutex()
@@ -59,6 +70,7 @@ object LocationPersistenceController {
     private var dailyDbManager: DailyRoomDbManager? = null
     private var writeRepository: LocationWriteRepository? = null
     private var readRepository: LocationReadRepository? = null
+    private var appContext: Context? = null
 
     private var eventCollectorJob: Job? = null
     private var cooldownJob: Job? = null
@@ -88,6 +100,7 @@ object LocationPersistenceController {
             archiveRepository = localArchiveRepository
             dailyDbManager = localDailyManager
             writeRepository = SqlCipherLocationWriteRepository(localDailyManager)
+            this.appContext = appContext
             readRepository = MergedLocationReadRepository(
                 context = appContext,
                 keyManager = localKeyManager,
@@ -165,6 +178,113 @@ object LocationPersistenceController {
                     )
                 }
             }
+    }
+
+    suspend fun exportMergedPlaintextDatabase(target: Uri): Result<Int> {
+        val context = appContext ?: return Result.failure(IllegalStateException("Persistence not initialized."))
+        val repository = readRepository ?: return Result.failure(IllegalStateException("Persistence not initialized."))
+        val dayManager = dailyDbManager ?: return Result.failure(IllegalStateException("Persistence not initialized."))
+        val nowUtc = Instant.now()
+
+        dayManager.checkpointCurrentDay(nowUtc)
+
+        val exportResult = withContext(Dispatchers.IO) {
+            runCatching {
+                val endInclusiveMs = System.currentTimeMillis().plus(86_400_000L)
+                val mergedRows = repository.queryRange(
+                    startInclusiveMs = 0L,
+                    endInclusiveMs = endInclusiveMs
+                )
+
+                val tempDb = File(context.cacheDir, "blackbox-merged-plaintext-export.db")
+                runCatching { tempDb.delete() }
+                runCatching { File(tempDb.parentFile, "${tempDb.name}-wal").delete() }
+                runCatching { File(tempDb.parentFile, "${tempDb.name}-shm").delete() }
+
+                writePlaintextMergedDb(file = tempDb, rows = mergedRows)
+
+                context.contentResolver.openOutputStream(target, "w")?.use { output ->
+                    tempDb.inputStream().use { input ->
+                        input.copyTo(output)
+                        output.flush()
+                    }
+                } ?: error("Failed to open export destination.")
+
+                runCatching { tempDb.delete() }
+                runCatching { File(tempDb.parentFile, "${tempDb.name}-wal").delete() }
+                runCatching { File(tempDb.parentFile, "${tempDb.name}-shm").delete() }
+
+                mergedRows.size
+            }
+        }
+
+        return exportResult
+            .onSuccess { exportedRows ->
+                _state.update {
+                    it.copy(
+                        lastArchiveMessage = "Plaintext merged export completed ($exportedRows rows).",
+                        lastError = null
+                    )
+                }
+            }
+            .onFailure { throwable ->
+                _state.update {
+                    it.copy(lastError = throwable.message ?: "Plaintext export failed")
+                }
+            }
+    }
+
+    suspend fun clearAllDatabases(): Result<ClearAllResult> {
+        val repository = archiveRepository ?: return Result.failure(IllegalStateException("Persistence not initialized."))
+        val dayManager = dailyDbManager ?: return Result.failure(IllegalStateException("Persistence not initialized."))
+
+        writeThrottleMutex.withLock {
+            pendingEvent = null
+            cooldownJob?.cancel()
+            cooldownJob = null
+        }
+
+        val clearResult = runCatching {
+            val localResult = dayManager.clearAllLocalDatabases()
+            val archivedResult = repository.clearArchivedDatabases().getOrElse { throw it }
+            val nowMs = System.currentTimeMillis()
+
+            val combined = ClearAllResult(
+                deletedLiveFiles = localResult.deletedLiveFiles,
+                deletedPendingFiles = localResult.deletedPendingFiles,
+                deletedArchivedFiles = archivedResult.deleted,
+                success = localResult.success && archivedResult.deleted == archivedResult.attempted
+            )
+
+            _state.update {
+                it.copy(
+                    pendingArchiveCount = repository.pendingArchiveCount(),
+                    liveDayEntryCount = 0L,
+                    lastWriteAtMs = null,
+                    lastArchiveAtMs = nowMs,
+                    integrityTotalFiles = 0,
+                    integritySucceededFiles = 0,
+                    integrityFailedFiles = 0,
+                    integrityLastCheckedAtMs = nowMs,
+                    integrityMessage = "No archived database files found.",
+                    integrityCheckRunning = false,
+                    lastArchiveMessage = if (combined.success) {
+                        "Clear all completed."
+                    } else {
+                        "Clear all completed with issues."
+                    },
+                    lastError = if (combined.success) null else "Some files could not be deleted."
+                )
+            }
+
+            combined
+        }
+
+        return clearResult.onFailure { throwable ->
+            _state.update {
+                it.copy(lastError = throwable.message ?: "Clear all failed")
+            }
+        }
     }
 
     suspend fun exportKeyBundle(passphrase: CharArray, target: Uri): Result<Uri> {
@@ -258,6 +378,87 @@ object LocationPersistenceController {
                 )
                 handleLocationEvent(event)
             }
+        }
+    }
+
+    private fun writePlaintextMergedDb(file: File, rows: List<LocationSampleEntity>) {
+        if (file.exists()) {
+            runCatching { file.delete() }
+        }
+        LocationDbPaths.ensureParentDir(file)
+
+        val db = SQLiteDatabase.openOrCreateDatabase(file, null)
+        try {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS location_samples (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    received_at_ms INTEGER NOT NULL,
+                    fix_time_ms INTEGER NOT NULL,
+                    provider TEXT NOT NULL,
+                    lat REAL NOT NULL,
+                    lon REAL NOT NULL,
+                    accuracy_m REAL NOT NULL,
+                    altitude_m REAL,
+                    speed_mps REAL,
+                    bearing_deg REAL,
+                    speed_accuracy_mps REAL,
+                    bearing_accuracy_deg REAL,
+                    engine_mode TEXT NOT NULL
+                )
+                """.trimIndent()
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS idx_location_samples_received_at_ms ON location_samples(received_at_ms)"
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS idx_location_samples_fix_time_ms ON location_samples(fix_time_ms)"
+            )
+            db.execSQL(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_location_samples_dedupe
+                ON location_samples(
+                    received_at_ms,
+                    fix_time_ms,
+                    provider,
+                    lat,
+                    lon,
+                    accuracy_m,
+                    engine_mode
+                )
+                """.trimIndent()
+            )
+
+            db.beginTransaction()
+            try {
+                rows.forEach { row ->
+                    val values = ContentValues().apply {
+                        put("received_at_ms", row.receivedAtMs)
+                        put("fix_time_ms", row.fixTimeMs)
+                        put("provider", row.provider)
+                        put("lat", row.lat)
+                        put("lon", row.lon)
+                        put("accuracy_m", row.accuracyM)
+                        put("altitude_m", row.altitudeM)
+                        put("speed_mps", row.speedMps)
+                        put("bearing_deg", row.bearingDeg)
+                        put("speed_accuracy_mps", row.speedAccuracyMps)
+                        put("bearing_accuracy_deg", row.bearingAccuracyDeg)
+                        put("engine_mode", row.engineMode.name)
+                    }
+                    db.insertWithOnConflict(
+                        "location_samples",
+                        null,
+                        values,
+                        SQLiteDatabase.CONFLICT_IGNORE
+                    )
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+        } finally {
+            db.close()
         }
     }
 

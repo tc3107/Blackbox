@@ -13,11 +13,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -39,6 +41,7 @@ import com.example.blackbox.ui.components.ButtonLabel
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 import java.util.Locale
 import kotlinx.coroutines.launch
 
@@ -63,8 +66,12 @@ fun DatabaseScreen(modifier: Modifier = Modifier) {
 
     var message by rememberSaveable { mutableStateOf<String?>(null) }
     var archiveMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    var plaintextExportMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    var clearAllMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var keyPassphrase by rememberSaveable { mutableStateOf("") }
     var keyPassphraseConfirm by rememberSaveable { mutableStateOf("") }
+    var showClearAllConfirm by rememberSaveable { mutableStateOf(false) }
+    var clearAllRunning by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(context) {
         LocationPersistenceController.initialize(context.applicationContext)
@@ -92,6 +99,22 @@ fun DatabaseScreen(modifier: Modifier = Modifier) {
                 onFailure = { "Key export failed: ${it.message ?: "unknown error"}" }
             )
             passphrase.fill('\u0000')
+        }
+    }
+
+    val exportPlaintextLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/vnd.sqlite3")
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+
+        scope.launch {
+            val result = LocationPersistenceController.exportMergedPlaintextDatabase(target = uri)
+            plaintextExportMessage = result.fold(
+                onSuccess = {
+                    "Plaintext merged DB export complete: $it rows."
+                },
+                onFailure = { "Plaintext export failed: ${it.message ?: "unknown error"}" }
+            )
         }
     }
 
@@ -182,9 +205,39 @@ fun DatabaseScreen(modifier: Modifier = Modifier) {
                             ButtonLabel("Archive Now")
                         }
                     }
+                    OutlinedButton(
+                        onClick = {
+                            exportPlaintextLauncher.launch(defaultPlaintextExportFileName())
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = persistenceState.initialized
+                    ) {
+                        ButtonLabel("Export Merged Plaintext DB")
+                    }
+                    OutlinedButton(
+                        onClick = { showClearAllConfirm = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = persistenceState.initialized && !clearAllRunning
+                    ) {
+                        ButtonLabel(if (clearAllRunning) "Clearing..." else "Clear All Data")
+                    }
                     if (!archiveMessage.isNullOrBlank()) {
                         Text(
                             text = archiveMessage.orEmpty(),
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (!plaintextExportMessage.isNullOrBlank()) {
+                        Text(
+                            text = plaintextExportMessage.orEmpty(),
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (!clearAllMessage.isNullOrBlank()) {
+                        Text(
+                            text = clearAllMessage.orEmpty(),
                             style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -349,6 +402,51 @@ fun DatabaseScreen(modifier: Modifier = Modifier) {
             }
         }
     }
+
+    if (showClearAllConfirm) {
+        AlertDialog(
+            onDismissRequest = {
+                if (!clearAllRunning) {
+                    showClearAllConfirm = false
+                }
+            },
+            title = { Text("Clear all database data?") },
+            text = {
+                Text(
+                    "This deletes all archived files and clears all live/pending database files. This cannot be undone."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !clearAllRunning,
+                    onClick = {
+                        clearAllRunning = true
+                        scope.launch {
+                            val result = LocationPersistenceController.clearAllDatabases()
+                            clearAllMessage = result.fold(
+                                onSuccess = {
+                                    "Cleared live=${it.deletedLiveFiles}, pending=${it.deletedPendingFiles}, archived=${it.deletedArchivedFiles}."
+                                },
+                                onFailure = { "Clear all failed: ${it.message ?: "unknown error"}" }
+                            )
+                            clearAllRunning = false
+                            showClearAllConfirm = false
+                        }
+                    }
+                ) {
+                    Text("Clear All")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !clearAllRunning,
+                    onClick = { showClearAllConfirm = false }
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -437,8 +535,18 @@ private fun formatStatusTime(timestampMs: Long?): String {
         .format(DB_STATUS_TIME_FORMATTER)
 }
 
+private fun defaultPlaintextExportFileName(nowMs: Long = System.currentTimeMillis()): String {
+    val timestamp = Instant.ofEpochMilli(nowMs)
+        .atZone(ZoneId.systemDefault())
+        .truncatedTo(ChronoUnit.SECONDS)
+        .format(EXPORT_FILE_NAME_TIME_FORMATTER)
+    return "blackbox-all-databases-merged-$timestamp.db"
+}
+
 private val GOOD_STATUS_COLOR = Color(0xFF2E7D32)
 private val BAD_STATUS_COLOR = Color(0xFFC62828)
 private const val MIN_EXPORT_PASSPHRASE_LENGTH = 12
 private val DB_STATUS_TIME_FORMATTER: DateTimeFormatter =
     DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss", Locale.US)
+private val EXPORT_FILE_NAME_TIME_FORMATTER: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss", Locale.US)
