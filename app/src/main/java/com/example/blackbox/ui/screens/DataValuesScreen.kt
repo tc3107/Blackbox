@@ -34,6 +34,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -66,6 +67,11 @@ fun DataValuesScreen(modifier: Modifier = Modifier) {
     val locationState by LocationEngine.state.collectAsState()
     val foregroundState by LocationEngineForegroundController.state.collectAsState()
     val persistenceState by LocationPersistenceController.state.collectAsState()
+    val dbWriteIndicator = debugDbWriteIndicator(
+        initialized = persistenceState.initialized,
+        lastError = persistenceState.lastError,
+        lastWriteAtMs = persistenceState.lastWriteAtMs
+    )
     var scanVersion by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(context) {
@@ -304,14 +310,10 @@ fun DataValuesScreen(modifier: Modifier = Modifier) {
     val archivedCount = records.count { it.status == ArchiveStatus.Archived }
     val failedCount = records.count { it.status == ArchiveStatus.Failed }
     val runtimeRows = listOf(
-        DebugStatItem("Initialized", yesNo(persistenceState.initialized)),
-        DebugStatItem("Archive Folder", persistenceState.archiveRootUri?.toString() ?: "Not configured"),
         DebugStatItem("Live Day Entries", persistenceState.liveDayEntryCount.toString()),
-        DebugStatItem("Persisted Writes", persistenceState.totalPersistedWrites.toString()),
         DebugStatItem("Last Write", persistenceState.lastWriteAtMs?.let(::formatTime) ?: "Never"),
-        DebugStatItem("Pending Archives", persistenceState.pendingArchiveCount.toString()),
         DebugStatItem("Last Archive", persistenceState.lastArchiveAtMs?.let(::formatTime) ?: "Never"),
-        DebugStatItem("Last Archive Message", persistenceState.lastArchiveMessage),
+        DebugStatItem("Pending Archives", persistenceState.pendingArchiveCount.toString()),
         DebugStatItem("Last Error", persistenceState.lastError ?: "None", isError = persistenceState.lastError != null)
     )
     val scanRows = listOf(
@@ -420,8 +422,9 @@ fun DataValuesScreen(modifier: Modifier = Modifier) {
         item {
             DebugStatBox(
                 stateKey = "debug_runtime",
-                title = "Runtime",
+                title = "Database Stats",
                 summary = "Persistence and archive worker state",
+                statusIndicator = dbWriteIndicator,
                 rows = runtimeRows,
                 initiallyExpanded = false
             )
@@ -548,6 +551,7 @@ private fun DebugStatBox(
     stateKey: String,
     title: String,
     summary: String,
+    statusIndicator: DebugStatusIndicator? = null,
     rows: List<DebugStatItem>,
     initiallyExpanded: Boolean
 ) {
@@ -585,6 +589,14 @@ private fun DebugStatBox(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+
+            statusIndicator?.let { indicator ->
+                Text(
+                    text = indicator.text,
+                    style = MaterialTheme.typography.labelLarge.copy(fontFamily = FontFamily.Monospace),
+                    color = if (indicator.isGood) GOOD_STATUS_COLOR else BAD_STATUS_COLOR
+                )
+            }
 
             if (expanded) {
                 if (rows.isEmpty()) {
@@ -1078,6 +1090,27 @@ private data class DebugStatItem(
     val value: String,
     val isError: Boolean = false
 )
+
+private data class DebugStatusIndicator(
+    val text: String,
+    val isGood: Boolean
+)
+
+private fun debugDbWriteIndicator(
+    initialized: Boolean,
+    lastError: String?,
+    lastWriteAtMs: Long?
+): DebugStatusIndicator {
+    return when {
+        !initialized -> DebugStatusIndicator("DB write status: INIT PENDING", isGood = false)
+        lastError != null -> DebugStatusIndicator("DB write status: ERROR DETECTED", isGood = false)
+        lastWriteAtMs == null -> DebugStatusIndicator("DB write status: NO SUCCESSFUL WRITE YET", isGood = false)
+        else -> DebugStatusIndicator("DB write status: HEALTHY", isGood = true)
+    }
+}
+
+private val GOOD_STATUS_COLOR = Color(0xFF2E7D32)
+private val BAD_STATUS_COLOR = Color(0xFFC62828)
 
 private fun summarizeAvailability(readings: List<DataReading>): String {
     val total = readings.size

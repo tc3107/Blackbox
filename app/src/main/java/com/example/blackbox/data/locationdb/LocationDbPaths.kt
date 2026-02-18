@@ -5,6 +5,7 @@ import java.time.LocalDate
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import java.util.regex.Pattern
 
 private val DB_DATE_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US)
 
@@ -26,6 +27,10 @@ object LocationDbPaths {
     }
 
     fun relativePathForDay(dayUtc: LocalDate): String {
+        return relativePathForFile(dayUtc = dayUtc, fileName = fileNameForDay(dayUtc))
+    }
+
+    fun relativePathForFile(dayUtc: LocalDate, fileName: String): String {
         return buildString {
             append(DATABASES_DIR)
             append('/')
@@ -33,12 +38,16 @@ object LocationDbPaths {
             append('/')
             append(String.format(Locale.US, "%02d", dayUtc.monthValue))
             append('/')
-            append(fileNameForDay(dayUtc))
+            append(fileName)
         }
     }
 
     fun fileNameForDay(dayUtc: LocalDate): String {
         return "blackbox-${dayUtc.format(DB_DATE_FORMATTER)}.$DB_EXTENSION"
+    }
+
+    fun fileNameForSnapshot(dayUtc: LocalDate, snapshotId: String): String {
+        return "blackbox-${dayUtc.format(DB_DATE_FORMATTER)}--$snapshotId.$DB_EXTENSION"
     }
 
     fun liveDbFile(filesDir: File, dayUtc: LocalDate): File {
@@ -53,12 +62,19 @@ object LocationDbPaths {
         return File(pendingArchiveRoot(filesDir), "$year/$month/${fileNameForDay(dayUtc)}")
     }
 
+    fun pendingArchiveSnapshotFile(filesDir: File, dayUtc: LocalDate, snapshotId: String): File {
+        val year = dayUtc.year.toString()
+        val month = String.format(Locale.US, "%02d", dayUtc.monthValue)
+        return File(pendingArchiveRoot(filesDir), "$year/$month/${fileNameForSnapshot(dayUtc, snapshotId)}")
+    }
+
     fun parseUtcDayFromDbFile(file: File): LocalDate? {
         val name = file.name
-        if (!name.startsWith("blackbox-") || !name.endsWith(".$DB_EXTENSION")) {
+        val match = DB_FILE_NAME_PATTERN.matcher(name)
+        if (!match.matches()) {
             return null
         }
-        val rawDate = name.removePrefix("blackbox-").removeSuffix(".$DB_EXTENSION")
+        val rawDate = match.group(1) ?: return null
         return runCatching { LocalDate.parse(rawDate, DB_DATE_FORMATTER) }.getOrNull()
     }
 
@@ -69,3 +85,6 @@ object LocationDbPaths {
         }
     }
 }
+    private val DB_FILE_NAME_PATTERN: Pattern = Pattern.compile(
+        "^blackbox-(\\d{4}-\\d{2}-\\d{2})(?:--.+)?\\.db$"
+    )

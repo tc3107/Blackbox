@@ -29,54 +29,36 @@ class MergedLocationReadRepository(
 
             val startDay = Instant.ofEpochMilli(startInclusiveMs).atZone(ZoneOffset.UTC).toLocalDate()
             val endDay = Instant.ofEpochMilli(endInclusiveMs).atZone(ZoneOffset.UTC).toLocalDate()
+            val liveIndex = scanLocalIndexByDay(LocationDbPaths.liveRoot(filesDir))
+            val pendingIndex = scanLocalIndexByDay(LocationDbPaths.pendingArchiveRoot(filesDir))
             val archivedIndex = scanArchivedIndexByDay()
             val result = mutableListOf<LocationSampleEntity>()
 
             generateDaySequence(startDay = startDay, endDay = endDay).forEach { day ->
-                val source = resolveBestSourceForDay(day, archivedIndex)
-                val samples = when (source) {
-                    is DaySource.Local -> readFromLocalDb(
-                        file = source.file,
+                val localFiles = liveIndex[day].orEmpty() + pendingIndex[day].orEmpty()
+                val archivedUris = archivedIndex[day].orEmpty()
+
+                localFiles.forEach { localFile ->
+                    result += readFromLocalDb(
+                        file = localFile,
                         startInclusiveMs = startInclusiveMs,
                         endInclusiveMs = endInclusiveMs
                     )
-
-                    is DaySource.Archive -> readFromArchivedDb(
-                        archiveUri = source.archiveUri,
-                        day = day,
-                        startInclusiveMs = startInclusiveMs,
-                        endInclusiveMs = endInclusiveMs
-                    )
-
-                    DaySource.Missing -> emptyList()
                 }
-                result += samples
+
+                archivedUris.forEachIndexed { index, archivedUri ->
+                    result += readFromArchivedDb(
+                        archiveUri = archivedUri,
+                        day = day,
+                        cacheSuffix = index,
+                        startInclusiveMs = startInclusiveMs,
+                        endInclusiveMs = endInclusiveMs
+                    )
+                }
             }
 
-            result.sortedBy { it.receivedAtMs }
+            deduplicateSamples(result.sortedBy { it.receivedAtMs })
         }
-    }
-
-    private fun resolveBestSourceForDay(
-        day: LocalDate,
-        archivedIndex: Map<LocalDate, Uri>
-    ): DaySource {
-        val live = LocationDbPaths.liveDbFile(filesDir, day)
-        if (live.exists()) {
-            return DaySource.Local(live)
-        }
-
-        val pending = LocationDbPaths.pendingArchiveFile(filesDir, day)
-        if (pending.exists()) {
-            return DaySource.Local(pending)
-        }
-
-        val archivedUri = archivedIndex[day]
-        if (archivedUri != null) {
-            return DaySource.Archive(archivedUri)
-        }
-
-        return DaySource.Missing
     }
 
     private suspend fun readFromLocalDb(
@@ -95,10 +77,11 @@ class MergedLocationReadRepository(
     private suspend fun readFromArchivedDb(
         archiveUri: Uri,
         day: LocalDate,
+        cacheSuffix: Int,
         startInclusiveMs: Long,
         endInclusiveMs: Long
     ): List<LocationSampleEntity> {
-        val cacheFile = File(appContext.cacheDir, "location-read-${day}.db")
+        val cacheFile = File(appContext.cacheDir, "location-read-${day}-$cacheSuffix.db")
         runCatching { cacheFile.delete() }
 
         val copied = runCatching {
@@ -151,10 +134,10 @@ class MergedLocationReadRepository(
         throw IllegalStateException("Failed to open encrypted database with known keys.", lastError)
     }
 
-    private fun scanArchivedIndexByDay(): Map<LocalDate, Uri> {
+    private fun scanArchivedIndexByDay(): Map<LocalDate, List<Uri>> {
         val archiveRoot = archiveRepository.getArchiveTreeUri() ?: return emptyMap()
         val rootDoc = DocumentFile.fromTreeUri(appContext, archiveRoot) ?: return emptyMap()
-        val output = linkedMapOf<LocalDate, Uri>()
+        val output = linkedMapOf<LocalDate, MutableList<Uri>>()
 
         walkSaf(rootDoc) { file ->
             if (!file.isFile) {
@@ -162,9 +145,43 @@ class MergedLocationReadRepository(
             }
             val name = file.name ?: return@walkSaf
             val day = LocationDbPaths.parseUtcDayFromDbFile(File(name)) ?: return@walkSaf
-            output[day] = file.uri
+            output.getOrPut(day) { mutableListOf() } += file.uri
         }
 
+        return output.mapValues { (_, uris) -> uris.sortedBy { it.toString() } }
+    }
+
+    private fun scanLocalIndexByDay(root: File): Map<LocalDate, List<File>> {
+        if (!root.exists()) {
+            return emptyMap()
+        }
+        val output = linkedMapOf<LocalDate, MutableList<File>>()
+        root.walkTopDown()
+            .filter { it.isFile && it.extension == LocationDbPaths.DB_EXTENSION }
+            .forEach { file ->
+                val day = LocationDbPaths.parseUtcDayFromDbFile(file) ?: return@forEach
+                output.getOrPut(day) { mutableListOf() } += file
+            }
+        return output.mapValues { (_, files) -> files.sortedBy { it.absolutePath } }
+    }
+
+    private fun deduplicateSamples(samples: List<LocationSampleEntity>): List<LocationSampleEntity> {
+        val seen = linkedSetOf<SampleKey>()
+        val output = ArrayList<LocationSampleEntity>(samples.size)
+        samples.forEach { sample ->
+            val key = SampleKey(
+                receivedAtMs = sample.receivedAtMs,
+                fixTimeMs = sample.fixTimeMs,
+                provider = sample.provider,
+                lat = sample.lat,
+                lon = sample.lon,
+                accuracyM = sample.accuracyM,
+                engineMode = sample.engineMode.name
+            )
+            if (seen.add(key)) {
+                output += sample
+            }
+        }
         return output
     }
 
@@ -185,9 +202,13 @@ class MergedLocationReadRepository(
         }
     }
 
-    private sealed interface DaySource {
-        data class Local(val file: File) : DaySource
-        data class Archive(val archiveUri: Uri) : DaySource
-        data object Missing : DaySource
-    }
+    private data class SampleKey(
+        val receivedAtMs: Long,
+        val fixTimeMs: Long,
+        val provider: String,
+        val lat: Double,
+        val lon: Double,
+        val accuracyM: Float,
+        val engineMode: String
+    )
 }

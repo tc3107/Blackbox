@@ -125,6 +125,16 @@ object LocationPersistenceController {
 
     suspend fun archiveNow(): Result<Int> {
         val repository = archiveRepository ?: return Result.failure(IllegalStateException("Persistence not initialized."))
+        val dayManager = dailyDbManager ?: return Result.failure(IllegalStateException("Persistence not initialized."))
+        val nowUtc = Instant.now()
+        val liveDayCount = refreshLiveDayEntryCount(nowUtc) ?: 0L
+
+        if (liveDayCount > 0L) {
+            dayManager.checkpointCurrentDay(nowUtc)?.let { day ->
+                repository.snapshotLiveDayToPending(day)
+            }
+        }
+
         return repository.archivePendingNow()
             .onSuccess { archivedCount ->
                 _state.update {

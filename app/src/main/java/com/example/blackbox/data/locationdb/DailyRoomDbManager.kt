@@ -57,6 +57,35 @@ class DailyRoomDbManager(
         return db.locationSampleDao().countAll()
     }
 
+    suspend fun checkpointCurrentDay(nowUtc: Instant): LocalDate? {
+        return withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val targetDay = nowUtc.atZone(ZoneOffset.UTC).toLocalDate()
+                if (!startupSweepDone) {
+                    startupSweepDone = true
+                    queueStaleLiveDays(todayUtc = targetDay)
+                }
+
+                val existing = openDbState
+                val stateForDay = if (existing != null && existing.dayUtc == targetDay) {
+                    existing
+                } else {
+                    existing?.let {
+                        checkpointAndClose(it.db)
+                        archiveRepository.queueAndArchive(it.dayUtc)
+                        openDbState = null
+                    }
+                    openWritableDbForDay(targetDay).also { opened ->
+                        openDbState = opened
+                    }
+                }
+
+                checkpoint(stateForDay.db)
+                stateForDay.dayUtc
+            }
+        }
+    }
+
     private suspend fun queueStaleLiveDays(todayUtc: LocalDate) {
         val liveRoot = LocationDbPaths.liveRoot(filesDir)
         if (!liveRoot.exists()) {
@@ -139,12 +168,16 @@ class DailyRoomDbManager(
     }
 
     private fun checkpointAndClose(db: BlackboxDayDb) {
+        checkpoint(db)
+        runCatching { db.close() }
+    }
+
+    private fun checkpoint(db: BlackboxDayDb) {
         runCatching {
             db.openHelper.writableDatabase
                 .query("PRAGMA wal_checkpoint(TRUNCATE)")
                 .use { }
         }
-        runCatching { db.close() }
     }
 
     private data class OpenDbState(

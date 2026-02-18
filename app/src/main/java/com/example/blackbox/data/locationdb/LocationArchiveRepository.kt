@@ -67,11 +67,28 @@ class LocationArchiveRepository(
             return
         }
 
-        val pendingDbFile = LocationDbPaths.pendingArchiveFile(filesDir, day)
+        val pendingDbFile = uniquePendingArchiveTarget(day = day, preferredFileName = liveDbFile.name)
         LocationDbPaths.ensureParentDir(pendingDbFile)
 
         moveFile(source = liveDbFile, target = pendingDbFile)
         moveSidecarFiles(sourceDbFile = liveDbFile, targetDbFile = pendingDbFile)
+    }
+
+    fun snapshotLiveDayToPending(day: LocalDate): Boolean {
+        val liveDbFile = LocationDbPaths.liveDbFile(filesDir, day)
+        if (!liveDbFile.exists()) {
+            return false
+        }
+
+        val pendingDbFile = uniquePendingArchiveTarget(
+            day = day,
+            preferredFileName = LocationDbPaths.fileNameForSnapshot(day, snapshotId = System.currentTimeMillis().toString())
+        )
+        LocationDbPaths.ensureParentDir(pendingDbFile)
+
+        moveFile(source = liveDbFile, target = pendingDbFile, deleteSource = false)
+        copySidecarFiles(sourceDbFile = liveDbFile, targetDbFile = pendingDbFile)
+        return true
     }
 
     private fun archivePendingInternal(): ArchiveBatchResult {
@@ -92,7 +109,7 @@ class LocationArchiveRepository(
                 return@forEach
             }
 
-            val relativePath = LocationDbPaths.relativePathForDay(day)
+            val relativePath = LocationDbPaths.relativePathForFile(dayUtc = day, fileName = localFile.name)
             val archiveResult = runCatching {
                 checkpointPendingDbIfNeeded(localFile)
                 copyFileToSaf(
@@ -178,7 +195,7 @@ class LocationArchiveRepository(
         } ?: error("Failed to open archive output stream.")
     }
 
-    private fun moveFile(source: File, target: File) {
+    private fun moveFile(source: File, target: File, deleteSource: Boolean = true) {
         if (!source.exists()) {
             return
         }
@@ -187,7 +204,7 @@ class LocationArchiveRepository(
             runCatching { target.delete() }
         }
 
-        val moved = source.renameTo(target)
+        val moved = deleteSource && source.renameTo(target)
         if (moved) {
             return
         }
@@ -198,7 +215,9 @@ class LocationArchiveRepository(
                 output.flush()
             }
         }
-        runCatching { source.delete() }
+        if (deleteSource) {
+            runCatching { source.delete() }
+        }
     }
 
     private fun removeSidecarFiles(dbFile: File) {
@@ -219,6 +238,20 @@ class LocationArchiveRepository(
         }
         if (sourceShm.exists()) {
             moveFile(source = sourceShm, target = targetShm)
+        }
+    }
+
+    private fun copySidecarFiles(sourceDbFile: File, targetDbFile: File) {
+        val sourceWal = File(sourceDbFile.parentFile, "${sourceDbFile.name}-wal")
+        val sourceShm = File(sourceDbFile.parentFile, "${sourceDbFile.name}-shm")
+        val targetWal = File(targetDbFile.parentFile, "${targetDbFile.name}-wal")
+        val targetShm = File(targetDbFile.parentFile, "${targetDbFile.name}-shm")
+
+        if (sourceWal.exists()) {
+            moveFile(source = sourceWal, target = targetWal, deleteSource = false)
+        }
+        if (sourceShm.exists()) {
+            moveFile(source = sourceShm, target = targetShm, deleteSource = false)
         }
     }
 
@@ -259,7 +292,7 @@ class LocationArchiveRepository(
             ArchiveRecord(
                 dayUtc = day,
                 localPath = file.absolutePath,
-                safRelativePath = LocationDbPaths.relativePathForDay(day),
+                safRelativePath = LocationDbPaths.relativePathForFile(dayUtc = day, fileName = file.name),
                 status = ArchiveStatus.Pending,
                 retryCount = 0,
                 lastError = null,
@@ -274,7 +307,7 @@ class LocationArchiveRepository(
             ArchiveRecord(
                 dayUtc = day,
                 localPath = file.absolutePath,
-                safRelativePath = LocationDbPaths.relativePathForDay(day),
+                safRelativePath = LocationDbPaths.relativePathForFile(dayUtc = day, fileName = file.name),
                 status = ArchiveStatus.Pending,
                 retryCount = 0,
                 lastError = null,
@@ -327,6 +360,25 @@ class LocationArchiveRepository(
     private data class ArchiveBatchResult(
         val archivedCount: Int
     )
+
+    private fun uniquePendingArchiveTarget(day: LocalDate, preferredFileName: String): File {
+        val year = day.year.toString()
+        val month = String.format(java.util.Locale.US, "%02d", day.monthValue)
+        val baseDir = File(LocationDbPaths.pendingArchiveRoot(filesDir), "$year/$month")
+        var candidate = File(baseDir, preferredFileName)
+        if (!candidate.exists()) {
+            return candidate
+        }
+
+        val extension = ".${LocationDbPaths.DB_EXTENSION}"
+        val stem = preferredFileName.removeSuffix(extension)
+        var suffix = 1
+        while (candidate.exists()) {
+            candidate = File(baseDir, "$stem-copy$suffix$extension")
+            suffix += 1
+        }
+        return candidate
+    }
 
     companion object {
         private const val SQLITE_MIME_TYPE = "application/vnd.sqlite3"

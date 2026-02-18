@@ -28,6 +28,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -42,8 +43,14 @@ fun DatabaseScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val persistenceState by LocationPersistenceController.state.collectAsState()
+    val dbWriteIndicator = rememberDbWriteIndicator(
+        initialized = persistenceState.initialized,
+        lastError = persistenceState.lastError,
+        lastWriteAtMs = persistenceState.lastWriteAtMs
+    )
 
     var message by rememberSaveable { mutableStateOf<String?>(null) }
+    var archiveMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var keyPassphrase by rememberSaveable { mutableStateOf("") }
     var keyPassphraseConfirm by rememberSaveable { mutableStateOf("") }
 
@@ -56,7 +63,7 @@ fun DatabaseScreen(modifier: Modifier = Modifier) {
     ) { uri ->
         if (uri != null) {
             LocationPersistenceController.setArchiveTreeUri(uri)
-            message = "Archive folder updated."
+            archiveMessage = "Archive folder updated."
         }
     }
 
@@ -98,6 +105,13 @@ fun DatabaseScreen(modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item { SectionTitle("Database Controls") }
+        item {
+            Text(
+                text = dbWriteIndicator.text,
+                style = MaterialTheme.typography.labelLarge.copy(fontFamily = FontFamily.Monospace),
+                color = if (dbWriteIndicator.isGood) GOOD_STATUS_COLOR else BAD_STATUS_COLOR
+            )
+        }
 
         item {
             OutlinedCard(modifier = Modifier.fillMaxWidth()) {
@@ -116,13 +130,16 @@ fun DatabaseScreen(modifier: Modifier = Modifier) {
                     )
                     Text(
                         text = archivePath,
-                        style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        color = MaterialTheme.colorScheme.outline
                     )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        val canArchiveNow = persistenceState.initialized &&
+                            persistenceState.archiveRootUri != null &&
+                            persistenceState.liveDayEntryCount > 0L
                         Button(
                             onClick = { folderLauncher.launch(null) },
                             modifier = Modifier.weight(1f)
@@ -133,24 +150,32 @@ fun DatabaseScreen(modifier: Modifier = Modifier) {
                             onClick = {
                                 scope.launch {
                                     if (!persistenceState.initialized) {
-                                        message = "Storage is still initializing. Try again in a moment."
+                                        archiveMessage = "Storage is still initializing. Try again in a moment."
                                         return@launch
                                     }
                                     if (persistenceState.archiveRootUri == null) {
-                                        message = "Choose a folder before archiving."
+                                        archiveMessage = "Choose a folder before archiving."
                                         return@launch
                                     }
                                     val result = LocationPersistenceController.archiveNow()
-                                    message = result.fold(
-                                        onSuccess = { "Archived $it file(s)." },
+                                    archiveMessage = result.fold(
+                                        onSuccess = { "Archived $it files." },
                                         onFailure = { "Archive failed: ${it.message ?: "unknown error"}" }
                                     )
                                 }
                             },
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f),
+                            enabled = canArchiveNow
                         ) {
                             ButtonLabel("Archive Now")
                         }
+                    }
+                    if (!archiveMessage.isNullOrBlank()) {
+                        Text(
+                            text = archiveMessage.orEmpty(),
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
@@ -278,3 +303,24 @@ private fun resolveArchivePathFromTreeUri(uri: Uri): String {
         else -> if (rel.isBlank()) "/storage/$volume" else "/storage/$volume/$rel"
     }
 }
+
+private data class DbWriteIndicator(
+    val text: String,
+    val isGood: Boolean
+)
+
+private fun rememberDbWriteIndicator(
+    initialized: Boolean,
+    lastError: String?,
+    lastWriteAtMs: Long?
+): DbWriteIndicator {
+    return when {
+        !initialized -> DbWriteIndicator("DB write status: INIT PENDING", isGood = false)
+        lastError != null -> DbWriteIndicator("DB write status: ERROR DETECTED", isGood = false)
+        lastWriteAtMs == null -> DbWriteIndicator("DB write status: NO SUCCESSFUL WRITE YET", isGood = false)
+        else -> DbWriteIndicator("DB write status: HEALTHY", isGood = true)
+    }
+}
+
+private val GOOD_STATUS_COLOR = Color(0xFF2E7D32)
+private val BAD_STATUS_COLOR = Color(0xFFC62828)
