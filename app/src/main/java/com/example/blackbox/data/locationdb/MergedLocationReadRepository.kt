@@ -116,6 +116,7 @@ class MergedLocationReadRepository(
             val db = runCatching {
                 Room.databaseBuilder(appContext, BlackboxDayDb::class.java, file.absolutePath)
                     .openHelperFactory(SupportOpenHelperFactory(key.keyBytes.copyOf()))
+                    .addMigrations(LocationDbMigrations.MIGRATION_1_2)
                     .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
                     .fallbackToDestructiveMigration(dropAllTables = true)
                     .build()
@@ -171,11 +172,14 @@ class MergedLocationReadRepository(
         samples.forEach { sample ->
             val key = SampleKey(
                 receivedAtMs = sample.receivedAtMs,
+                lastSeenAtMs = sample.lastSeenAtMs,
                 fixTimeMs = sample.fixTimeMs,
                 provider = sample.provider,
                 lat = sample.lat,
                 lon = sample.lon,
-                accuracyM = sample.accuracyM,
+                bestAccuracyM = sample.bestAccuracyM,
+                worstAccuracyM = sample.worstAccuracyM,
+                samplesMergedCount = sample.samplesMergedCount,
                 engineMode = sample.engineMode.name
             )
             if (seen.add(key)) {
@@ -204,11 +208,14 @@ class MergedLocationReadRepository(
 
     private data class SampleKey(
         val receivedAtMs: Long,
+        val lastSeenAtMs: Long,
         val fixTimeMs: Long,
         val provider: String,
         val lat: Double,
         val lon: Double,
-        val accuracyM: Float,
+        val bestAccuracyM: Float,
+        val worstAccuracyM: Float,
+        val samplesMergedCount: Int,
         val engineMode: String
     )
 }

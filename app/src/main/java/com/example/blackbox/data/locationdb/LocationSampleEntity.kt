@@ -18,6 +18,8 @@ data class LocationSampleEntity(
     val id: Long = 0L,
     @ColumnInfo(name = "received_at_ms")
     val receivedAtMs: Long,
+    @ColumnInfo(name = "last_seen_at_ms")
+    val lastSeenAtMs: Long,
     @ColumnInfo(name = "fix_time_ms")
     val fixTimeMs: Long,
     @ColumnInfo(name = "provider")
@@ -26,8 +28,12 @@ data class LocationSampleEntity(
     val lat: Double,
     @ColumnInfo(name = "lon")
     val lon: Double,
-    @ColumnInfo(name = "accuracy_m")
-    val accuracyM: Float,
+    @ColumnInfo(name = "best_accuracy_m")
+    val bestAccuracyM: Float,
+    @ColumnInfo(name = "worst_accuracy_m")
+    val worstAccuracyM: Float,
+    @ColumnInfo(name = "samples_merged_count")
+    val samplesMergedCount: Int,
     @ColumnInfo(name = "altitude_m")
     val altitudeM: Double?,
     @ColumnInfo(name = "speed_mps")

@@ -9,7 +9,7 @@ import androidx.room.TypeConverters
         LocationSampleEntity::class,
         DbMetadataEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 @TypeConverters(LocationDbConverters::class)

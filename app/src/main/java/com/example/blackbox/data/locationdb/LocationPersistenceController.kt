@@ -394,11 +394,14 @@ object LocationPersistenceController {
                 CREATE TABLE IF NOT EXISTS location_samples (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     received_at_ms INTEGER NOT NULL,
+                    last_seen_at_ms INTEGER NOT NULL,
                     fix_time_ms INTEGER NOT NULL,
                     provider TEXT NOT NULL,
                     lat REAL NOT NULL,
                     lon REAL NOT NULL,
-                    accuracy_m REAL NOT NULL,
+                    best_accuracy_m REAL NOT NULL,
+                    worst_accuracy_m REAL NOT NULL,
+                    samples_merged_count INTEGER NOT NULL,
                     altitude_m REAL,
                     speed_mps REAL,
                     bearing_deg REAL,
@@ -419,11 +422,14 @@ object LocationPersistenceController {
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_location_samples_dedupe
                 ON location_samples(
                     received_at_ms,
+                    last_seen_at_ms,
                     fix_time_ms,
                     provider,
                     lat,
                     lon,
-                    accuracy_m,
+                    best_accuracy_m,
+                    worst_accuracy_m,
+                    samples_merged_count,
                     engine_mode
                 )
                 """.trimIndent()
@@ -434,11 +440,14 @@ object LocationPersistenceController {
                 rows.forEach { row ->
                     val values = ContentValues().apply {
                         put("received_at_ms", row.receivedAtMs)
+                        put("last_seen_at_ms", row.lastSeenAtMs)
                         put("fix_time_ms", row.fixTimeMs)
                         put("provider", row.provider)
                         put("lat", row.lat)
                         put("lon", row.lon)
-                        put("accuracy_m", row.accuracyM)
+                        put("best_accuracy_m", row.bestAccuracyM)
+                        put("worst_accuracy_m", row.worstAccuracyM)
+                        put("samples_merged_count", row.samplesMergedCount)
                         put("altitude_m", row.altitudeM)
                         put("speed_mps", row.speedMps)
                         put("bearing_deg", row.bearingDeg)

@@ -185,6 +185,7 @@ class DailyRoomDbManager(
         val db = runCatching {
             Room.databaseBuilder(appContext, BlackboxDayDb::class.java, dbFile.absolutePath)
                 .openHelperFactory(SupportOpenHelperFactory(keyMaterial.keyBytes.copyOf()))
+                .addMigrations(LocationDbMigrations.MIGRATION_1_2)
                 .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
                 .fallbackToDestructiveMigration(dropAllTables = true)
                 .build()

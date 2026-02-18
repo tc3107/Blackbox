@@ -5,11 +5,14 @@ import com.example.blackbox.location.LocationSampleEvent
 fun LocationSampleEvent.toEntity(): LocationSampleEntity {
     return LocationSampleEntity(
         receivedAtMs = receivedAtMs,
+        lastSeenAtMs = receivedAtMs,
         fixTimeMs = fixTimeMs,
         provider = provider,
         lat = lat,
         lon = lon,
-        accuracyM = accuracyM,
+        bestAccuracyM = accuracyM,
+        worstAccuracyM = accuracyM,
+        samplesMergedCount = 1,
         altitudeM = altitudeM,
         speedMps = speedMps,
         bearingDeg = bearingDeg,
