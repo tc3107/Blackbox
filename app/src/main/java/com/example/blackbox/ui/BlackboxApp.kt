@@ -26,14 +26,17 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -54,11 +57,25 @@ fun BlackboxApp(
     settings: UiSettings,
     onCustomAccentSaved: (String?) -> Unit
 ) {
+    val context = LocalContext.current
+    val navigationPrefs = remember(context) {
+        context.applicationContext.getSharedPreferences(NAV_PREFS_NAME, android.content.Context.MODE_PRIVATE)
+    }
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
-    var currentRoute by rememberSaveable { mutableStateOf(AppDestination.LOCATION.route) }
+    var currentRoute by rememberSaveable {
+        mutableStateOf(
+            navigationPrefs.getString(KEY_LAST_ROUTE, null)
+                ?.takeIf { stored -> AppDestination.entries.any { it.route == stored } }
+                ?: AppDestination.entries.first().route
+        )
+    }
     val currentDestination = AppDestination.fromRoute(currentRoute)
     val openMenuLabel = stringResource(R.string.menu_open_navigation)
+
+    LaunchedEffect(currentRoute) {
+        navigationPrefs.edit().putString(KEY_LAST_ROUTE, currentRoute).apply()
+    }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -172,7 +189,10 @@ private enum class AppDestination(
 
     companion object {
         fun fromRoute(route: String): AppDestination {
-            return entries.firstOrNull { it.route == route } ?: LOCATION
+            return entries.firstOrNull { it.route == route } ?: entries.first()
         }
     }
 }
+
+private const val NAV_PREFS_NAME = "blackbox_nav_state"
+private const val KEY_LAST_ROUTE = "last_route"
