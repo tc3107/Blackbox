@@ -34,12 +34,19 @@ data class LocationPersistenceState(
     val lastWriteAtMs: Long? = null,
     val lastArchiveAtMs: Long? = null,
     val lastArchiveMessage: String = "Archive idle.",
+    val integrityTotalFiles: Int = 0,
+    val integritySucceededFiles: Int = 0,
+    val integrityFailedFiles: Int = 0,
+    val integrityLastCheckedAtMs: Long? = null,
+    val integrityMessage: String = "Integrity check pending.",
+    val integrityCheckRunning: Boolean = false,
     val lastError: String? = null
 )
 
 object LocationPersistenceController {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val writeThrottleMutex = Mutex()
+    private val integrityCheckMutex = Mutex()
 
     private val _state = MutableStateFlow(LocationPersistenceState())
     val state: StateFlow<LocationPersistenceState> = _state.asStateFlow()
@@ -98,6 +105,7 @@ object LocationPersistenceController {
             startArchiveRetryLoop()
             scope.launch { refreshLiveDayEntryCount(Instant.now()) }
             scope.launch { runArchiveNowInternal(reason = "startup") }
+            scope.launch { runArchiveIntegrityCheck() }
 
             initialized = true
         }
@@ -117,6 +125,7 @@ object LocationPersistenceController {
                 }
             )
         }
+        scope.launch { runArchiveIntegrityCheck() }
     }
 
     fun getArchiveTreeUri(): Uri? {
@@ -190,6 +199,48 @@ object LocationPersistenceController {
 
     fun getArchiveRecords(): List<ArchiveRecord> {
         return archiveRepository?.getArchiveRecords().orEmpty()
+    }
+
+    suspend fun runArchiveIntegrityCheck(): Result<ArchiveIntegrityResult> {
+        val repository = archiveRepository ?: return Result.failure(IllegalStateException("Persistence not initialized."))
+
+        _state.update {
+            it.copy(
+                integrityCheckRunning = true,
+                integrityMessage = "Integrity check running..."
+            )
+        }
+
+        return integrityCheckMutex.withLock {
+            val result = repository.verifyArchivedIntegrity()
+            val checkedAtMs = System.currentTimeMillis()
+
+            result
+                .onSuccess { integrity ->
+                    _state.update {
+                        it.copy(
+                            integrityTotalFiles = integrity.totalFiles,
+                            integritySucceededFiles = integrity.succeededFiles,
+                            integrityFailedFiles = integrity.failedFiles,
+                            integrityLastCheckedAtMs = checkedAtMs,
+                            integrityMessage = integrity.detailMessage,
+                            integrityCheckRunning = false
+                        )
+                    }
+                }
+                .onFailure { throwable ->
+                    _state.update {
+                        it.copy(
+                            integrityLastCheckedAtMs = checkedAtMs,
+                            integrityMessage = "Integrity check failed.",
+                            integrityCheckRunning = false,
+                            lastError = throwable.message ?: "Integrity check failed"
+                        )
+                    }
+                }
+
+            result
+        }
     }
 
     private fun startEventCollector() {

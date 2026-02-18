@@ -2,11 +2,13 @@ package com.example.blackbox.data.locationdb
 
 import android.content.Context
 import android.net.Uri
+import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import java.io.File
 import java.security.KeyStore
+import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.UUID
 import javax.crypto.Cipher
@@ -79,8 +81,14 @@ class LocationDbKeyManager(context: Context) : KeyBackupService {
                     val mergedById = linkedMapOf<String, DbKeyMaterial>()
                     existing.allKeys.forEach { mergedById[it.keyId] = it }
                     imported.allKeys.forEach { importedKey ->
-                        if (!mergedById.containsKey(importedKey.keyId)) {
+                        val existingKey = mergedById[importedKey.keyId]
+                        if (existingKey == null) {
                             mergedById[importedKey.keyId] = importedKey
+                        } else if (!MessageDigest.isEqual(existingKey.keyBytes, importedKey.keyBytes)) {
+                            error(
+                                "Key ID collision detected for '${importedKey.keyId}'. " +
+                                    "Bundle is inconsistent with local key material."
+                            )
                         }
                     }
 
@@ -187,12 +195,17 @@ class LocationDbKeyManager(context: Context) : KeyBackupService {
                 JSONObject()
                     .put(JSON_KEY_ID, key.keyId)
                     .put(JSON_CREATED_AT_MS, key.createdAtMs)
+                    .put(JSON_KEY_FINGERPRINT_SHA256, key.keyBytes.sha256Hex())
                     .put(JSON_RAW_KEY_B64, key.keyBytes.base64Encode())
             )
         }
         return JSONObject()
             .put(JSON_VERSION, EXPORT_PAYLOAD_VERSION)
             .put(JSON_CREATED_AT_MS, System.currentTimeMillis())
+            .put(JSON_SOURCE_PACKAGE_NAME, appContext.packageName)
+            .put(JSON_SOURCE_APP_VERSION, appVersionName())
+            .put(JSON_SOURCE_DEVICE_LABEL, "${Build.MANUFACTURER} ${Build.MODEL}".trim())
+            .put(JSON_KEY_COUNT, keyRing.allKeys.size)
             .put(JSON_ACTIVE_KEY_ID, keyRing.activeKey.keyId)
             .put(JSON_KEYS, keysJson)
     }
@@ -207,11 +220,17 @@ class LocationDbKeyManager(context: Context) : KeyBackupService {
             for (index in 0 until keysJson.length()) {
                 val entry = keysJson.getJSONObject(index)
                 add(
-                    DbKeyMaterial(
-                        keyId = entry.getString(JSON_KEY_ID),
-                        keyBytes = entry.getString(JSON_RAW_KEY_B64).base64Decode(),
-                        createdAtMs = entry.optLong(JSON_CREATED_AT_MS, System.currentTimeMillis())
-                    )
+                    entry.getString(JSON_RAW_KEY_B64).base64Decode().let { raw ->
+                        val fingerprint = entry.optString(JSON_KEY_FINGERPRINT_SHA256)
+                        if (fingerprint.isNotBlank() && !fingerprint.equals(raw.sha256Hex(), ignoreCase = true)) {
+                            error("Key fingerprint mismatch in imported bundle.")
+                        }
+                        DbKeyMaterial(
+                            keyId = entry.getString(JSON_KEY_ID),
+                            keyBytes = raw,
+                            createdAtMs = entry.optLong(JSON_CREATED_AT_MS, System.currentTimeMillis())
+                        )
+                    }
                 )
             }
         }
@@ -227,7 +246,7 @@ class LocationDbKeyManager(context: Context) : KeyBackupService {
         val salt = ByteArray(PBKDF2_SALT_SIZE_BYTES).also { secureRandom.nextBytes(it) }
         val nonce = ByteArray(AES_GCM_NONCE_SIZE_BYTES).also { secureRandom.nextBytes(it) }
         val key = deriveBundleKey(passphrase = passphrase, salt = salt, iterations = PBKDF2_ITERATIONS)
-        val ciphertext = aesGcmEncrypt(key = key, nonce = nonce, plaintext = payload)
+        val ciphertext = aesGcmEncrypt(key = key, nonce = nonce, plaintext = payload, aad = bundleAad())
         return JSONObject()
             .put(JSON_BUNDLE_VERSION, KEY_BUNDLE_VERSION)
             .put(JSON_KDF, KDF_NAME)
@@ -250,7 +269,7 @@ class LocationDbKeyManager(context: Context) : KeyBackupService {
         val ciphertext = bundle.getString(JSON_CIPHERTEXT_B64).base64Decode()
 
         val key = deriveBundleKey(passphrase = passphrase, salt = salt, iterations = iterations)
-        return aesGcmDecrypt(key = key, nonce = nonce, ciphertext = ciphertext)
+        return aesGcmDecrypt(key = key, nonce = nonce, ciphertext = ciphertext, aad = bundleAad())
     }
 
     private fun deriveBundleKey(passphrase: CharArray, salt: ByteArray, iterations: Int): SecretKeySpec {
@@ -261,15 +280,27 @@ class LocationDbKeyManager(context: Context) : KeyBackupService {
         return SecretKeySpec(encoded, AES_ALGORITHM)
     }
 
-    private fun aesGcmEncrypt(key: SecretKeySpec, nonce: ByteArray, plaintext: ByteArray): ByteArray {
+    private fun aesGcmEncrypt(
+        key: SecretKeySpec,
+        nonce: ByteArray,
+        plaintext: ByteArray,
+        aad: ByteArray
+    ): ByteArray {
         val cipher = Cipher.getInstance(AES_GCM_TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(AES_GCM_TAG_BITS, nonce))
+        cipher.updateAAD(aad)
         return cipher.doFinal(plaintext)
     }
 
-    private fun aesGcmDecrypt(key: SecretKeySpec, nonce: ByteArray, ciphertext: ByteArray): ByteArray {
+    private fun aesGcmDecrypt(
+        key: SecretKeySpec,
+        nonce: ByteArray,
+        ciphertext: ByteArray,
+        aad: ByteArray
+    ): ByteArray {
         val cipher = Cipher.getInstance(AES_GCM_TRANSFORMATION)
         cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(AES_GCM_TAG_BITS, nonce))
+        cipher.updateAAD(aad)
         return cipher.doFinal(ciphertext)
     }
 
@@ -325,6 +356,22 @@ class LocationDbKeyManager(context: Context) : KeyBackupService {
         return Base64.decode(this, Base64.DEFAULT)
     }
 
+    private fun ByteArray.sha256Hex(): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(this)
+        return digest.joinToString(separator = "") { byte -> "%02x".format(byte) }
+    }
+
+    private fun bundleAad(): ByteArray {
+        return "$KEY_BUNDLE_VERSION|${appContext.packageName}".toByteArray(Charsets.UTF_8)
+    }
+
+    private fun appVersionName(): String {
+        return runCatching {
+            @Suppress("DEPRECATION")
+            appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName ?: "unknown"
+        }.getOrDefault("unknown")
+    }
+
     companion object {
         private const val KEY_FILE_RELATIVE_PATH = "location/keys/key_store_v1.json"
         private const val WRAPPING_KEY_ALIAS = "blackbox_location_db_wrapping_key_v1"
@@ -340,6 +387,11 @@ class LocationDbKeyManager(context: Context) : KeyBackupService {
         private const val JSON_KEYS = "keys"
         private const val JSON_KEY_ID = "keyId"
         private const val JSON_CREATED_AT_MS = "createdAtMs"
+        private const val JSON_KEY_FINGERPRINT_SHA256 = "keyFingerprintSha256"
+        private const val JSON_SOURCE_PACKAGE_NAME = "sourcePackageName"
+        private const val JSON_SOURCE_APP_VERSION = "sourceAppVersion"
+        private const val JSON_SOURCE_DEVICE_LABEL = "sourceDeviceLabel"
+        private const val JSON_KEY_COUNT = "keyCount"
         private const val JSON_WRAPPED_IV_B64 = "wrappedIvBase64"
         private const val JSON_WRAPPED_KEY_B64 = "wrappedKeyBase64"
         private const val JSON_RAW_KEY_B64 = "rawKeyBase64"

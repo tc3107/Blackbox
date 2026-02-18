@@ -61,6 +61,90 @@ class LocationArchiveRepository(
         return (liveCandidates.size + pending.size)
     }
 
+    suspend fun verifyArchivedIntegrity(): Result<ArchiveIntegrityResult> {
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val archiveRoot = archivePreferences.getArchiveTreeUri()
+                    ?: return@runCatching ArchiveIntegrityResult(
+                        totalFiles = 0,
+                        succeededFiles = 0,
+                        failedFiles = 0,
+                        detailMessage = "Archive folder is not configured."
+                    )
+
+                val rootDoc = DocumentFile.fromTreeUri(appContext, archiveRoot)
+                    ?: return@runCatching ArchiveIntegrityResult(
+                        totalFiles = 0,
+                        succeededFiles = 0,
+                        failedFiles = 0,
+                        detailMessage = "Archive folder could not be opened."
+                    )
+
+                val archiveFiles = listArchivedDbFiles(rootDoc)
+                if (archiveFiles.isEmpty()) {
+                    return@runCatching ArchiveIntegrityResult(
+                        totalFiles = 0,
+                        succeededFiles = 0,
+                        failedFiles = 0,
+                        detailMessage = "No archived database files found."
+                    )
+                }
+
+                val cacheRoot = File(appContext.cacheDir, "archive_integrity_check")
+                if (!cacheRoot.exists()) {
+                    cacheRoot.mkdirs()
+                }
+
+                var succeeded = 0
+                var failed = 0
+
+                archiveFiles.forEachIndexed { index, file ->
+                    val cacheFile = File(cacheRoot, "arch-check-$index.db")
+                    runCatching { cacheFile.delete() }
+                    runCatching { File(cacheFile.parentFile, "${cacheFile.name}-wal").delete() }
+                    runCatching { File(cacheFile.parentFile, "${cacheFile.name}-shm").delete() }
+
+                    val copied = runCatching {
+                        appContext.contentResolver.openInputStream(file.uri)?.use { input ->
+                            cacheFile.outputStream().use { output ->
+                                input.copyTo(output)
+                                output.flush()
+                            }
+                        } ?: error("Could not open archived file stream.")
+                    }.isSuccess
+
+                    if (!copied || !cacheFile.exists()) {
+                        failed += 1
+                        return@forEachIndexed
+                    }
+
+                    if (canOpenWithKnownKeys(cacheFile)) {
+                        succeeded += 1
+                    } else {
+                        failed += 1
+                    }
+
+                    runCatching { cacheFile.delete() }
+                    runCatching { File(cacheFile.parentFile, "${cacheFile.name}-wal").delete() }
+                    runCatching { File(cacheFile.parentFile, "${cacheFile.name}-shm").delete() }
+                }
+
+                runCatching { cacheRoot.deleteRecursively() }
+
+                ArchiveIntegrityResult(
+                    totalFiles = archiveFiles.size,
+                    succeededFiles = succeeded,
+                    failedFiles = failed,
+                    detailMessage = if (failed == 0) {
+                        "Integrity check passed for all archived files."
+                    } else {
+                        "Integrity check failed for $failed file(s)."
+                    }
+                )
+            }
+        }
+    }
+
     private fun enqueueDayForArchive(day: LocalDate) {
         val liveDbFile = LocationDbPaths.liveDbFile(filesDir, day)
         if (!liveDbFile.exists()) {
@@ -357,6 +441,49 @@ class LocationArchiveRepository(
         }
     }
 
+    private fun listArchivedDbFiles(rootDoc: DocumentFile): List<DocumentFile> {
+        val output = mutableListOf<DocumentFile>()
+        walkSaf(rootDoc, currentPath = "") { file, _ ->
+            if (!file.isFile) {
+                return@walkSaf
+            }
+            val name = file.name ?: return@walkSaf
+            if (name.endsWith(".${LocationDbPaths.DB_EXTENSION}", ignoreCase = true)) {
+                output += file
+            }
+        }
+        return output.sortedBy { it.uri.toString() }
+    }
+
+    private fun canOpenWithKnownKeys(dbFile: File): Boolean {
+        val manager = keyManager ?: return false
+        val keys = manager.allKeys()
+        if (keys.isEmpty()) {
+            return false
+        }
+
+        keys.forEach { key ->
+            val db = runCatching {
+                Room.databaseBuilder(appContext, BlackboxDayDb::class.java, dbFile.absolutePath)
+                    .openHelperFactory(SupportOpenHelperFactory(key.keyBytes.copyOf()))
+                    .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
+                    .fallbackToDestructiveMigration(dropAllTables = true)
+                    .build()
+            }.getOrNull() ?: return@forEach
+
+            val opened = runCatching {
+                db.openHelper.writableDatabase
+                    .query("SELECT COUNT(*) FROM sqlite_master")
+                    .use { }
+            }.isSuccess
+            runCatching { db.close() }
+            if (opened) {
+                return true
+            }
+        }
+        return false
+    }
+
     private data class ArchiveBatchResult(
         val archivedCount: Int
     )
@@ -384,3 +511,10 @@ class LocationArchiveRepository(
         private const val SQLITE_MIME_TYPE = "application/vnd.sqlite3"
     }
 }
+
+data class ArchiveIntegrityResult(
+    val totalFiles: Int,
+    val succeededFiles: Int,
+    val failedFiles: Int,
+    val detailMessage: String
+)

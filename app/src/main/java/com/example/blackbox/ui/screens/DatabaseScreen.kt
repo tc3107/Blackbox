@@ -36,6 +36,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import com.example.blackbox.data.locationdb.LocationPersistenceController
 import com.example.blackbox.ui.components.ButtonLabel
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import kotlinx.coroutines.launch
 
 @Composable
@@ -47,6 +51,14 @@ fun DatabaseScreen(modifier: Modifier = Modifier) {
         initialized = persistenceState.initialized,
         lastError = persistenceState.lastError,
         lastWriteAtMs = persistenceState.lastWriteAtMs
+    )
+    val integrityIndicator = rememberIntegrityIndicator(
+        initialized = persistenceState.initialized,
+        archiveConfigured = persistenceState.archiveRootUri != null,
+        checkRunning = persistenceState.integrityCheckRunning,
+        lastCheckedAtMs = persistenceState.integrityLastCheckedAtMs,
+        failedFiles = persistenceState.integrityFailedFiles,
+        detailMessage = persistenceState.integrityMessage
     )
 
     var message by rememberSaveable { mutableStateOf<String?>(null) }
@@ -190,6 +202,60 @@ fun DatabaseScreen(modifier: Modifier = Modifier) {
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Text(
+                        text = "File & Key Integrity",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = integrityIndicator.text,
+                        style = MaterialTheme.typography.labelLarge.copy(fontFamily = FontFamily.Monospace),
+                        color = if (integrityIndicator.isGood) GOOD_STATUS_COLOR else BAD_STATUS_COLOR
+                    )
+                    Text(
+                        text = "Succeeded ${persistenceState.integritySucceededFiles} / Failed ${persistenceState.integrityFailedFiles} / Total ${persistenceState.integrityTotalFiles}",
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "Last check: ${formatStatusTime(persistenceState.integrityLastCheckedAtMs)}",
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                LocationPersistenceController.runArchiveIntegrityCheck()
+                            }
+                        },
+                        enabled = persistenceState.initialized && !persistenceState.integrityCheckRunning,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        ButtonLabel(
+                            if (persistenceState.integrityCheckRunning) {
+                                "Running..."
+                            } else {
+                                "Run Integrity Check"
+                            }
+                        )
+                    }
+                    Text(
+                        text = persistenceState.integrityMessage,
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
+        item {
+            OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
                         text = "Key Management",
                         style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.onSurface
@@ -234,6 +300,14 @@ fun DatabaseScreen(modifier: Modifier = Modifier) {
                                         message = "Passphrase confirmation does not match."
                                     }
 
+                                    keyPassphrase.length < MIN_EXPORT_PASSPHRASE_LENGTH -> {
+                                        message = "Use at least $MIN_EXPORT_PASSPHRASE_LENGTH characters for export passphrase."
+                                    }
+
+                                    !keyPassphrase.any { it.isLetter() } || !keyPassphrase.any { it.isDigit() } -> {
+                                        message = "Use a stronger passphrase (include letters and numbers)."
+                                    }
+
                                     else -> {
                                         exportKeyLauncher.launch("blackbox-keybundle-v1.json")
                                     }
@@ -266,6 +340,11 @@ fun DatabaseScreen(modifier: Modifier = Modifier) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                    Text(
+                        text = "Export passphrase recommendation: 12+ chars, mixed letters and numbers.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }
@@ -309,6 +388,11 @@ private data class DbWriteIndicator(
     val isGood: Boolean
 )
 
+private data class IntegrityIndicator(
+    val text: String,
+    val isGood: Boolean
+)
+
 private fun rememberDbWriteIndicator(
     initialized: Boolean,
     lastError: String?,
@@ -322,5 +406,39 @@ private fun rememberDbWriteIndicator(
     }
 }
 
+private fun rememberIntegrityIndicator(
+    initialized: Boolean,
+    archiveConfigured: Boolean,
+    checkRunning: Boolean,
+    lastCheckedAtMs: Long?,
+    failedFiles: Int,
+    detailMessage: String
+): IntegrityIndicator {
+    return when {
+        !initialized -> IntegrityIndicator("Integrity status: INIT PENDING", isGood = false)
+        checkRunning -> IntegrityIndicator("Integrity status: RUNNING", isGood = false)
+        !archiveConfigured -> IntegrityIndicator("Integrity status: FOLDER NOT CONFIGURED", isGood = false)
+        lastCheckedAtMs == null -> IntegrityIndicator("Integrity status: NOT CHECKED YET", isGood = false)
+        failedFiles > 0 -> IntegrityIndicator("Integrity status: FAILURES DETECTED", isGood = false)
+        detailMessage.startsWith("Archive folder", ignoreCase = true) -> IntegrityIndicator(
+            "Integrity status: CHECK FAILED",
+            isGood = false
+        )
+        else -> IntegrityIndicator("Integrity status: HEALTHY", isGood = true)
+    }
+}
+
+private fun formatStatusTime(timestampMs: Long?): String {
+    if (timestampMs == null) {
+        return "Never"
+    }
+    return Instant.ofEpochMilli(timestampMs)
+        .atZone(ZoneId.systemDefault())
+        .format(DB_STATUS_TIME_FORMATTER)
+}
+
 private val GOOD_STATUS_COLOR = Color(0xFF2E7D32)
 private val BAD_STATUS_COLOR = Color(0xFFC62828)
+private const val MIN_EXPORT_PASSPHRASE_LENGTH = 12
+private val DB_STATUS_TIME_FORMATTER: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss", Locale.US)
