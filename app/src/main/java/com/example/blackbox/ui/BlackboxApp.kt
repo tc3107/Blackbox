@@ -1,6 +1,7 @@
 package com.example.blackbox.ui
 
 import androidx.annotation.StringRes
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -75,6 +76,10 @@ fun BlackboxApp(
 
     LaunchedEffect(currentRoute) {
         navigationPrefs.edit().putString(KEY_LAST_ROUTE, currentRoute).apply()
+    }
+
+    BackHandler(enabled = drawerState.isOpen) {
+        scope.launch { drawerState.close() }
     }
 
     ModalNavigationDrawer(
