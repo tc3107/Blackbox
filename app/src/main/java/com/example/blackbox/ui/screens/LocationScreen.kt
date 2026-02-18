@@ -34,7 +34,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-private const val LOCATION_SCREEN_CONSUMER_ID = "screen_location"
+private const val LOCATION_SCREEN_CONSUMER_ID = "ui:screen_location"
 
 @Composable
 fun LocationScreen(modifier: Modifier = Modifier) {

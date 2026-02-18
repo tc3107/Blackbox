@@ -37,6 +37,7 @@ private const val PROVIDER_SWITCH_IMPROVEMENT_METERS = 8f
 private const val PROVIDER_SWITCH_STABILITY_MS = 5_000L
 private const val SIGNIFICANT_MOTION_ACTIVE_WINDOW_MS = 2 * 60_000L
 private const val MAX_STATUS_HISTORY = 100
+private const val UI_HIGH_DEMAND_CONSUMER_PREFIX = "ui:"
 private const val PERSIST_DEBUG_TAG = "BlackboxPersistDebug"
 
 object LocationEngine {
@@ -189,6 +190,16 @@ object LocationEngine {
         }
     }
 
+    fun clearUiHighDemandConsumers() {
+        postToMain {
+            val changed = highDemandConsumers.removeAll { it.startsWith(UI_HIGH_DEMAND_CONSUMER_PREFIX) }
+            if (changed) {
+                recordStatus("UI high-demand consumers cleared.")
+                reevaluateAndApply("UI demand cleared")
+            }
+        }
+    }
+
     private fun onTick() {
         val nowElapsedNanos = SystemClock.elapsedRealtimeNanos()
         val boostUntil = motionBoostUntilElapsedRealtimeNanos
@@ -250,7 +261,8 @@ object LocationEngine {
             return LocationEngineMode.Active
         }
 
-        return if (allowLowPowerBackground) LocationEngineMode.LowPower else LocationEngineMode.Off
+        // Default background mode is always LowPower when engine is enabled.
+        return LocationEngineMode.LowPower
     }
 
     private fun syncLocationSubscriptions() {

@@ -1,7 +1,6 @@
 package com.example.blackbox.ui.screens
 
 import android.Manifest
-import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -31,40 +30,29 @@ import androidx.compose.ui.unit.dp
 import com.example.blackbox.location.LocationEngine
 import com.example.blackbox.location.LocationEngineForegroundController
 import com.example.blackbox.location.hasAnyLocationPermission
-import com.example.blackbox.location.hasNotificationPermission
 import com.example.blackbox.ui.components.ButtonLabel
 
 @Composable
 fun LocationEngineScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val state by LocationEngine.state.collectAsState()
-    val foregroundState by LocationEngineForegroundController.state.collectAsState()
 
     var permissionGranted by rememberSaveable { mutableStateOf(context.hasAnyLocationPermission()) }
-    var notificationPermissionGranted by rememberSaveable { mutableStateOf(context.hasNotificationPermission()) }
     var enableAfterPermission by rememberSaveable { mutableStateOf(false) }
-    var startBackgroundAfterPermission by rememberSaveable { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) {
         permissionGranted = context.hasAnyLocationPermission()
-        notificationPermissionGranted = context.hasNotificationPermission()
         if (permissionGranted && enableAfterPermission) {
             LocationEngine.setEngineEnabled(true)
         }
-        if (permissionGranted && notificationPermissionGranted && startBackgroundAfterPermission) {
-            LocationEngineForegroundController.start(context)
-        }
         enableAfterPermission = false
-        startBackgroundAfterPermission = false
     }
 
     LaunchedEffect(context) {
         LocationEngine.initialize(context.applicationContext)
-        LocationEngineForegroundController.initialize(context.applicationContext)
         permissionGranted = context.hasAnyLocationPermission()
-        notificationPermissionGranted = context.hasNotificationPermission()
     }
 
     LazyColumn(
@@ -97,55 +85,6 @@ fun LocationEngineScreen(modifier: Modifier = Modifier) {
                         )
                     )
                 }
-            }
-        }
-
-        item {
-            ToggleRow(
-                title = "Keepalive (FGS)",
-                subtitle = "Keeps process alive with a persistent notification; mode still follows demand and low-power settings.",
-                checked = foregroundState.isEnabled
-            ) { checked ->
-                if (!checked) {
-                    LocationEngineForegroundController.stop(context)
-                    return@ToggleRow
-                }
-
-                permissionGranted = context.hasAnyLocationPermission()
-                notificationPermissionGranted = context.hasNotificationPermission()
-                if (permissionGranted && notificationPermissionGranted) {
-                    LocationEngineForegroundController.start(context)
-                } else {
-                    startBackgroundAfterPermission = true
-                    val requestedPermissions = mutableListOf(
-                        Manifest.permission.ACCESS_FINE_LOCATION,
-                        Manifest.permission.ACCESS_COARSE_LOCATION
-                    )
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        requestedPermissions += Manifest.permission.POST_NOTIFICATIONS
-                    }
-                    permissionLauncher.launch(requestedPermissions.toTypedArray())
-                }
-            }
-        }
-
-        item {
-            ToggleRow(
-                title = "Allow Low-Power Background",
-                subtitle = "When no high-demand consumer is active, use Low-Power instead of Off.",
-                checked = state.allowLowPowerBackground
-            ) { checked ->
-                LocationEngine.setAllowLowPowerBackground(checked)
-            }
-        }
-
-        item {
-            ToggleRow(
-                title = "Force Active (Debug)",
-                subtitle = "Force Active mode even when there are no high-demand consumers.",
-                checked = state.forceActive
-            ) { checked ->
-                LocationEngine.setForceActive(checked)
             }
         }
 

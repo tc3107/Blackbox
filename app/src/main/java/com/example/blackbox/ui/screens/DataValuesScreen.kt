@@ -54,7 +54,7 @@ import kotlinx.coroutines.delay
 
 private const val BATTERY_API_SOURCE = "Intent.ACTION_BATTERY_CHANGED"
 private const val TIME_API_SOURCE = "System clock + kotlinx.coroutines.delay"
-private const val DATA_VALUES_LOCATION_CONSUMER_ID = "DataValuesScreen.LocationCategory"
+private const val DATA_VALUES_LOCATION_CONSUMER_ID = "ui:data_values_location_category"
 
 @Composable
 fun DataValuesScreen(modifier: Modifier = Modifier) {
@@ -341,6 +341,43 @@ fun DataValuesScreen(modifier: Modifier = Modifier) {
     ) {
         item { SectionTitle(title = "Debug") }
 
+        item {
+            OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Controls",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    HighDemandToggleRow(
+                        title = "Keepalive (FGS)",
+                        subtitle = "Default is on. Toggle to enable or disable foreground keepalive.",
+                        checked = foregroundState.isEnabled,
+                        onCheckedChange = { enabled ->
+                            if (enabled) {
+                                LocationEngineForegroundController.start(context)
+                            } else {
+                                LocationEngineForegroundController.stop(context)
+                            }
+                        }
+                    )
+                    HighDemandToggleRow(
+                        title = "Force Active",
+                        subtitle = "Force Active mode even when there are no high-demand consumers.",
+                        checked = locationState.forceActive,
+                        onCheckedChange = { enabled ->
+                            LocationEngine.setForceActive(enabled)
+                        }
+                    )
+                }
+            }
+        }
+
         items(items = groups, key = { it.title }) { group ->
             ExpandableDataBox(
                 title = group.title,
@@ -592,6 +629,8 @@ private fun DebugStatRow(item: DebugStatItem) {
 
 @Composable
 private fun HighDemandToggleRow(
+    title: String = "Treat as High-Demand Consumer",
+    subtitle: String = "Forces Location Engine to Active mode while enabled.",
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
@@ -606,12 +645,12 @@ private fun HighDemandToggleRow(
             verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             Text(
-                text = "Treat as High-Demand Consumer",
+                text = title,
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onSurface
             )
             Text(
-                text = "Forces Location Engine to Active mode while enabled.",
+                text = subtitle,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
