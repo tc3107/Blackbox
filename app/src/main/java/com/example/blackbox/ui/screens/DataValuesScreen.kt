@@ -27,14 +27,19 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import com.example.blackbox.data.locationdb.ArchiveRecord
+import com.example.blackbox.data.locationdb.ArchiveStatus
+import com.example.blackbox.data.locationdb.LocationPersistenceController
 import com.example.blackbox.location.LocationEngine
 import com.example.blackbox.location.LocationEngineState
 import java.time.Instant
@@ -56,9 +61,13 @@ fun DataValuesScreen(modifier: Modifier = Modifier) {
     val chargingState by rememberChargingState()
     val batterySaver by rememberBatterySaverState()
     val locationState by LocationEngine.state.collectAsState()
+    val persistenceState by LocationPersistenceController.state.collectAsState()
+    var scanVersion by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(context) {
         LocationEngine.initialize(context.applicationContext)
+        LocationPersistenceController.initialize(context.applicationContext)
+        scanVersion += 1
     }
 
     val nowMillis = System.currentTimeMillis()
@@ -115,6 +124,35 @@ fun DataValuesScreen(modifier: Modifier = Modifier) {
         nowMillis = nowMillis
     )
     val locationSummary = summarizeAvailability(locationReadings)
+    val records by produceState(
+        initialValue = emptyList<ArchiveRecord>(),
+        scanVersion,
+        persistenceState.archiveRootUri,
+        persistenceState.pendingArchiveCount,
+        persistenceState.lastArchiveAtMs
+    ) {
+        value = LocationPersistenceController.getArchiveRecords()
+    }
+    val pendingCount = records.count { it.status == ArchiveStatus.Pending }
+    val archivedCount = records.count { it.status == ArchiveStatus.Archived }
+    val failedCount = records.count { it.status == ArchiveStatus.Failed }
+    val runtimeRows = listOf(
+        DebugStatItem("Initialized", yesNo(persistenceState.initialized)),
+        DebugStatItem("Archive Folder", persistenceState.archiveRootUri?.toString() ?: "Not configured"),
+        DebugStatItem("Live Day Entries", persistenceState.liveDayEntryCount.toString()),
+        DebugStatItem("Persisted Writes", persistenceState.totalPersistedWrites.toString()),
+        DebugStatItem("Last Write", persistenceState.lastWriteAtMs?.let(::formatTime) ?: "Never"),
+        DebugStatItem("Pending Archives", persistenceState.pendingArchiveCount.toString()),
+        DebugStatItem("Last Archive", persistenceState.lastArchiveAtMs?.let(::formatTime) ?: "Never"),
+        DebugStatItem("Last Archive Message", persistenceState.lastArchiveMessage),
+        DebugStatItem("Last Error", persistenceState.lastError ?: "None", isError = persistenceState.lastError != null)
+    )
+    val scanRows = listOf(
+        DebugStatItem("Total Files Seen", records.size.toString()),
+        DebugStatItem("Pending Files", pendingCount.toString()),
+        DebugStatItem("Archived Files", archivedCount.toString()),
+        DebugStatItem("Failed Files", failedCount.toString())
+    )
 
     val groups = listOf(
         DataGroup(
@@ -134,7 +172,7 @@ fun DataValuesScreen(modifier: Modifier = Modifier) {
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        item { SectionTitle(title = "Data Values") }
+        item { SectionTitle(title = "Debug") }
 
         items(items = groups, key = { it.title }) { group ->
             ExpandableDataBox(
@@ -162,6 +200,26 @@ fun DataValuesScreen(modifier: Modifier = Modifier) {
                         }
                     )
                 }
+            )
+        }
+
+        item {
+            DebugStatBox(
+                stateKey = "debug_runtime",
+                title = "Runtime",
+                summary = "Persistence and archive worker state",
+                rows = runtimeRows,
+                initiallyExpanded = false
+            )
+        }
+
+        item {
+            DebugStatBox(
+                stateKey = "debug_folder_scan",
+                title = "Folder Scan",
+                summary = "Live scan across local + SAF folders",
+                rows = scanRows,
+                initiallyExpanded = false
             )
         }
     }
@@ -267,6 +325,90 @@ private fun DataReadingRow(reading: DataReading) {
                 MaterialTheme.colorScheme.onSurface
             },
             modifier = Modifier.padding(top = 2.dp)
+        )
+    }
+}
+
+@Composable
+private fun DebugStatBox(
+    stateKey: String,
+    title: String,
+    summary: String,
+    rows: List<DebugStatItem>,
+    initiallyExpanded: Boolean
+) {
+    var expanded by rememberSaveable(stateKey) { mutableStateOf(initiallyExpanded) }
+
+    OutlinedCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { expanded = !expanded }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = if (expanded) "Collapse" else "Expand",
+                    style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            Text(
+                text = summary,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            if (expanded) {
+                if (rows.isEmpty()) {
+                    Text(
+                        text = "No data.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    rows.forEachIndexed { index, row ->
+                        DebugStatRow(item = row)
+                        if (index != rows.lastIndex) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DebugStatRow(item: DebugStatItem) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        Text(
+            text = item.label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary
+        )
+        Text(
+            text = item.value,
+            style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+            color = if (item.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
         )
     }
 }
@@ -713,6 +855,12 @@ private data class DataGroup(
     val summary: String,
     val rows: List<DataReading>,
     val initiallyExpanded: Boolean = false
+)
+
+private data class DebugStatItem(
+    val label: String,
+    val value: String,
+    val isError: Boolean = false
 )
 
 private fun summarizeAvailability(readings: List<DataReading>): String {
