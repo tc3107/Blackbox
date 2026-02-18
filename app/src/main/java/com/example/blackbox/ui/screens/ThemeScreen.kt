@@ -38,7 +38,7 @@ import com.example.blackbox.ui.theme.accentColorFromHex
 import com.example.blackbox.ui.theme.normalizeAccentHex
 
 @Composable
-fun SettingsScreen(
+fun ThemeScreen(
     settings: UiSettings,
     onCustomAccentSaved: (String?) -> Unit,
     modifier: Modifier = Modifier

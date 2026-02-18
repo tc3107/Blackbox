@@ -45,7 +45,7 @@ import com.example.blackbox.ui.screens.DatabaseScreen
 import com.example.blackbox.ui.screens.DataValuesScreen
 import com.example.blackbox.ui.screens.LocationEngineScreen
 import com.example.blackbox.ui.screens.LocationScreen
-import com.example.blackbox.ui.screens.SettingsScreen
+import com.example.blackbox.ui.screens.ThemeScreen
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -128,13 +128,13 @@ fun BlackboxApp(
             when (currentDestination) {
                 AppDestination.LOCATION_ENGINE -> LocationEngineScreen(modifier = contentModifier)
                 AppDestination.LOCATION -> LocationScreen(modifier = contentModifier)
-                AppDestination.DATA_VALUES -> DataValuesScreen(modifier = contentModifier)
                 AppDestination.DATABASE -> DatabaseScreen(modifier = contentModifier)
-                AppDestination.SETTINGS -> SettingsScreen(
+                AppDestination.THEME -> ThemeScreen(
                     settings = settings,
                     onCustomAccentSaved = onCustomAccentSaved,
                     modifier = contentModifier
                 )
+                AppDestination.DATA_VALUES -> DataValuesScreen(modifier = contentModifier)
             }
         }
     }
@@ -166,9 +166,9 @@ private enum class AppDestination(
 ) {
     LOCATION_ENGINE(route = "location_engine", titleRes = R.string.nav_location_engine),
     LOCATION(route = "location", titleRes = R.string.nav_location),
-    DATA_VALUES(route = "data_values", titleRes = R.string.nav_data_values),
     DATABASE(route = "database", titleRes = R.string.nav_database),
-    SETTINGS(route = "settings", titleRes = R.string.nav_settings);
+    THEME(route = "theme", titleRes = R.string.nav_theme),
+    DATA_VALUES(route = "data_values", titleRes = R.string.nav_data_values);
 
     companion object {
         fun fromRoute(route: String): AppDestination {

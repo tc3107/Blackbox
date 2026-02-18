@@ -5,7 +5,7 @@
     <string name="nav_location">Live Location</string>
     <string name="nav_data_values">Debug</string>
     <string name="nav_database">Database Controls</string>
-    <string name="nav_settings">Settings</string>
+    <string name="nav_theme">Theme</string>
     <string name="menu_open_navigation">Open navigation menu</string>
     <string name="location_notification_title">Location Tracking Active</string>
     <string name="location_notification_channel_name">Location Tracking</string>
