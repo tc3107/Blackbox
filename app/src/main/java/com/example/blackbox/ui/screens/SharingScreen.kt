@@ -5,13 +5,16 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
@@ -19,7 +22,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -49,15 +55,23 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.Canvas
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.CircleShape
@@ -70,26 +84,22 @@ import com.example.blackbox.sharing.ZONE_NAME_MIN_LENGTH
 import com.example.blackbox.sharing.ZONE_RADIUS_MAX_METERS
 import com.example.blackbox.sharing.ZONE_RADIUS_MIN_METERS
 import com.example.blackbox.sharing.ShareZone
-import com.example.blackbox.sharing.SharingSettings
-import com.example.blackbox.sharing.USERNAME_MAX_LENGTH
-import com.example.blackbox.sharing.USERNAME_MIN_LENGTH
-import com.example.blackbox.sharing.MAX_FAST_INTERVAL_MS
-import com.example.blackbox.sharing.MAX_NORMAL_INTERVAL_MS
-import com.example.blackbox.sharing.MIN_FAST_INTERVAL_MS
-import com.example.blackbox.sharing.MIN_NORMAL_INTERVAL_MS
 import com.example.blackbox.sharing.QrScannerActivity
+import com.example.blackbox.sharing.SHARING_DEBUG_TAG
 import com.example.blackbox.sharing.hasSharingNetworkPermissions
-import com.example.blackbox.sharing.isValidUsername
 import com.example.blackbox.ui.components.ButtonLabel
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private const val DIALOG_WIDTH_FRACTION = 0.96f
+private const val RELAY_STATUS_UI_DEBOUNCE_MS = 800L
+private const val BAR_UPDATE_TICK_MS = 250L
 
 @Composable
 fun SharingScreen(modifier: Modifier = Modifier) {
@@ -99,10 +109,6 @@ fun SharingScreen(modifier: Modifier = Modifier) {
     val locationState by LocationEngine.state.collectAsState()
 
     var statusMessage by rememberSaveable { mutableStateOf<String?>(null) }
-    var settingsExpanded by rememberSaveable { mutableStateOf(false) }
-    var activeSettingsEditor by remember { mutableStateOf<SettingsEditor?>(null) }
-    var settingsEditorInput by rememberSaveable { mutableStateOf("") }
-    var settingsEditorError by rememberSaveable { mutableStateOf<String?>(null) }
     var shareCodeDialogVisible by rememberSaveable { mutableStateOf(false) }
     var scanCodeDialogVisible by rememberSaveable { mutableStateOf(false) }
     var shareManualCodeInput by rememberSaveable { mutableStateOf("") }
@@ -212,33 +218,6 @@ fun SharingScreen(modifier: Modifier = Modifier) {
         }
     }
 
-    fun openSettingsEditor(editor: SettingsEditor) {
-        activeSettingsEditor = editor
-        settingsEditorError = null
-        settingsEditorInput = when (editor) {
-            SettingsEditor.Username -> sharingState.settings.username
-            SettingsEditor.RelayUrl -> sharingState.settings.relayBaseUrl
-            SettingsEditor.NormalIntervalMinutes -> (sharingState.settings.normalIntervalMs / 60_000L).toString()
-            SettingsEditor.FastIntervalSeconds -> (sharingState.settings.fastIntervalMs / 1_000L).toString()
-        }
-    }
-
-    fun missingOrInvalidEditor(settings: SharingSettings): SettingsEditor? {
-        if (!isValidUsername(settings.username)) {
-            return SettingsEditor.Username
-        }
-        if (!isValidRelayBaseUrl(settings.relayBaseUrl)) {
-            return SettingsEditor.RelayUrl
-        }
-        if (settings.normalIntervalMs !in MIN_NORMAL_INTERVAL_MS..MAX_NORMAL_INTERVAL_MS) {
-            return SettingsEditor.NormalIntervalMinutes
-        }
-        if (settings.fastIntervalMs !in MIN_FAST_INTERVAL_MS..MAX_FAST_INTERVAL_MS) {
-            return SettingsEditor.FastIntervalSeconds
-        }
-        return null
-    }
-
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
@@ -246,6 +225,13 @@ fun SharingScreen(modifier: Modifier = Modifier) {
     ) {
         item {
             RelayConnectionStatusBar(sharingState)
+        }
+
+        item {
+            RefreshDelaysCard(
+                sharingState = sharingState,
+                locationState = locationState
+            )
         }
 
         item {
@@ -257,7 +243,11 @@ fun SharingScreen(modifier: Modifier = Modifier) {
         }
 
         item {
-            SharingStatusHeader(sharingState = sharingState)
+            ShareMyLocationToggleRow(
+                enabled = sharingState.settings.sharingEnabled,
+                outboundRecipientsCount = sharingState.outboundRecipientsCount,
+                onCheckedChange = { LocationSharingController.setSharingEnabled(it) }
+            )
         }
 
         if (!networkPermissionGranted) {
@@ -271,39 +261,12 @@ fun SharingScreen(modifier: Modifier = Modifier) {
         }
 
         item {
-            MySharingSection(
-                state = sharingState,
-                settingsExpanded = settingsExpanded,
-                onSettingsExpandedChange = { settingsExpanded = it },
-                onEditUsername = { openSettingsEditor(SettingsEditor.Username) },
-                onEditRelayUrl = { openSettingsEditor(SettingsEditor.RelayUrl) },
-                onEditNormalInterval = { openSettingsEditor(SettingsEditor.NormalIntervalMinutes) },
-                onEditFastInterval = { openSettingsEditor(SettingsEditor.FastIntervalSeconds) },
-                onToggleSharing = { enabled ->
-                    if (!enabled) {
-                        LocationSharingController.setSharingEnabled(false)
-                        return@MySharingSection
-                    }
-
-                    val missing = missingOrInvalidEditor(sharingState.settings)
-                    if (missing != null) {
-                        openSettingsEditor(missing)
-                        statusMessage = when (missing) {
-                            SettingsEditor.Username -> "Username required before enabling Share My Location."
-                            SettingsEditor.RelayUrl -> "Relay URL is invalid. Update it before enabling Share My Location."
-                            SettingsEditor.NormalIntervalMinutes -> "Normal interval is invalid. Update it before enabling Share My Location."
-                            SettingsEditor.FastIntervalSeconds -> "Fast interval is invalid. Update it before enabling Share My Location."
-                        }
-                        return@MySharingSection
-                    }
-                    LocationSharingController.setSharingEnabled(true)
-                },
-            )
-        }
-
-        item {
             OnboardingSection(
                 onOpenShareCode = {
+                    Log.d(
+                        SHARING_DEBUG_TAG,
+                        "Share Location Code pressed code=${sharingState.myContactCode ?: "UNAVAILABLE"}"
+                    )
                     shareCodeDialogVisible = true
                     shareManualCodeInput = ""
                     shareManualCodeError = null
@@ -401,82 +364,6 @@ fun SharingScreen(modifier: Modifier = Modifier) {
             }
         }
 
-        item {
-            ReceivedCardsSection(state = sharingState)
-        }
-    }
-
-    if (activeSettingsEditor != null) {
-        val editor = activeSettingsEditor ?: return
-        SettingsEditorDialog(
-            editor = editor,
-            input = settingsEditorInput,
-            error = settingsEditorError,
-            onInputChange = {
-                settingsEditorError = null
-                settingsEditorInput = when (editor) {
-                    SettingsEditor.NormalIntervalMinutes,
-                    SettingsEditor.FastIntervalSeconds -> it.filter(Char::isDigit)
-                    else -> it
-                }
-            },
-            onDismiss = {
-                activeSettingsEditor = null
-                settingsEditorError = null
-            },
-            onConfirm = {
-                when (editor) {
-                    SettingsEditor.Username -> {
-                        val trimmed = settingsEditorInput.trim()
-                        if (!isValidUsername(trimmed)) {
-                            settingsEditorError = "Username must be $USERNAME_MIN_LENGTH-$USERNAME_MAX_LENGTH characters."
-                            return@SettingsEditorDialog
-                        }
-                        LocationSharingController.setUsername(trimmed)
-                        statusMessage = "Username updated."
-                    }
-                    SettingsEditor.RelayUrl -> {
-                        val normalized = settingsEditorInput.trim().trimEnd('/')
-                        if (!isValidRelayBaseUrl(normalized)) {
-                            settingsEditorError = "Relay URL must start with http:// or https:// and include host."
-                            return@SettingsEditorDialog
-                        }
-                        LocationSharingController.setRelayBaseUrl(normalized)
-                        statusMessage = "Relay URL updated."
-                    }
-                    SettingsEditor.NormalIntervalMinutes -> {
-                        val minutes = settingsEditorInput.toLongOrNull()
-                        val minValue = MIN_NORMAL_INTERVAL_MS / 60_000L
-                        val maxValue = MAX_NORMAL_INTERVAL_MS / 60_000L
-                        if (minutes == null || minutes !in minValue..maxValue) {
-                            settingsEditorError = "Normal interval must be $minValue-$maxValue minutes."
-                            return@SettingsEditorDialog
-                        }
-                        LocationSharingController.setIntervals(
-                            normalMs = minutes * 60_000L,
-                            fastMs = sharingState.settings.fastIntervalMs
-                        )
-                        statusMessage = "Normal interval updated."
-                    }
-                    SettingsEditor.FastIntervalSeconds -> {
-                        val seconds = settingsEditorInput.toLongOrNull()
-                        val minValue = MIN_FAST_INTERVAL_MS / 1_000L
-                        val maxValue = MAX_FAST_INTERVAL_MS / 1_000L
-                        if (seconds == null || seconds !in minValue..maxValue) {
-                            settingsEditorError = "Fast interval must be $minValue-$maxValue seconds."
-                            return@SettingsEditorDialog
-                        }
-                        LocationSharingController.setIntervals(
-                            normalMs = sharingState.settings.normalIntervalMs,
-                            fastMs = seconds * 1_000L
-                        )
-                        statusMessage = "Fast interval updated."
-                    }
-                }
-                activeSettingsEditor = null
-                settingsEditorError = null
-            }
-        )
     }
 
     if (shareCodeDialogVisible) {
@@ -607,51 +494,34 @@ fun SharingScreen(modifier: Modifier = Modifier) {
 @Composable
 private fun RelayConnectionStatusBar(sharingState: LocationSharingState) {
     val sync = sharingState.sync
+    var displayedReachable by remember { mutableStateOf(sync.relayReachable == true) }
+    val targetReachable = sync.relayReachable ?: displayedReachable
+
+    LaunchedEffect(targetReachable) {
+        if (targetReachable != displayedReachable) {
+            delay(RELAY_STATUS_UI_DEBOUNCE_MS)
+            displayedReachable = targetReachable
+        }
+    }
+
     val title: String
     val detail: String
     val containerColor: Color
     val contentColor: Color
     val dotColor: Color
-    val checkingContainerColor = Color(0xFFFFF3E0)
-    val checkingContentColor = Color(0xFF8A4B00)
-    val checkingDotColor = Color(0xFFFB8C00)
 
-    when {
-        sync.relayStatusChecking && sync.relayReachable == null -> {
-            title = "Checking relay connection"
-            detail = ""
-            containerColor = checkingContainerColor
-            contentColor = checkingContentColor
-            dotColor = checkingDotColor
-        }
-        sync.relayStatusChecking -> {
-            title = if (sync.relayReachable == true) "Relay connected" else "Checking relay connection"
-            detail = ""
-            containerColor = checkingContainerColor
-            contentColor = checkingContentColor
-            dotColor = checkingDotColor
-        }
-        sync.relayReachable == true -> {
-            title = "Relay connected"
-            detail = ""
-            containerColor = MaterialTheme.colorScheme.secondaryContainer
-            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-            dotColor = Color(0xFF2E7D32)
-        }
-        sync.relayReachable == false -> {
-            title = "Relay unreachable"
-            detail = sync.lastRelayStatusError ?: "Last check ${formatTime(sync.lastRelayStatusCheckAtMs)}"
-            containerColor = MaterialTheme.colorScheme.errorContainer
-            contentColor = MaterialTheme.colorScheme.onErrorContainer
-            dotColor = MaterialTheme.colorScheme.error
-        }
-        else -> {
-            title = "Relay status unknown"
-            detail = "Open this page to check relay connectivity."
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
-            dotColor = MaterialTheme.colorScheme.outline
-        }
+    if (displayedReachable) {
+        title = "Relay connected"
+        detail = ""
+        containerColor = MaterialTheme.colorScheme.secondaryContainer
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+        dotColor = Color(0xFF2E7D32)
+    } else {
+        title = "Relay unreachable"
+        detail = sync.lastRelayStatusError ?: "Last check ${formatTime(sync.lastRelayStatusCheckAtMs)}"
+        containerColor = MaterialTheme.colorScheme.errorContainer
+        contentColor = MaterialTheme.colorScheme.onErrorContainer
+        dotColor = MaterialTheme.colorScheme.error
     }
 
     Card(
@@ -686,62 +556,38 @@ private fun RelayConnectionStatusBar(sharingState: LocationSharingState) {
 }
 
 @Composable
-private fun StatusDot(
-    color: Color,
-    shape: Shape,
-    size: androidx.compose.ui.unit.Dp = 10.dp
+private fun RefreshDelaysCard(
+    sharingState: LocationSharingState,
+    locationState: com.example.blackbox.location.LocationEngineState
 ) {
-    Box(
-        modifier = Modifier
-            .padding(start = 2.dp)
-            .size(size)
-            .clip(shape)
-            .background(color)
-    )
-}
-
-@Composable
-private fun SharingStatusHeader(sharingState: LocationSharingState) {
-    OutlinedCard(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Text(
-                text = "System Status",
-                style = MaterialTheme.typography.titleSmall
-            )
-            Text(
-                text = "Sharing: ${if (sharingState.settings.sharingEnabled) "Enabled" else "Disabled"}",
-                style = MaterialTheme.typography.bodySmall
-            )
-            Text(
-                text = "Recipients: ${sharingState.outboundRecipientsCount} | Following: ${sharingState.followingCount}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                text = sharingState.lastInfo,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+    val nowMs by produceState(initialValue = System.currentTimeMillis()) {
+        while (true) {
+            delay(BAR_UPDATE_TICK_MS)
+            value = System.currentTimeMillis()
         }
     }
-}
+    val relayTotal = com.example.blackbox.sharing.RELAY_STATUS_INTERVAL_MS
+    val pollTotal = com.example.blackbox.sharing.POLL_INTERVAL_MS
+    val isFast = (locationState.bestMotionFix?.speedMetersPerSecond ?: -1f) >= sharingState.settings.fastSpeedThresholdMps
+    val sendTotal = if (isFast) sharingState.settings.fastIntervalMs else sharingState.settings.normalIntervalMs
 
-@Composable
-private fun MySharingSection(
-    state: LocationSharingState,
-    settingsExpanded: Boolean,
-    onSettingsExpandedChange: (Boolean) -> Unit,
-    onEditUsername: () -> Unit,
-    onEditRelayUrl: () -> Unit,
-    onEditNormalInterval: () -> Unit,
-    onEditFastInterval: () -> Unit,
-    onToggleSharing: (Boolean) -> Unit
-) {
+    val relayRemaining = remainingDelayMs(
+        nowMs = nowMs,
+        lastAtMs = sharingState.sync.lastRelayStatusCheckAtMs,
+        totalMs = relayTotal
+    )
+    val pollRemaining = remainingDelayMs(
+        nowMs = nowMs,
+        lastAtMs = sharingState.sync.lastPollAttemptAtMs,
+        totalMs = pollTotal
+    )
+    val sendAnchor = sharingState.sync.lastPushSuccessAtMs ?: sharingState.sync.lastPushAttemptAtMs
+    val sendRemaining = remainingDelayMs(
+        nowMs = nowMs,
+        lastAtMs = sendAnchor,
+        totalMs = sendTotal
+    )
+
     OutlinedCard(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
@@ -749,141 +595,199 @@ private fun MySharingSection(
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Share My Location", style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        text = "Share to ${state.outboundRecipientsCount} contact(s)",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Share my location", style = MaterialTheme.typography.bodySmall)
-                    Switch(
-                        checked = state.settings.sharingEnabled,
-                        onCheckedChange = onToggleSharing
-                    )
-                }
-            }
-            Text(
-                text = "Username: ${state.settings.username.ifBlank { "(not set)" }}",
-                style = MaterialTheme.typography.bodySmall
+            DelayProgressRow(
+                label = "Relay Check",
+                totalMs = relayTotal,
+                remainingMs = relayRemaining
             )
-            Text(
-                text = "Relay: ${state.settings.relayBaseUrl}",
-                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
+            DelayProgressRow(
+                label = "Retrieve Locations (polling)",
+                totalMs = pollTotal,
+                remainingMs = pollRemaining
             )
-            Text(
-                text = "Normal: ${state.settings.normalIntervalMs / 60_000L} min | Fast: ${state.settings.fastIntervalMs / 1_000L} sec",
-                style = MaterialTheme.typography.bodySmall
+            DelayProgressRow(
+                label = "Sending Location",
+                totalMs = sendTotal,
+                remainingMs = sendRemaining
             )
-            OutlinedButton(
-                onClick = { onSettingsExpandedChange(!settingsExpanded) },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                ButtonLabel(if (settingsExpanded) "Hide Sharing Settings" else "Edit Sharing Settings")
-            }
-            AnimatedVisibility(visible = settingsExpanded) {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedButton(onClick = onEditUsername, modifier = Modifier.fillMaxWidth()) {
-                        ButtonLabel("Edit Username")
-                    }
-                    OutlinedButton(onClick = onEditRelayUrl, modifier = Modifier.fillMaxWidth()) {
-                        ButtonLabel("Edit Relay URL")
-                    }
-                    OutlinedButton(onClick = onEditNormalInterval, modifier = Modifier.fillMaxWidth()) {
-                        ButtonLabel("Edit Normal Interval")
-                    }
-                    OutlinedButton(onClick = onEditFastInterval, modifier = Modifier.fillMaxWidth()) {
-                        ButtonLabel("Edit Fast Interval")
-                    }
-                }
-            }
         }
     }
 }
 
 @Composable
-private fun SettingsEditorDialog(
-    editor: SettingsEditor,
-    input: String,
-    error: String?,
-    onInputChange: (String) -> Unit,
-    onDismiss: () -> Unit,
-    onConfirm: () -> Unit
+private fun DelayProgressRow(
+    label: String,
+    totalMs: Long,
+    remainingMs: Long
 ) {
-    val title = when (editor) {
-        SettingsEditor.Username -> "Edit Username"
-        SettingsEditor.RelayUrl -> "Edit Relay URL"
-        SettingsEditor.NormalIntervalMinutes -> "Edit Normal Interval (minutes)"
-        SettingsEditor.FastIntervalSeconds -> "Edit Fast Interval (seconds)"
+    val progress = if (totalMs <= 0L) {
+        1f
+    } else {
+        ((totalMs - remainingMs).toFloat() / totalMs.toFloat()).coerceIn(0f, 1f)
     }
-    val keyboardType = when (editor) {
-        SettingsEditor.RelayUrl -> KeyboardType.Uri
-        SettingsEditor.NormalIntervalMinutes,
-        SettingsEditor.FastIntervalSeconds -> KeyboardType.Number
-        SettingsEditor.Username -> KeyboardType.Text
-    }
-    val label = when (editor) {
-        SettingsEditor.Username -> "Username"
-        SettingsEditor.RelayUrl -> "Relay URL"
-        SettingsEditor.NormalIntervalMinutes -> "Minutes"
-        SettingsEditor.FastIntervalSeconds -> "Seconds"
-    }
-
-    AlertDialog(
-        modifier = Modifier.fillMaxWidth(DIALOG_WIDTH_FRACTION),
-        properties = DialogProperties(usePlatformDefaultWidth = false),
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = input,
-                    onValueChange = onInputChange,
-                    label = { Text(label) },
-                    keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
-                    singleLine = true
-                )
-                if (!error.isNullOrBlank()) {
-                    Text(
-                        text = error,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onConfirm) { Text("Confirm") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium
+            )
+            Text(
+                text = formatDelayMs(remainingMs),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
+        DelayProgressBar(progress = progress)
+    }
+}
+
+@Composable
+private fun DelayProgressBar(progress: Float) {
+    val shape = RoundedCornerShape(7.dp)
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(12.dp)
+            .clip(shape)
+            .border(width = 1.dp, color = Color.White.copy(alpha = 0.75f), shape = shape)
+            .padding(1.dp)
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val width = size.width
+            val height = size.height
+            val headX = width * progress.coerceIn(0f, 1f)
+            val trailLength = width * 0.34f
+            val trailStart = (headX - trailLength).coerceAtLeast(0f)
+            val fillWidth = headX.coerceAtLeast(0f)
+
+            if (fillWidth > 0f) {
+                drawRect(
+                    color = Color.White.copy(alpha = 0.10f),
+                    topLeft = Offset(0f, 0f),
+                    size = Size(fillWidth, height)
+                )
+            }
+            if (headX > 0f) {
+                drawRect(
+                    brush = Brush.horizontalGradient(
+                        colors = listOf(
+                            Color.Transparent,
+                            Color.White.copy(alpha = 0.35f),
+                            Color.White.copy(alpha = 0.9f)
+                        ),
+                        startX = trailStart,
+                        endX = headX
+                    ),
+                    topLeft = Offset(trailStart, 0f),
+                    size = Size((headX - trailStart).coerceAtLeast(1f), height)
+                )
+            }
+        }
+    }
+}
+
+private fun remainingDelayMs(nowMs: Long, lastAtMs: Long?, totalMs: Long): Long {
+    if (totalMs <= 0L) return 0L
+    val last = lastAtMs ?: return 0L
+    val elapsed = (nowMs - last).coerceAtLeast(0L)
+    return (totalMs - elapsed).coerceAtLeast(0L)
+}
+
+private fun formatDelayMs(ms: Long): String {
+    val totalSeconds = (ms / 1000L).coerceAtLeast(0L)
+    val minutes = totalSeconds / 60L
+    val seconds = totalSeconds % 60L
+    return if (minutes > 0L) {
+        "${minutes}m ${seconds}s"
+    } else {
+        "${seconds}s"
+    }
+}
+
+@Composable
+private fun StatusDot(
+    color: Color,
+    shape: Shape,
+    size: androidx.compose.ui.unit.Dp = 10.dp,
+    glow: Boolean = false,
+    edgePadding: androidx.compose.ui.unit.Dp = 2.dp,
+    hollow: Boolean = false
+) {
+    Box(
+        modifier = Modifier
+            .padding(start = edgePadding)
+            .then(
+                if (glow) {
+                    Modifier.shadow(
+                        elevation = 8.dp,
+                        shape = shape,
+                        clip = false
+                    )
+                } else {
+                    Modifier
+                }
+            )
+            .size(size)
+            .clip(shape)
+            .then(
+                if (hollow) {
+                    Modifier
+                        .border(width = 2.dp, color = color, shape = shape)
+                        .background(Color.Transparent)
+                } else {
+                    Modifier.background(color)
+                }
+            )
     )
 }
 
-private enum class SettingsEditor {
-    Username,
-    RelayUrl,
-    NormalIntervalMinutes,
-    FastIntervalSeconds
-}
-
-private fun isValidRelayBaseUrl(baseUrl: String): Boolean {
-    val normalized = baseUrl.trim()
-    if (!(normalized.startsWith("http://") || normalized.startsWith("https://"))) {
-        return false
+@Composable
+private fun ShareMyLocationToggleRow(
+    enabled: Boolean,
+    outboundRecipientsCount: Int,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = "Share My Location",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "Share to $outboundRecipientsCount contact(s).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = enabled,
+                onCheckedChange = onCheckedChange
+            )
+        }
+        HorizontalDivider(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 10.dp),
+            color = MaterialTheme.colorScheme.outlineVariant
+        )
     }
-    val uri = runCatching { android.net.Uri.parse(normalized) }.getOrNull() ?: return false
-    return !uri.host.isNullOrBlank()
 }
 
 @Composable
@@ -1095,11 +999,17 @@ private fun ContactsSection(
     onAliasApply: (String, String?) -> Unit,
     onRemoveContact: (String) -> Unit
 ) {
-    var selectedContactId by remember { mutableStateOf<String?>(null) }
-    var renameInput by rememberSaveable { mutableStateOf("") }
+    val context = LocalContext.current
+    var expandedSenderId by rememberSaveable { mutableStateOf<String?>(null) }
+    var renameTargetSenderId by rememberSaveable { mutableStateOf<String?>(null) }
+    var renameDialogInput by rememberSaveable { mutableStateOf("") }
+    var deleteTargetSenderId by rememberSaveable { mutableStateOf<String?>(null) }
     val receivedBySender = state.receivedCards
         .groupBy { it.senderId }
         .mapValues { (_, cards) -> cards.maxOf { it.receivedAtMs } }
+    val latestCardBySender = state.receivedCards
+        .groupBy { it.senderId }
+        .mapValues { (_, cards) -> cards.maxByOrNull { it.receivedAtMs } }
     val sortedContacts = state.contacts.sortedWith(
         compareByDescending<com.example.blackbox.sharing.ContactView> { receivedBySender[it.senderId] ?: Long.MIN_VALUE }
             .thenBy { it.displayName.lowercase(Locale.US) }
@@ -1118,131 +1028,294 @@ private fun ContactsSection(
             }
             sortedContacts.forEach { contact ->
                 val lastReceivedAtMs = receivedBySender[contact.senderId]
-                Row(
+                val latestCard = latestCardBySender[contact.senderId]
+                val hasRecentLocation = lastReceivedAtMs != null &&
+                    (System.currentTimeMillis() - lastReceivedAtMs) < 30 * 60_000L
+                val isExpanded = expandedSenderId == contact.senderId
+                val rowInteractionSource = remember(contact.senderId) { MutableInteractionSource() }
+                val cardShape = RoundedCornerShape(14.dp)
+                val arrowRotation by animateFloatAsState(
+                    targetValue = if (isExpanded) 90f else 0f,
+                    label = "contactExpandArrow"
+                )
+
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(82.dp)
+                        .clip(cardShape)
                         .border(
                             width = 1.dp,
                             color = MaterialTheme.colorScheme.outlineVariant,
-                            shape = RoundedCornerShape(14.dp)
+                            shape = cardShape
                         )
-                        .padding(horizontal = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    StatusDot(
-                        color = contactStatusColor(lastReceivedAtMs),
-                        shape = CircleShape,
-                        size = 14.dp
-                    )
                     Row(
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(
+                                interactionSource = rowInteractionSource,
+                                indication = null
+                            ) { expandedSenderId = if (isExpanded) null else contact.senderId }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        StatusDot(
+                            color = contactStatusColor(lastReceivedAtMs),
+                            shape = CircleShape,
+                            size = 16.dp,
+                            glow = true,
+                            edgePadding = 0.dp,
+                            hollow = !contact.iFollow
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
                         Text(
                             text = contact.displayName,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            text = ">",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                selectedContactId = contact.senderId
-                                renameInput = contact.localAlias.orEmpty()
-                                }
+                                .rotate(arrowRotation)
+                                .padding(horizontal = 4.dp, vertical = 2.dp)
                         )
                     }
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxSize()
-                            .padding(vertical = 8.dp),
-                        verticalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
+                    AnimatedVisibility(visible = isExpanded) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text(
-                                text = "Share",
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                            Switch(
-                                checked = contact.canReceiveFromMe,
-                                onCheckedChange = { onToggleShareTo(contact.senderId, it) }
-                            )
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = "Follow",
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                            Switch(
-                                checked = contact.iFollow,
-                                onCheckedChange = { onToggleFollow(contact.senderId, it) }
-                            )
+                            if (contact.iFollow && hasRecentLocation && latestCard != null) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(120.dp)
+                                        .border(
+                                            width = 1.dp,
+                                            color = MaterialTheme.colorScheme.outlineVariant,
+                                            shape = RoundedCornerShape(14.dp)
+                                        )
+                                        .padding(12.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "Map Placeholder\n${formatLatLon(latestCard.claim.lat, latestCard.claim.lon)}",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                if (contact.canReceiveFromMe) {
+                                    Button(
+                                        onClick = { onToggleShareTo(contact.senderId, false) },
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text(
+                                            text = "Sharing",
+                                            textAlign = TextAlign.Center,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    }
+                                } else {
+                                    OutlinedButton(
+                                        onClick = { onToggleShareTo(contact.senderId, true) },
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text(
+                                            text = "Sharing",
+                                            textAlign = TextAlign.Center,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    }
+                                }
+
+                                if (contact.iFollow) {
+                                    Button(
+                                        onClick = { onToggleFollow(contact.senderId, false) },
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text(
+                                            text = "Following",
+                                            textAlign = TextAlign.Center,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    }
+                                } else {
+                                    OutlinedButton(
+                                        onClick = { onToggleFollow(contact.senderId, true) },
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text(
+                                            text = "Following",
+                                            textAlign = TextAlign.Center,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    }
+                                }
+                            }
+
+                            OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    LatLonTableRow(
+                                        lat = latestCard?.claim?.lat,
+                                        lon = latestCard?.claim?.lon,
+                                        onCopy = { text ->
+                                            copyToClipboard(context, "blackbox_coords", text)
+                                        }
+                                    )
+                                    InfoTableRow(
+                                        leftLabel = "Speed",
+                                        leftValue = formatSpeed(latestCard?.claim?.speed),
+                                        rightLabel = "Accuracy",
+                                        rightValue = formatAccuracy(latestCard?.claim?.accuracy)
+                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = "Updated",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Text(
+                                                text = formatAgeSince(lastReceivedAtMs),
+                                                style = MaterialTheme.typography.bodySmall
+                                            )
+                                        }
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = "Battery",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            BatteryBadge(percent = latestCard?.claim?.batteryPercent)
+                                        }
+                                    }
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = {
+                                        renameTargetSenderId = contact.senderId
+                                        renameDialogInput = contact.localAlias.orEmpty()
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    ButtonLabel("Rename")
+                                }
+                                OutlinedButton(
+                                    onClick = { deleteTargetSenderId = contact.senderId },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    ButtonLabel("Delete")
+                                }
+                            }
                         }
                     }
                 }
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(8.dp))
             }
         }
     }
 
-    val selectedContact = sortedContacts.firstOrNull { it.senderId == selectedContactId }
-    if (selectedContact != null) {
+    val renameTargetContact = sortedContacts.firstOrNull { it.senderId == renameTargetSenderId }
+    if (renameTargetContact != null) {
         AlertDialog(
-            onDismissRequest = { selectedContactId = null },
-            title = { Text(selectedContact.displayName) },
+            onDismissRequest = {
+                renameTargetSenderId = null
+                renameDialogInput = ""
+            },
+            title = { Text("Rename ${renameTargetContact.displayName}") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        text = "ID: ${selectedContact.senderId}",
-                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
-                    )
-                    Text(
-                        text = "Fingerprint: ${selectedContact.safetyFingerprint}",
-                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
-                    )
-                    OutlinedTextField(
-                        value = renameInput,
-                        onValueChange = { renameInput = it },
-                        label = { Text("Rename contact") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-                }
+                OutlinedTextField(
+                    value = renameDialogInput,
+                    onValueChange = { renameDialogInput = it },
+                    label = { Text("Contact name") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
             },
             confirmButton = {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(
-                        onClick = {
-                            onAliasApply(
-                                selectedContact.senderId,
-                                renameInput.trim().takeIf { it.isNotEmpty() }
-                            )
-                            selectedContactId = null
-                        }
-                    ) {
-                        ButtonLabel("Save Name")
+                TextButton(
+                    onClick = {
+                        onAliasApply(
+                            renameTargetContact.senderId,
+                            renameDialogInput.trim().takeIf { it.isNotEmpty() }
+                        )
+                        renameTargetSenderId = null
+                        renameDialogInput = ""
                     }
-                    OutlinedButton(
-                        onClick = {
-                            onRemoveContact(selectedContact.senderId)
-                            selectedContactId = null
-                        }
-                    ) {
-                        ButtonLabel("Delete")
-                    }
-                }
+                ) { Text("Save") }
             },
             dismissButton = {
-                TextButton(onClick = { selectedContactId = null }) { Text("Close") }
+                TextButton(
+                    onClick = {
+                        renameTargetSenderId = null
+                        renameDialogInput = ""
+                    }
+                ) { Text("Cancel") }
+            }
+        )
+    }
+
+    val deleteTargetContact = sortedContacts.firstOrNull { it.senderId == deleteTargetSenderId }
+    if (deleteTargetContact != null) {
+        AlertDialog(
+            onDismissRequest = { deleteTargetSenderId = null },
+            title = { Text("Delete ${deleteTargetContact.displayName}?") },
+            text = {
+                Text(
+                    text = "This removes the contact and its locally received location data.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onRemoveContact(deleteTargetContact.senderId)
+                        if (expandedSenderId == deleteTargetContact.senderId) {
+                            expandedSenderId = null
+                        }
+                        deleteTargetSenderId = null
+                    }
+                ) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteTargetSenderId = null }) { Text("Cancel") }
             }
         )
     }
@@ -1260,15 +1333,104 @@ private fun contactStatusColor(lastReceivedAtMs: Long?): Color {
     }
 }
 
-private fun contactStatusLabel(lastReceivedAtMs: Long?): String {
-    if (lastReceivedAtMs == null) {
-        return "No updates"
+@Composable
+private fun LatLonTableRow(
+    lat: Double?,
+    lon: Double?,
+    onCopy: (String) -> Unit
+) {
+    val latText = lat?.let { "%.6f".format(Locale.US, it) } ?: "Unknown"
+    val lonText = lon?.let { "%.6f".format(Locale.US, it) } ?: "Unknown"
+    val combined = if (lat != null && lon != null) {
+        "${"%.6f".format(Locale.US, lat)}, ${"%.6f".format(Locale.US, lon)}"
+    } else {
+        "Unknown"
     }
-    val ageMs = System.currentTimeMillis() - lastReceivedAtMs
-    return when {
-        ageMs < 10 * 60_000L -> "Updated <10m"
-        ageMs < 30 * 60_000L -> "Updated 10-30m"
-        else -> "Updated >30m"
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .clickable { onCopy(combined) }
+        ) {
+            Text("Lat", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(latText, style = MaterialTheme.typography.bodySmall)
+        }
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .clickable { onCopy(combined) }
+        ) {
+            Text("Lon", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(lonText, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun InfoTableRow(
+    leftLabel: String,
+    leftValue: String,
+    rightLabel: String,
+    rightValue: String
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(leftLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(leftValue, style = MaterialTheme.typography.bodySmall)
+        }
+        if (rightLabel.isNotBlank()) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(rightLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(rightValue, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
+@Composable
+private fun BatteryBadge(percent: Int?) {
+    val color = when {
+        percent == null -> MaterialTheme.colorScheme.outline
+        percent < 10 -> Color(0xFFC62828)
+        else -> Color(0xFF2E7D32)
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = percent?.let { "$it%" } ?: "N/A",
+            style = MaterialTheme.typography.bodySmall,
+            color = Color.White
+        )
+        Box(
+            modifier = Modifier
+                .size(width = 18.dp, height = 10.dp)
+                .border(1.dp, color, RoundedCornerShape(2.dp))
+        ) {
+            val fillFraction = ((percent ?: 0).coerceIn(0, 100)) / 100f
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(1.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .fillMaxWidth(fillFraction)
+                        .background(color, RoundedCornerShape(1.dp))
+                )
+            }
+        }
+        Box(
+            modifier = Modifier
+                .size(width = 2.dp, height = 4.dp)
+                .background(color, RoundedCornerShape(1.dp))
+        )
     }
 }
 
@@ -1425,64 +1587,28 @@ private fun IdentityBackupSection(
     }
 }
 
-@Composable
-private fun ReceivedCardsSection(state: LocationSharingState) {
-    OutlinedCard(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text("Received Locations", style = MaterialTheme.typography.titleSmall)
-            if (state.receivedCards.isEmpty()) {
-                Text("No received locations yet.", style = MaterialTheme.typography.bodySmall)
-            }
-            state.receivedCards.forEach { card ->
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(card.displayName, style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        text = "From ${card.senderId}",
-                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
-                    )
-                    Text(
-                        text = "Fix ${formatTime(card.claim.timestampMs)} | relay seq ${card.relaySeq}",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Text(
-                        text = "Lat/Lon ${"%.6f".format(Locale.US, card.claim.lat)}, ${"%.6f".format(Locale.US, card.claim.lon)}",
-                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
-                    )
-                    Text(
-                        text = "Speed ${card.claim.speed?.let { "%.2f".format(Locale.US, it) } ?: "null"} m/s | Acc ${card.claim.accuracy?.let { "%.1f".format(Locale.US, it) } ?: "null"} m",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Text(
-                        text = "Zones ${card.claim.zones?.joinToString(", ") ?: "null"}",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    val pollStatus = card.pollStatus
-                    Text(
-                        text = "Poll status: ${pollStatus?.lastError ?: "ok"}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (pollStatus?.lastError == null) {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        } else {
-                            MaterialTheme.colorScheme.tertiary
-                        }
-                    )
-                }
-                Spacer(modifier = Modifier.height(6.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(6.dp))
-            }
-        }
-    }
-}
-
 private fun copyToClipboard(context: Context, label: String, text: String) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
+}
+
+private fun formatLatLon(lat: Double?, lon: Double?): String {
+    if (lat == null || lon == null) return "No location yet"
+    return "${"%.6f".format(Locale.US, lat)}, ${"%.6f".format(Locale.US, lon)}"
+}
+
+private fun formatSpeed(speed: Float?): String {
+    return speed?.let { "%.2f m/s".format(Locale.US, it) } ?: "Unknown"
+}
+
+private fun formatAccuracy(accuracy: Float?): String {
+    return accuracy?.let { "%.1f m".format(Locale.US, it) } ?: "Unknown"
+}
+
+private fun formatAgeSince(timestampMs: Long?): String {
+    if (timestampMs == null) return "No updates yet"
+    val ageSeconds = ((System.currentTimeMillis() - timestampMs).coerceAtLeast(0L)) / 1000L
+    return "$ageSeconds seconds ago"
 }
 
 private fun formatTime(timestampMillis: Long?): String {

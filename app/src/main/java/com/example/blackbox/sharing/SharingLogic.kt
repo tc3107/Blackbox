@@ -19,6 +19,8 @@ object SharingLogic {
         if (!claim.lat.isFinite() || !claim.lon.isFinite()) return false
         if (claim.lat < -90.0 || claim.lat > 90.0) return false
         if (claim.lon < -180.0 || claim.lon > 180.0) return false
+        val battery = claim.batteryPercent
+        if (battery != null && (battery < 0 || battery > 100)) return false
         return true
     }
 

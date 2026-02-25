@@ -33,6 +33,7 @@ data class LocationClaimV1(
     val lon: Double,
     val speed: Float? = null,
     val accuracy: Float? = null,
+    val batteryPercent: Int? = null,
     val zones: List<String>? = null,
     val username: String? = null,
     val senderId: String,

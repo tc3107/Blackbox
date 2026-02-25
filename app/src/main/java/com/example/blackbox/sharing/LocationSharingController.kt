@@ -1,6 +1,9 @@
 package com.example.blackbox.sharing
 
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.BatteryManager
 import android.net.Uri
 import android.util.Log
 import com.example.blackbox.location.LocationEngine
@@ -900,6 +903,7 @@ object LocationSharingController {
 
     private fun buildClaim(event: LocationSampleEvent, senderId: String, seq: Long): LocationClaimV1 {
         val matchedZones = SharingLogic.matchingZoneTags(event.lat, event.lon, snapshot.zones)
+        val batteryPercent = readBatteryPercent()
         return LocationClaimV1(
             version = SharingVersions.PAYLOAD_VERSION,
             timestampMs = event.fixTimeMs,
@@ -907,11 +911,23 @@ object LocationSharingController {
             lon = event.lon,
             speed = event.speedMps,
             accuracy = event.accuracyM.takeIf { it > 0f },
+            batteryPercent = batteryPercent,
             zones = matchedZones.takeIf { it.isNotEmpty() },
             username = normalizeUsername(currentSettings.username).takeIf { it.isNotBlank() },
             senderId = senderId,
             seq = seq
         )
+    }
+
+    private fun readBatteryPercent(): Int? {
+        val context = appContext ?: return null
+        val batteryIntent = runCatching {
+            context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        }.getOrNull() ?: return null
+        val level = batteryIntent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+        val scale = batteryIntent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+        if (level < 0 || scale <= 0) return null
+        return ((level.toFloat() / scale.toFloat()) * 100f).toInt().coerceIn(0, 100)
     }
 
     private fun buildSignedEnvelope(
@@ -1010,7 +1026,7 @@ object LocationSharingController {
                             lastPushSuccessAtMs = it.storedAtMs,
                             lastPushError = null,
                             lastPushErrorAtMs = null,
-                            nextSeq = current.sync.nextSeq + 1
+                            nextSeq = maxOf(current.sync.nextSeq, it.appliedSeq + 1L)
                         )
                     )
                 }
@@ -1027,6 +1043,18 @@ object LocationSharingController {
                     if (resolved) {
                         return@onFailure
                     }
+                    mutateSnapshot { current ->
+                        current.copy(
+                            pendingPush = current.pendingPush?.takeIf { it.claim.seq > claim.seq },
+                            sync = current.sync.copy(
+                                nextSeq = maxOf(current.sync.nextSeq, claim.seq + 1L),
+                                lastPushError = "Dropped stale push after sequence conflict.",
+                                lastPushErrorAtMs = System.currentTimeMillis()
+                            )
+                        )
+                    }
+                    setError("Dropped stale push after sequence conflict. Next push will use a higher sequence.")
+                    return@onFailure
                 }
                 Log.e(
                     SHARING_DEBUG_TAG,
@@ -1160,6 +1188,27 @@ object LocationSharingController {
                     continue
                 }
 
+                if (pending.claim.seq < snapshot.sync.nextSeq) {
+                    Log.w(
+                        SHARING_DEBUG_TAG,
+                        "Dropping stale pending push sender=${shortSharingId(identity.senderId)} seq=${pending.claim.seq} nextSeq=${snapshot.sync.nextSeq}"
+                    )
+                    mutateSnapshot { current ->
+                        if (current.pendingPush?.claim?.seq == pending.claim.seq) {
+                            current.copy(
+                                pendingPush = null,
+                                sync = current.sync.copy(
+                                    lastPushError = null,
+                                    lastPushErrorAtMs = null
+                                )
+                            )
+                        } else {
+                            current
+                        }
+                    }
+                    continue
+                }
+
                 val request = PushLocationRequest(
                     push = pending.envelope,
                     senderSignPublicKeySpkiB64Url = identity.signPublicKeySpkiB64Url,
@@ -1182,7 +1231,7 @@ object LocationSharingController {
                                     lastPushSuccessAtMs = it.storedAtMs,
                                     lastPushError = null,
                                     lastPushErrorAtMs = null,
-                                    nextSeq = current.sync.nextSeq + 1
+                                    nextSeq = maxOf(current.sync.nextSeq, it.appliedSeq + 1L)
                                 )
                             )
                         }
@@ -1198,6 +1247,23 @@ object LocationSharingController {
                             if (resolved) {
                                 return@onFailure
                             }
+                            mutateSnapshot { current ->
+                                val currentPending = current.pendingPush
+                                if (currentPending != null && currentPending.claim.seq <= pending.claim.seq) {
+                                    current.copy(
+                                        pendingPush = null,
+                                        sync = current.sync.copy(
+                                            nextSeq = maxOf(current.sync.nextSeq, pending.claim.seq + 1L),
+                                            lastPushError = "Dropped stale pending push after seq conflict.",
+                                            lastPushErrorAtMs = System.currentTimeMillis()
+                                        )
+                                    )
+                                } else {
+                                    current
+                                }
+                            }
+                            setError("Dropped stale pending push after sequence conflict. New pushes will use a higher sequence.")
+                            return@onFailure
                         }
                         Log.e(
                             SHARING_DEBUG_TAG,

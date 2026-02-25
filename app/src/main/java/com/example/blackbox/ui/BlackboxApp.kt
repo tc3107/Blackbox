@@ -49,8 +49,8 @@ import com.example.blackbox.ui.screens.DatabaseScreen
 import com.example.blackbox.ui.screens.DataValuesScreen
 import com.example.blackbox.ui.screens.LocationEngineScreen
 import com.example.blackbox.ui.screens.LocationScreen
+import com.example.blackbox.ui.screens.SettingsScreen
 import com.example.blackbox.ui.screens.SharingScreen
-import com.example.blackbox.ui.screens.ThemeScreen
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -153,7 +153,7 @@ fun BlackboxApp(
                 AppDestination.LOCATION -> LocationScreen(modifier = contentModifier)
                 AppDestination.SHARING -> SharingScreen(modifier = contentModifier)
                 AppDestination.DATABASE -> DatabaseScreen(modifier = contentModifier)
-                AppDestination.THEME -> ThemeScreen(
+                AppDestination.SETTINGS -> SettingsScreen(
                     settings = settings,
                     onCustomAccentSaved = onCustomAccentSaved,
                     modifier = contentModifier
@@ -192,11 +192,12 @@ private enum class AppDestination(
     LOCATION(route = "location", titleRes = R.string.nav_location),
     SHARING(route = "sharing", titleRes = R.string.nav_sharing),
     DATABASE(route = "database", titleRes = R.string.nav_database),
-    THEME(route = "theme", titleRes = R.string.nav_theme),
+    SETTINGS(route = "settings", titleRes = R.string.nav_settings),
     DATA_VALUES(route = "data_values", titleRes = R.string.nav_data_values);
 
     companion object {
         fun fromRoute(route: String): AppDestination {
+            if (route == "theme") return SETTINGS
             return entries.firstOrNull { it.route == route } ?: entries.first()
         }
     }
