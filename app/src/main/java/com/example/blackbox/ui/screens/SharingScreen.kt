@@ -9,6 +9,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
@@ -40,7 +42,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -55,10 +56,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import com.example.blackbox.location.LocationEngine
 import com.example.blackbox.sharing.LocationSharingController
 import com.example.blackbox.sharing.LocationSharingState
@@ -115,8 +118,6 @@ fun SharingScreen(modifier: Modifier = Modifier) {
     var networkPermissionGranted by rememberSaveable {
         mutableStateOf(context.applicationContext.hasSharingNetworkPermissions())
     }
-
-    val aliasDrafts = remember { mutableStateMapOf<String, String>() }
 
     val exportIdentityLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
@@ -318,15 +319,14 @@ fun SharingScreen(modifier: Modifier = Modifier) {
         item {
             ContactsSection(
                 state = sharingState,
-                aliasDrafts = aliasDrafts,
                 onToggleShareTo = { senderId, checked ->
                     LocationSharingController.setOutboundAuthorization(senderId, checked)
                 },
                 onToggleFollow = { senderId, checked ->
                     LocationSharingController.setFollowing(senderId, checked)
                 },
-                onAliasApply = { senderId ->
-                    LocationSharingController.setLocalAlias(senderId, aliasDrafts[senderId])
+                onAliasApply = { senderId, alias ->
+                    LocationSharingController.setLocalAlias(senderId, alias)
                 },
                 onRemoveContact = { senderId ->
                     LocationSharingController.removeContact(senderId)
@@ -686,10 +686,15 @@ private fun RelayConnectionStatusBar(sharingState: LocationSharingState) {
 }
 
 @Composable
-private fun StatusDot(color: Color, shape: Shape) {
+private fun StatusDot(
+    color: Color,
+    shape: Shape,
+    size: androidx.compose.ui.unit.Dp = 10.dp
+) {
     Box(
         modifier = Modifier
-            .size(10.dp)
+            .padding(start = 2.dp)
+            .size(size)
             .clip(shape)
             .background(color)
     )
@@ -1085,12 +1090,21 @@ private fun CreateZoneDialog(
 @Composable
 private fun ContactsSection(
     state: LocationSharingState,
-    aliasDrafts: MutableMap<String, String>,
     onToggleShareTo: (String, Boolean) -> Unit,
     onToggleFollow: (String, Boolean) -> Unit,
-    onAliasApply: (String) -> Unit,
+    onAliasApply: (String, String?) -> Unit,
     onRemoveContact: (String) -> Unit
 ) {
+    var selectedContactId by remember { mutableStateOf<String?>(null) }
+    var renameInput by rememberSaveable { mutableStateOf("") }
+    val receivedBySender = state.receivedCards
+        .groupBy { it.senderId }
+        .mapValues { (_, cards) -> cards.maxOf { it.receivedAtMs } }
+    val sortedContacts = state.contacts.sortedWith(
+        compareByDescending<com.example.blackbox.sharing.ContactView> { receivedBySender[it.senderId] ?: Long.MIN_VALUE }
+            .thenBy { it.displayName.lowercase(Locale.US) }
+    )
+
     OutlinedCard(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
@@ -1099,72 +1113,162 @@ private fun ContactsSection(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text("Contacts", style = MaterialTheme.typography.titleSmall)
-            if (state.contacts.isEmpty()) {
+            if (sortedContacts.isEmpty()) {
                 Text("No contacts imported yet.", style = MaterialTheme.typography.bodySmall)
             }
-            state.contacts.forEach { contact ->
-                aliasDrafts.putIfAbsent(contact.senderId, contact.localAlias.orEmpty())
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = contact.displayName,
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                    Text(
-                        text = contact.senderId,
-                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
-                    )
-                    Text(
-                        text = "Fingerprint: ${contact.safetyFingerprint}",
-                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+            sortedContacts.forEach { contact ->
+                val lastReceivedAtMs = receivedBySender[contact.senderId]
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(82.dp)
+                        .border(
+                            width = 1.dp,
+                            color = MaterialTheme.colorScheme.outlineVariant,
+                            shape = RoundedCornerShape(14.dp)
+                        )
+                        .padding(horizontal = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    StatusDot(
+                        color = contactStatusColor(lastReceivedAtMs),
+                        shape = CircleShape,
+                        size = 14.dp
                     )
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("Share to", style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            text = contact.displayName,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                selectedContactId = contact.senderId
+                                renameInput = contact.localAlias.orEmpty()
+                                }
+                        )
+                    }
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxSize()
+                            .padding(vertical = 8.dp),
+                        verticalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Share",
+                                style = MaterialTheme.typography.bodySmall
+                            )
                             Switch(
                                 checked = contact.canReceiveFromMe,
                                 onCheckedChange = { onToggleShareTo(contact.senderId, it) }
                             )
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("Follow", style = MaterialTheme.typography.bodySmall)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Follow",
+                                style = MaterialTheme.typography.bodySmall
+                            )
                             Switch(
                                 checked = contact.iFollow,
                                 onCheckedChange = { onToggleFollow(contact.senderId, it) }
                             )
                         }
                     }
-                    OutlinedTextField(
-                        value = aliasDrafts[contact.senderId].orEmpty(),
-                        onValueChange = { aliasDrafts[contact.senderId] = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Local alias override") },
-                        singleLine = true
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = { onAliasApply(contact.senderId) },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            ButtonLabel("Apply Alias")
-                        }
-                        OutlinedButton(
-                            onClick = { onRemoveContact(contact.senderId) },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            ButtonLabel("Remove")
-                        }
-                    }
                 }
-                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                Spacer(modifier = Modifier.height(6.dp))
             }
         }
+    }
+
+    val selectedContact = sortedContacts.firstOrNull { it.senderId == selectedContactId }
+    if (selectedContact != null) {
+        AlertDialog(
+            onDismissRequest = { selectedContactId = null },
+            title = { Text(selectedContact.displayName) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "ID: ${selectedContact.senderId}",
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
+                    )
+                    Text(
+                        text = "Fingerprint: ${selectedContact.safetyFingerprint}",
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
+                    )
+                    OutlinedTextField(
+                        value = renameInput,
+                        onValueChange = { renameInput = it },
+                        label = { Text("Rename contact") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            onAliasApply(
+                                selectedContact.senderId,
+                                renameInput.trim().takeIf { it.isNotEmpty() }
+                            )
+                            selectedContactId = null
+                        }
+                    ) {
+                        ButtonLabel("Save Name")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            onRemoveContact(selectedContact.senderId)
+                            selectedContactId = null
+                        }
+                    ) {
+                        ButtonLabel("Delete")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { selectedContactId = null }) { Text("Close") }
+            }
+        )
+    }
+}
+
+private fun contactStatusColor(lastReceivedAtMs: Long?): Color {
+    if (lastReceivedAtMs == null) {
+        return Color(0xFFC62828)
+    }
+    val ageMs = System.currentTimeMillis() - lastReceivedAtMs
+    return when {
+        ageMs < 10 * 60_000L -> Color(0xFF2E7D32)
+        ageMs < 30 * 60_000L -> Color(0xFFFB8C00)
+        else -> Color(0xFFC62828)
+    }
+}
+
+private fun contactStatusLabel(lastReceivedAtMs: Long?): String {
+    if (lastReceivedAtMs == null) {
+        return "No updates"
+    }
+    val ageMs = System.currentTimeMillis() - lastReceivedAtMs
+    return when {
+        ageMs < 10 * 60_000L -> "Updated <10m"
+        ageMs < 30 * 60_000L -> "Updated 10-30m"
+        else -> "Updated >30m"
     }
 }
 

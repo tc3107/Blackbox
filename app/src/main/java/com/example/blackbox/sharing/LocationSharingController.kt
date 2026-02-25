@@ -1018,6 +1018,16 @@ object LocationSharingController {
             }
             .onFailure { throwable ->
                 val failureReason = throwable.message ?: "Push failed"
+                if (isPushSeqConflictError(throwable)) {
+                    val resolved = reconcilePushSeqConflict(
+                        identity = identity,
+                        attemptedSeq = claim.seq,
+                        source = "push_send"
+                    )
+                    if (resolved) {
+                        return@onFailure
+                    }
+                }
                 Log.e(
                     SHARING_DEBUG_TAG,
                     "Push failed sender=${shortSharingId(identity.senderId)} seq=${claim.seq} error=$failureReason",
@@ -1179,6 +1189,16 @@ object LocationSharingController {
                         setInfo("Pending push delivered.")
                     }
                     .onFailure { throwable ->
+                        if (isPushSeqConflictError(throwable)) {
+                            val resolved = reconcilePushSeqConflict(
+                                identity = identity,
+                                attemptedSeq = pending.claim.seq,
+                                source = "push_retry"
+                            )
+                            if (resolved) {
+                                return@onFailure
+                            }
+                        }
                         Log.e(
                             SHARING_DEBUG_TAG,
                             "Pending push retry failed sender=${shortSharingId(identity.senderId)} seq=${pending.claim.seq} error=${throwable.message}",
@@ -1218,6 +1238,73 @@ object LocationSharingController {
             }
         }
         setError(reason)
+    }
+
+    private fun isPushSeqConflictError(throwable: Throwable): Boolean {
+        val message = throwable.message ?: return false
+        return message.contains("Push seq must increase monotonically", ignoreCase = true)
+    }
+
+    private suspend fun reconcilePushSeqConflict(
+        identity: SharingIdentityState,
+        attemptedSeq: Long,
+        source: String
+    ): Boolean {
+        val localRelay = relayApi ?: return false
+        val localCrypto = crypto ?: return false
+        val now = System.currentTimeMillis()
+        val nonce = randomNonceB64Url()
+        val payload = canonicalSelfStatusMessage(identity.senderId, now, nonce)
+        val signature = localCrypto.sign(identity, payload).base64UrlEncode()
+        val request = SelfStatusRequest(
+            senderId = identity.senderId,
+            timestampMs = now,
+            nonceB64Url = nonce,
+            signatureB64Url = signature,
+            senderSignPublicKeySpkiB64Url = identity.signPublicKeySpkiB64Url
+        )
+
+        val result = localRelay.selfStatus(request)
+        if (result.isFailure) {
+            Log.w(
+                SHARING_DEBUG_TAG,
+                "Seq conflict reconcile failed source=$source sender=${shortSharingId(identity.senderId)} attemptedSeq=$attemptedSeq error=${result.exceptionOrNull()?.message}",
+                result.exceptionOrNull()
+            )
+            return false
+        }
+
+        val response = result.getOrNull() ?: return false
+        val latestSeq = response.latestSeq ?: return false
+        if (latestSeq < attemptedSeq) {
+            Log.w(
+                SHARING_DEBUG_TAG,
+                "Seq conflict reconcile inconclusive source=$source sender=${shortSharingId(identity.senderId)} attemptedSeq=$attemptedSeq relayLatestSeq=$latestSeq"
+            )
+            return false
+        }
+
+        val nextSeq = latestSeq + 1L
+        Log.w(
+            SHARING_DEBUG_TAG,
+            "Resolved stale push seq source=$source sender=${shortSharingId(identity.senderId)} attemptedSeq=$attemptedSeq relayLatestSeq=$latestSeq nextSeq=$nextSeq"
+        )
+        mutateSnapshot { current ->
+            val keepPending = current.pendingPush?.takeIf { it.claim.seq > latestSeq }
+            current.copy(
+                pendingPush = keepPending,
+                sync = current.sync.copy(
+                    nextSeq = maxOf(current.sync.nextSeq, nextSeq),
+                    lastPushSuccessAtMs = response.storedAtMs ?: current.sync.lastPushSuccessAtMs,
+                    lastPushError = if (keepPending == null) null else current.sync.lastPushError,
+                    lastPushErrorAtMs = if (keepPending == null) null else current.sync.lastPushErrorAtMs
+                )
+            )
+        }
+        if (snapshot.pendingPush == null) {
+            setInfo("Recovered from stale push sequence conflict.")
+        }
+        return true
     }
 
     private suspend fun mutateSnapshot(transform: (SharingStateSnapshot) -> SharingStateSnapshot) {
