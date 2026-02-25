@@ -1,5 +1,6 @@
 package com.example.blackbox.sharing
 
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
@@ -81,10 +82,15 @@ class OkHttpRelayApi(
                 require(baseUrl.startsWith("http://") || baseUrl.startsWith("https://")) {
                     "Relay URL must be absolute (http/https)."
                 }
+                val endpoint = baseUrl + path
 
                 val bodyJson = json.encodeToString(requestSerializer, request)
+                Log.d(
+                    SHARING_DEBUG_TAG,
+                    "Relay request start endpoint=$endpoint payloadBytes=${bodyJson.length}"
+                )
                 val httpRequest = Request.Builder()
-                    .url(baseUrl + path)
+                    .url(endpoint)
                     .post(bodyJson.toRequestBody(JSON_MEDIA_TYPE))
                     .header("Accept", "application/json")
                     .header("Content-Type", "application/json")
@@ -93,10 +99,24 @@ class OkHttpRelayApi(
                 client.newCall(httpRequest).execute().use { response ->
                     val body = response.body?.string().orEmpty()
                     if (!response.isSuccessful) {
+                        Log.w(
+                            SHARING_DEBUG_TAG,
+                            "Relay request failed endpoint=$endpoint code=${response.code} body=${summarizeRelayBody(body)}"
+                        )
                         error("Relay request failed (${response.code}): $body")
                     }
+                    Log.d(
+                        SHARING_DEBUG_TAG,
+                        "Relay request success endpoint=$endpoint code=${response.code} bodyBytes=${body.length}"
+                    )
                     json.decodeFromString(responseSerializer, body)
                 }
+            }.onFailure { throwable ->
+                Log.e(
+                    SHARING_DEBUG_TAG,
+                    "Relay transport exception path=$path error=${throwable.message}",
+                    throwable
+                )
             }
         }
     }

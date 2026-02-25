@@ -195,7 +195,7 @@ data class ContactCardImportResult(
     val safetyFingerprint: String
 )
 
-const val DEFAULT_RELAY_BASE_URL = "https://relay.blackbox.invalid"
+const val DEFAULT_RELAY_BASE_URL = "https://blackbox.tc3107.workers.dev"
 const val DEFAULT_NORMAL_PUSH_INTERVAL_MS = 5 * 60_000L
 const val DEFAULT_FAST_PUSH_INTERVAL_MS = 60_000L
 const val DEFAULT_FAST_SPEED_THRESHOLD_MPS = 8.0f

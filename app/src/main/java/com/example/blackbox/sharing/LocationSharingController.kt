@@ -2,6 +2,7 @@ package com.example.blackbox.sharing
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import com.example.blackbox.location.LocationEngine
 import com.example.blackbox.location.LocationEngineMode
 import com.example.blackbox.location.LocationSampleEvent
@@ -51,6 +52,8 @@ object LocationSharingController {
     private var pollingVisible: Boolean = false
     private var lastError: String? = null
     private var lastInfo: String = "Sharing subsystem idle."
+    private var lastEligibilityDebugReason: String? = null
+    private var lastEligibilityDebugAtMs: Long = 0L
 
     fun initialize(context: Context) {
         if (initialized) return
@@ -68,6 +71,10 @@ object LocationSharingController {
             crypto = localCrypto
 
             currentSettings = localSettings.settings.value
+            Log.d(
+                SHARING_DEBUG_TAG,
+                "Initializing sharing controller relayBaseUrl=${currentSettings.relayBaseUrl}"
+            )
             val loadedSnapshot = localStore.read()
             var normalizedSnapshot = loadedSnapshot
 
@@ -108,7 +115,14 @@ object LocationSharingController {
 
             settingsJob = scope.launch {
                 localSettings.settings.collectLatest { settings ->
+                    val previousBaseUrl = currentSettings.relayBaseUrl
                     currentSettings = settings
+                    if (previousBaseUrl != settings.relayBaseUrl) {
+                        Log.d(
+                            SHARING_DEBUG_TAG,
+                            "Relay base URL updated to ${settings.relayBaseUrl}"
+                        )
+                    }
                     if (!settings.sharingEnabled && snapshot.pendingPush != null) {
                         snapshot = localStore.update { current ->
                             current.copy(pendingPush = null)
@@ -132,6 +146,7 @@ object LocationSharingController {
     }
 
     fun onSharingPageVisible(visible: Boolean) {
+        Log.d(SHARING_DEBUG_TAG, "Sharing page visibility changed visible=$visible")
         scope.launch {
             stateMutex.withLock {
                 pollingVisible = visible
@@ -148,10 +163,12 @@ object LocationSharingController {
 
     fun setSharingEnabled(enabled: Boolean) {
         if (enabled && !isValidUsername(normalizeUsername(currentSettings.username))) {
+            Log.w(SHARING_DEBUG_TAG, "Rejected enabling sharing: username missing or invalid.")
             setError("Set a valid username before enabling Share My Location.")
             settingsStore?.setSharingEnabled(false)
             return
         }
+        Log.d(SHARING_DEBUG_TAG, "setSharingEnabled enabled=$enabled")
         settingsStore?.setSharingEnabled(enabled)
     }
 
@@ -160,6 +177,7 @@ object LocationSharingController {
     }
 
     fun setRelayBaseUrl(baseUrl: String) {
+        Log.d(SHARING_DEBUG_TAG, "setRelayBaseUrl requested=$baseUrl")
         settingsStore?.setRelayBaseUrl(baseUrl)
     }
 
@@ -341,6 +359,7 @@ object LocationSharingController {
     }
 
     fun manualPollNow() {
+        Log.d(SHARING_DEBUG_TAG, "Manual poll requested")
         scope.launch {
             pollNow(trigger = "manual")
         }
@@ -350,6 +369,7 @@ object LocationSharingController {
         scope.launch {
             val localRelay = relayApi ?: return@launch
             val identity = snapshot.identity ?: return@launch
+            Log.d(SHARING_DEBUG_TAG, "Clear relay requested sender=${shortSharingId(identity.senderId)}")
             val now = System.currentTimeMillis()
             val nonce = randomNonceB64Url()
             val payload = canonicalClearMessage(identity.senderId, now, nonce)
@@ -363,9 +383,18 @@ object LocationSharingController {
             )
             localRelay.clearLocation(request)
                 .onSuccess {
+                    Log.d(
+                        SHARING_DEBUG_TAG,
+                        "Clear relay success sender=${shortSharingId(identity.senderId)} cleared=${it.cleared}"
+                    )
                     setInfo(if (it.cleared) "Relay location cleared." else "Relay clear request accepted.")
                 }
                 .onFailure {
+                    Log.e(
+                        SHARING_DEBUG_TAG,
+                        "Clear relay failure sender=${shortSharingId(identity.senderId)} error=${it.message}",
+                        it
+                    )
                     setError(it.message ?: "Relay clear failed")
                 }
         }
@@ -413,6 +442,7 @@ object LocationSharingController {
 
     private fun startPollingLoop() {
         if (pollingJob != null) return
+        Log.d(SHARING_DEBUG_TAG, "Starting poll loop intervalMs=$POLL_INTERVAL_MS")
         pollingJob = scope.launch {
             pollNow(trigger = "page_open")
             while (true) {
@@ -425,6 +455,7 @@ object LocationSharingController {
     private fun stopPollingLoop() {
         pollingJob?.cancel()
         pollingJob = null
+        Log.d(SHARING_DEBUG_TAG, "Stopped poll loop")
     }
 
     private suspend fun pollNow(trigger: String) {
@@ -432,6 +463,10 @@ object LocationSharingController {
         val localCrypto = crypto ?: return
         val localSnapshot = snapshot
         val identity = localSnapshot.identity ?: return
+        Log.d(
+            SHARING_DEBUG_TAG,
+            "Poll start trigger=$trigger sender=${shortSharingId(identity.senderId)} following=${localSnapshot.contacts.count { it.iFollow }}"
+        )
 
         val now = System.currentTimeMillis()
         val selfNonce = randomNonceB64Url()
@@ -452,6 +487,11 @@ object LocationSharingController {
         val selfStatusResult = localRelay.selfStatus(selfRequest)
         if (selfStatusResult.isFailure) {
             val error = selfStatusResult.exceptionOrNull()?.message ?: "Self-status failed"
+            Log.e(
+                SHARING_DEBUG_TAG,
+                "Poll self-status failed trigger=$trigger sender=${shortSharingId(identity.senderId)} error=$error",
+                selfStatusResult.exceptionOrNull()
+            )
             mutateSnapshot {
                 it.copy(
                     sync = it.sync.copy(
@@ -466,6 +506,10 @@ object LocationSharingController {
 
         val followingContacts = snapshot.contacts.filter { it.iFollow }
         if (followingContacts.isEmpty()) {
+            Log.d(
+                SHARING_DEBUG_TAG,
+                "Poll completed trigger=$trigger sender=${shortSharingId(identity.senderId)} noFollowedSenders=true"
+            )
             mutateSnapshot {
                 it.copy(
                     sync = it.sync.copy(
@@ -500,11 +544,20 @@ object LocationSharingController {
 
         localRelay.pullBatch(pullRequest)
             .onSuccess { response ->
+                Log.d(
+                    SHARING_DEBUG_TAG,
+                    "Poll pull success trigger=$trigger sender=${shortSharingId(identity.senderId)} records=${response.records.size}"
+                )
                 handlePullSuccess(response, identity)
                 setInfo("Poll complete ($trigger).")
             }
             .onFailure { throwable ->
                 val error = throwable.message ?: "Pull failed"
+                Log.e(
+                    SHARING_DEBUG_TAG,
+                    "Poll pull failed trigger=$trigger sender=${shortSharingId(identity.senderId)} error=$error",
+                    throwable
+                )
                 mutateSnapshot {
                     it.copy(
                         sync = it.sync.copy(
@@ -519,6 +572,11 @@ object LocationSharingController {
 
     private suspend fun handlePullSuccess(response: PullBatchResponse, identity: SharingIdentityState) {
         val localCrypto = crypto ?: return
+        val responseStatusSummary = response.records.groupingBy { it.status }.eachCount()
+        Log.d(
+            SHARING_DEBUG_TAG,
+            "Handling pull payload sender=${shortSharingId(identity.senderId)} statusSummary=$responseStatusSummary"
+        )
         mutateSnapshot { current ->
             val contactById = current.contacts.associateBy { it.senderId }
             val receivedBySender = current.receivedLocations.associateBy { it.senderId }.toMutableMap()
@@ -673,7 +731,9 @@ object LocationSharingController {
     }
 
     private suspend fun handleLocationEvent(event: LocationSampleEvent) {
-        if (!isEligibleForPush(event)) {
+        val ineligibilityReason = pushIneligibilityReason(event)
+        if (ineligibilityReason != null) {
+            maybeLogIneligiblePush(ineligibilityReason)
             return
         }
 
@@ -681,41 +741,54 @@ object LocationSharingController {
         val identity = localSnapshot.identity ?: return
         val recipients = localSnapshot.contacts.filter { it.canReceiveFromMe }
         if (recipients.isEmpty()) {
+            maybeLogIneligiblePush("no_outbound_recipients")
             return
         }
 
         val seq = localSnapshot.sync.nextSeq
         val claim = buildClaim(event = event, senderId = identity.senderId, seq = seq)
         if (!SharingLogic.isValidClaim(claim)) {
+            Log.w(
+                SHARING_DEBUG_TAG,
+                "Dropping invalid claim sender=${shortSharingId(identity.senderId)} seq=$seq lat=${event.lat} lon=${event.lon}"
+            )
             return
         }
 
         val envelope = buildSignedEnvelope(identity = identity, claim = claim, recipients = recipients)
         if (envelope.envelope.recipientCiphertexts.isEmpty()) {
+            Log.w(
+                SHARING_DEBUG_TAG,
+                "No recipient ciphertexts generated sender=${shortSharingId(identity.senderId)} seq=$seq recipients=${recipients.size}"
+            )
             return
         }
 
+        Log.d(
+            SHARING_DEBUG_TAG,
+            "Push candidate sender=${shortSharingId(identity.senderId)} seq=$seq recipients=${envelope.envelope.recipientCiphertexts.size} speed=${event.speedMps}"
+        )
         sendEnvelope(envelope = envelope, claim = claim, identity = identity)
     }
 
-    private fun isEligibleForPush(event: LocationSampleEvent): Boolean {
+    private fun pushIneligibilityReason(event: LocationSampleEvent): String? {
         if (!currentSettings.sharingEnabled) {
-            return false
+            return "sharing_disabled"
         }
 
         val username = normalizeUsername(currentSettings.username)
         if (!isValidUsername(username)) {
-            return false
+            return "username_invalid"
         }
 
         val engineState = LocationEngine.state.value
         if (!engineState.engineEnabled || engineState.engineMode == LocationEngineMode.Off) {
-            return false
+            return "location_engine_inactive"
         }
 
         val recipientsCount = snapshot.contacts.count { it.canReceiveFromMe }
         if (recipientsCount == 0) {
-            return false
+            return "no_outbound_recipients"
         }
 
         val thresholdMs = if ((event.speedMps ?: -1f) >= currentSettings.fastSpeedThresholdMps) {
@@ -726,10 +799,10 @@ object LocationSharingController {
 
         val lastSuccess = snapshot.sync.lastPushSuccessAtMs
         if (lastSuccess != null && System.currentTimeMillis() - lastSuccess < thresholdMs) {
-            return false
+            return "threshold_not_elapsed"
         }
 
-        return true
+        return null
     }
 
     private fun buildClaim(event: LocationSampleEvent, senderId: String, seq: Long): LocationClaimV1 {
@@ -795,6 +868,10 @@ object LocationSharingController {
     ) {
         val localRelay = relayApi ?: return
         val now = System.currentTimeMillis()
+        Log.d(
+            SHARING_DEBUG_TAG,
+            "Sending push sender=${shortSharingId(identity.senderId)} seq=${claim.seq} recipients=${envelope.envelope.recipientCiphertexts.size}"
+        )
 
         mutateSnapshot {
             it.copy(sync = it.sync.copy(lastPushAttemptAtMs = now))
@@ -802,6 +879,11 @@ object LocationSharingController {
 
         val aclUpdated = ensureAclUpToDate(identity)
         if (aclUpdated.isFailure) {
+            Log.e(
+                SHARING_DEBUG_TAG,
+                "ACL sync failed before push sender=${shortSharingId(identity.senderId)} seq=${claim.seq} error=${aclUpdated.exceptionOrNull()?.message}",
+                aclUpdated.exceptionOrNull()
+            )
             queuePendingPush(envelope = envelope, claim = claim, reason = aclUpdated.exceptionOrNull()?.message)
             return
         }
@@ -814,6 +896,10 @@ object LocationSharingController {
 
         localRelay.pushLocation(request)
             .onSuccess {
+                Log.d(
+                    SHARING_DEBUG_TAG,
+                    "Push success sender=${shortSharingId(identity.senderId)} seq=${claim.seq} storedAtMs=${it.storedAtMs}"
+                )
                 mutateSnapshot { current ->
                     current.copy(
                         pendingPush = null,
@@ -829,6 +915,11 @@ object LocationSharingController {
             }
             .onFailure { throwable ->
                 val failureReason = throwable.message ?: "Push failed"
+                Log.e(
+                    SHARING_DEBUG_TAG,
+                    "Push failed sender=${shortSharingId(identity.senderId)} seq=${claim.seq} error=$failureReason",
+                    throwable
+                )
                 queuePendingPush(envelope = envelope, claim = claim, reason = failureReason)
                 setError(failureReason)
             }
@@ -841,6 +932,10 @@ object LocationSharingController {
         val receiverIds = snapshot.contacts.filter { it.canReceiveFromMe }.map { it.senderId }.sorted()
         val digest = digestReceivers(receiverIds)
         if (snapshot.sync.lastAclDigest == digest && snapshot.sync.lastAclSeq > 0L) {
+            Log.d(
+                SHARING_DEBUG_TAG,
+                "ACL up to date sender=${shortSharingId(identity.senderId)} aclSeq=${snapshot.sync.lastAclSeq} receivers=${receiverIds.size}"
+            )
             return Result.success(Unit)
         }
 
@@ -859,8 +954,16 @@ object LocationSharingController {
             senderSignPublicKeySpkiB64Url = identity.signPublicKeySpkiB64Url
         )
 
+        Log.d(
+            SHARING_DEBUG_TAG,
+            "Upserting ACL sender=${shortSharingId(identity.senderId)} aclSeq=$aclSeq receivers=${receiverIds.size}"
+        )
         return localRelay.upsertAcl(request)
             .map {
+                Log.d(
+                    SHARING_DEBUG_TAG,
+                    "ACL upsert success sender=${shortSharingId(identity.senderId)} aclSeq=$aclSeq"
+                )
                 runCatching {
                     mutateSnapshot { current ->
                         current.copy(sync = current.sync.copy(lastAclSeq = aclSeq, lastAclDigest = digest))
@@ -868,10 +971,21 @@ object LocationSharingController {
                 }
                 Unit
             }
+            .onFailure { throwable ->
+                Log.e(
+                    SHARING_DEBUG_TAG,
+                    "ACL upsert failed sender=${shortSharingId(identity.senderId)} aclSeq=$aclSeq error=${throwable.message}",
+                    throwable
+                )
+            }
     }
 
     private suspend fun queuePendingPush(envelope: PushEnvelopeSigned, claim: LocationClaimV1, reason: String?) {
         val now = System.currentTimeMillis()
+        Log.w(
+            SHARING_DEBUG_TAG,
+            "Queueing pending push seq=${claim.seq} reason=${reason ?: "unknown"} recipients=${envelope.envelope.recipientCiphertexts.size}"
+        )
         mutateSnapshot { current ->
             val nextAttempt = now + SharingLogic.computeBackoffDelayMs(attemptCount = 1)
             current.copy(
@@ -930,8 +1044,16 @@ object LocationSharingController {
                     senderSignPublicKeySpkiB64Url = identity.signPublicKeySpkiB64Url,
                     senderEncPublicKeysetJson = identity.encPublicKeysetJson
                 )
+                Log.d(
+                    SHARING_DEBUG_TAG,
+                    "Retrying pending push sender=${shortSharingId(identity.senderId)} seq=${pending.claim.seq} attempt=${pending.attemptCount + 1}"
+                )
                 localRelay.pushLocation(request)
                     .onSuccess {
+                        Log.d(
+                            SHARING_DEBUG_TAG,
+                            "Pending push delivered sender=${shortSharingId(identity.senderId)} seq=${pending.claim.seq}"
+                        )
                         mutateSnapshot { current ->
                             current.copy(
                                 pendingPush = null,
@@ -946,6 +1068,11 @@ object LocationSharingController {
                         setInfo("Pending push delivered.")
                     }
                     .onFailure { throwable ->
+                        Log.e(
+                            SHARING_DEBUG_TAG,
+                            "Pending push retry failed sender=${shortSharingId(identity.senderId)} seq=${pending.claim.seq} error=${throwable.message}",
+                            throwable
+                        )
                         reschedulePendingWithBackoff(
                             pending = snapshot.pendingPush ?: return@onFailure,
                             reason = throwable.message ?: "Retry push failed"
@@ -958,6 +1085,10 @@ object LocationSharingController {
     private suspend fun reschedulePendingWithBackoff(pending: PendingPushState, reason: String) {
         val nextAttemptCount = pending.attemptCount + 1
         val nextDelay = SharingLogic.computeBackoffDelayMs(nextAttemptCount)
+        Log.w(
+            SHARING_DEBUG_TAG,
+            "Rescheduling pending push seq=${pending.claim.seq} nextAttempt=$nextAttemptCount delayMs=$nextDelay reason=$reason"
+        )
         mutateSnapshot { current ->
             val refreshed = current.pendingPush
             if (refreshed == null) {
@@ -994,6 +1125,7 @@ object LocationSharingController {
     }
 
     private fun setInfo(message: String) {
+        Log.d(SHARING_DEBUG_TAG, "INFO $message")
         lastInfo = message
         if (lastError != null) {
             lastError = null
@@ -1002,6 +1134,7 @@ object LocationSharingController {
     }
 
     private fun setError(message: String) {
+        Log.w(SHARING_DEBUG_TAG, "ERROR $message")
         lastError = message
         publishState()
     }
@@ -1077,6 +1210,19 @@ object LocationSharingController {
             pollingVisible = pollingVisible,
             lastError = lastError,
             lastInfo = lastInfo
+        )
+    }
+
+    private fun maybeLogIneligiblePush(reason: String) {
+        val now = System.currentTimeMillis()
+        if (reason == lastEligibilityDebugReason && now - lastEligibilityDebugAtMs < 60_000L) {
+            return
+        }
+        lastEligibilityDebugReason = reason
+        lastEligibilityDebugAtMs = now
+        Log.d(
+            SHARING_DEBUG_TAG,
+            "Skipping push reason=$reason sharingEnabled=${currentSettings.sharingEnabled} usernameValid=${isValidUsername(normalizeUsername(currentSettings.username))} recipients=${snapshot.contacts.count { it.canReceiveFromMe }}"
         )
     }
 

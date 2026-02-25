@@ -1,0 +1,1687 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<issues format="6" by="lint 9.0.1" type="baseline" client="gradle" dependencies="false" name="AGP (9.0.1)" variant="all" version="9.0.1">
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="                manager.requestLocationUpdates("
+        errorLine2="                ^">
+        <location
+            file="src/main/java/com/example/blackbox/location/LocationEngine.kt"
+            line="364"
+            column="17"/>
+    </issue>
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="                manager.requestLocationUpdates("
+        errorLine2="                ^">
+        <location
+            file="src/main/java/com/example/blackbox/location/LocationEngine.kt"
+            line="372"
+            column="17"/>
+    </issue>
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="                manager.requestLocationUpdates("
+        errorLine2="                ^">
+        <location
+            file="src/main/java/com/example/blackbox/location/LocationEngine.kt"
+            line="389"
+            column="17"/>
+    </issue>
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="            val lastKnown = runCatching { manager.getLastKnownLocation(provider) }.getOrNull() ?: return@forEach"
+        errorLine2="                                          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/location/LocationEngine.kt"
+            line="407"
+            column="43"/>
+    </issue>
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="                manager.registerGnssStatusCallback(ContextCompat.getMainExecutor(context), callback)"
+        errorLine2="                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/location/LocationEngine.kt"
+            line="761"
+            column="17"/>
+    </issue>
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="                manager.registerGnssStatusCallback("
+        errorLine2="                ^">
+        <location
+            file="src/main/java/com/example/blackbox/location/LocationEngine.kt"
+            line="764"
+            column="17"/>
+    </issue>
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="        NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification(contentText))"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/location/LocationEngineForegroundService.kt"
+            line="114"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="InlinedApi"
+        message="Field requires API level 31 (current min is 24): `android.location.LocationRequest#QUALITY_LOW_POWER`"
+        errorLine1="            provider == LocationManager.PASSIVE_PROVIDER -> 0L to LocationRequest.QUALITY_LOW_POWER"
+        errorLine2="                                                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/location/LocationEngine.kt"
+            line="348"
+            column="67"/>
+    </issue>
+
+    <issue
+        id="InlinedApi"
+        message="Field requires API level 31 (current min is 24): `android.location.LocationRequest#QUALITY_LOW_POWER`"
+        errorLine1="                LOW_POWER_NETWORK_INTERVAL_MS to LocationRequest.QUALITY_LOW_POWER"
+        errorLine2="                                                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/location/LocationEngine.kt"
+            line="350"
+            column="50"/>
+    </issue>
+
+    <issue
+        id="InlinedApi"
+        message="Field requires API level 31 (current min is 24): `android.location.LocationRequest#QUALITY_HIGH_ACCURACY`"
+        errorLine1="            provider == LocationManager.GPS_PROVIDER -> ACTIVE_UPDATE_INTERVAL_MS to LocationRequest.QUALITY_HIGH_ACCURACY"
+        errorLine2="                                                                                     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/location/LocationEngine.kt"
+            line="353"
+            column="86"/>
+    </issue>
+
+    <issue
+        id="InlinedApi"
+        message="Field requires API level 31 (current min is 24): `android.location.LocationRequest#QUALITY_BALANCED_POWER_ACCURACY`"
+        errorLine1="            else -> ACTIVE_UPDATE_INTERVAL_MS to LocationRequest.QUALITY_BALANCED_POWER_ACCURACY"
+        errorLine2="                                                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/location/LocationEngine.kt"
+            line="354"
+            column="50"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.Instant#atZone`"
+        errorLine1="                val targetDay = nowUtc.atZone(ZoneOffset.UTC).toLocalDate()"
+        errorLine2="                                       ~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/DailyRoomDbManager.kt"
+            line="31"
+            column="40"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.ZonedDateTime#toLocalDate`"
+        errorLine1="                val targetDay = nowUtc.atZone(ZoneOffset.UTC).toLocalDate()"
+        errorLine2="                                                              ~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/DailyRoomDbManager.kt"
+            line="31"
+            column="63"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Field requires API level 26, or core library desugaring (current min is 24): `java.time.ZoneOffset#UTC`"
+        errorLine1="                val targetDay = nowUtc.atZone(ZoneOffset.UTC).toLocalDate()"
+        errorLine2="                                              ~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/DailyRoomDbManager.kt"
+            line="31"
+            column="47"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.Instant#atZone`"
+        errorLine1="                val targetDay = nowUtc.atZone(ZoneOffset.UTC).toLocalDate()"
+        errorLine2="                                       ~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/DailyRoomDbManager.kt"
+            line="63"
+            column="40"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.ZonedDateTime#toLocalDate`"
+        errorLine1="                val targetDay = nowUtc.atZone(ZoneOffset.UTC).toLocalDate()"
+        errorLine2="                                                              ~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/DailyRoomDbManager.kt"
+            line="63"
+            column="63"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Field requires API level 26, or core library desugaring (current min is 24): `java.time.ZoneOffset#UTC`"
+        errorLine1="                val targetDay = nowUtc.atZone(ZoneOffset.UTC).toLocalDate()"
+        errorLine2="                                              ~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/DailyRoomDbManager.kt"
+            line="63"
+            column="47"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.LocalDate#isBefore`"
+        errorLine1="            .filter { it.isBefore(todayUtc) }"
+        errorLine2="                         ~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/DailyRoomDbManager.kt"
+            line="139"
+            column="26"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Implicit cast from `LocalDate` to `ChronoLocalDate` requires API level 26, or core library desugaring (current min is 24)"
+        errorLine1="            .filter { it.isBefore(todayUtc) }"
+        errorLine2="                                  ~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/DailyRoomDbManager.kt"
+            line="139"
+            column="35"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.format.DateTimeFormatter#ofPattern`"
+        errorLine1="        DateTimeFormatter.ofPattern(&quot;yyyy-MM-dd HH:mm:ss&quot;)"
+        errorLine2="                          ~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DataValuesScreen.kt"
+            line="895"
+            column="27"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.format.DateTimeFormatter#withLocale`"
+        errorLine1="            .withLocale(Locale.US)"
+        errorLine2="             ~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DataValuesScreen.kt"
+            line="896"
+            column="14"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.Instant#ofEpochMilli`"
+        errorLine1="    val initialInstant = Instant.ofEpochMilli(initialNowMs)"
+        errorLine2="                                 ~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DataValuesScreen.kt"
+            line="899"
+            column="34"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.ZoneId#systemDefault`"
+        errorLine1="    val initialZoneId = ZoneId.systemDefault()"
+        errorLine2="                               ~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DataValuesScreen.kt"
+            line="900"
+            column="32"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.Instant#atZone`"
+        errorLine1="    val initialLocalTimestamp = initialInstant.atZone(initialZoneId).format(localFormatter)"
+        errorLine2="                                               ~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DataValuesScreen.kt"
+            line="901"
+            column="48"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.ZonedDateTime#format`"
+        errorLine1="    val initialLocalTimestamp = initialInstant.atZone(initialZoneId).format(localFormatter)"
+        errorLine2="                                                                     ~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DataValuesScreen.kt"
+            line="901"
+            column="70"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.format.DateTimeFormatter#format`"
+        errorLine1="    val initialUtcTimestamp = DateTimeFormatter.ISO_INSTANT.format(initialInstant)"
+        errorLine2="                                                            ~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DataValuesScreen.kt"
+            line="902"
+            column="61"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Field requires API level 26, or core library desugaring (current min is 24): `java.time.format.DateTimeFormatter#ISO_INSTANT`"
+        errorLine1="    val initialUtcTimestamp = DateTimeFormatter.ISO_INSTANT.format(initialInstant)"
+        errorLine2="                              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DataValuesScreen.kt"
+            line="902"
+            column="31"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Implicit cast from `Instant` to `TemporalAccessor` requires API level 26, or core library desugaring (current min is 24)"
+        errorLine1="    val initialUtcTimestamp = DateTimeFormatter.ISO_INSTANT.format(initialInstant)"
+        errorLine2="                                                                   ~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DataValuesScreen.kt"
+            line="902"
+            column="68"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.ZoneId#getId`"
+        errorLine1="            timezoneId = initialZoneId.id,"
+        errorLine2="                                       ~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DataValuesScreen.kt"
+            line="911"
+            column="40"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.Instant#ofEpochMilli`"
+        errorLine1="            val instant = Instant.ofEpochMilli(nowMs)"
+        errorLine2="                                  ~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DataValuesScreen.kt"
+            line="917"
+            column="35"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.ZoneId#systemDefault`"
+        errorLine1="            val zoneId = ZoneId.systemDefault()"
+        errorLine2="                                ~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DataValuesScreen.kt"
+            line="918"
+            column="33"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.Instant#atZone`"
+        errorLine1="                value = instant.atZone(zoneId).format(localFormatter),"
+        errorLine2="                                ~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DataValuesScreen.kt"
+            line="920"
+            column="33"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.ZonedDateTime#format`"
+        errorLine1="                value = instant.atZone(zoneId).format(localFormatter),"
+        errorLine2="                                               ~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DataValuesScreen.kt"
+            line="920"
+            column="48"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.ZoneId#getId`"
+        errorLine1="                timezoneId = zoneId.id,"
+        errorLine2="                                    ~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DataValuesScreen.kt"
+            line="925"
+            column="37"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.format.DateTimeFormatter#format`"
+        errorLine1="                utcTimestamp = DateTimeFormatter.ISO_INSTANT.format(instant)"
+        errorLine2="                                                             ~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DataValuesScreen.kt"
+            line="926"
+            column="62"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Field requires API level 26, or core library desugaring (current min is 24): `java.time.format.DateTimeFormatter#ISO_INSTANT`"
+        errorLine1="                utcTimestamp = DateTimeFormatter.ISO_INSTANT.format(instant)"
+        errorLine2="                               ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DataValuesScreen.kt"
+            line="926"
+            column="32"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Implicit cast from `Instant` to `TemporalAccessor` requires API level 26, or core library desugaring (current min is 24)"
+        errorLine1="                utcTimestamp = DateTimeFormatter.ISO_INSTANT.format(instant)"
+        errorLine2="                                                                    ~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DataValuesScreen.kt"
+            line="926"
+            column="69"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.format.DateTimeFormatter#ofPattern`"
+        errorLine1="    val formatter = DateTimeFormatter.ofPattern(&quot;yyyy-MM-dd HH:mm:ss&quot;)"
+        errorLine2="                                      ~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DataValuesScreen.kt"
+            line="1168"
+            column="39"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.format.DateTimeFormatter#withLocale`"
+        errorLine1="        .withLocale(Locale.US)"
+        errorLine2="         ~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DataValuesScreen.kt"
+            line="1169"
+            column="10"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.ZoneId#systemDefault`"
+        errorLine1="        .withZone(ZoneId.systemDefault())"
+        errorLine2="                         ~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DataValuesScreen.kt"
+            line="1170"
+            column="26"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.format.DateTimeFormatter#withZone`"
+        errorLine1="        .withZone(ZoneId.systemDefault())"
+        errorLine2="         ~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DataValuesScreen.kt"
+            line="1170"
+            column="10"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.Instant#ofEpochMilli`"
+        errorLine1="    return formatter.format(Instant.ofEpochMilli(timestampMillis))"
+        errorLine2="                                    ~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DataValuesScreen.kt"
+            line="1171"
+            column="37"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.format.DateTimeFormatter#format`"
+        errorLine1="    return formatter.format(Instant.ofEpochMilli(timestampMillis))"
+        errorLine2="                     ~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DataValuesScreen.kt"
+            line="1171"
+            column="22"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.Instant#ofEpochMilli`"
+        errorLine1="    return Instant.ofEpochMilli(timestampMs)"
+        errorLine2="                   ~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DatabaseScreen.kt"
+            line="533"
+            column="20"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.Instant#atZone`"
+        errorLine1="        .atZone(ZoneId.systemDefault())"
+        errorLine2="         ~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DatabaseScreen.kt"
+            line="534"
+            column="10"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.ZoneId#systemDefault`"
+        errorLine1="        .atZone(ZoneId.systemDefault())"
+        errorLine2="                       ~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DatabaseScreen.kt"
+            line="534"
+            column="24"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.ZonedDateTime#format`"
+        errorLine1="        .format(DB_STATUS_TIME_FORMATTER)"
+        errorLine2="         ~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DatabaseScreen.kt"
+            line="535"
+            column="10"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.Instant#ofEpochMilli`"
+        errorLine1="    val timestamp = Instant.ofEpochMilli(nowMs)"
+        errorLine2="                            ~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DatabaseScreen.kt"
+            line="539"
+            column="29"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.Instant#atZone`"
+        errorLine1="        .atZone(ZoneId.systemDefault())"
+        errorLine2="         ~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DatabaseScreen.kt"
+            line="540"
+            column="10"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.ZoneId#systemDefault`"
+        errorLine1="        .atZone(ZoneId.systemDefault())"
+        errorLine2="                       ~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DatabaseScreen.kt"
+            line="540"
+            column="24"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.ZonedDateTime#truncatedTo`"
+        errorLine1="        .truncatedTo(ChronoUnit.SECONDS)"
+        errorLine2="         ~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DatabaseScreen.kt"
+            line="541"
+            column="10"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Field requires API level 26, or core library desugaring (current min is 24): `java.time.temporal.ChronoUnit#SECONDS`"
+        errorLine1="        .truncatedTo(ChronoUnit.SECONDS)"
+        errorLine2="                     ~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DatabaseScreen.kt"
+            line="541"
+            column="22"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.ZonedDateTime#format`"
+        errorLine1="        .format(EXPORT_FILE_NAME_TIME_FORMATTER)"
+        errorLine2="         ~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DatabaseScreen.kt"
+            line="542"
+            column="10"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.format.DateTimeFormatter#ofPattern`"
+        errorLine1="    DateTimeFormatter.ofPattern(&quot;yyyy-MM-dd HH:mm:ss&quot;, Locale.US)"
+        errorLine2="                      ~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DatabaseScreen.kt"
+            line="550"
+            column="23"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.format.DateTimeFormatter#ofPattern`"
+        errorLine1="    DateTimeFormatter.ofPattern(&quot;yyyyMMdd-HHmmss&quot;, Locale.US)"
+        errorLine2="                      ~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/DatabaseScreen.kt"
+            line="552"
+            column="23"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.LocalDate#isBefore`"
+        errorLine1="                day != null &amp;&amp; day.isBefore(todayUtc)"
+        errorLine2="                                   ~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/LocationArchiveRepository.kt"
+            line="258"
+            column="36"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Implicit cast from `LocalDate` to `ChronoLocalDate` requires API level 26, or core library desugaring (current min is 24)"
+        errorLine1="                day != null &amp;&amp; day.isBefore(todayUtc)"
+        errorLine2="                                            ~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/LocationArchiveRepository.kt"
+            line="258"
+            column="45"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.LocalDate#getYear`"
+        errorLine1="        val year = day.year.toString()"
+        errorLine2="                       ~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/LocationArchiveRepository.kt"
+            line="533"
+            column="24"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.LocalDate#getMonthValue`"
+        errorLine1="        val month = String.format(java.util.Locale.US, &quot;%02d&quot;, day.monthValue)"
+        errorLine2="                                                                   ~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/LocationArchiveRepository.kt"
+            line="534"
+            column="68"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.format.DateTimeFormatter#ofPattern`"
+        errorLine1="private val DB_DATE_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern(&quot;yyyy-MM-dd&quot;, Locale.US)"
+        errorLine2="                                                                     ~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/LocationDbPaths.kt"
+            line="10"
+            column="70"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.LocalDate#now`"
+        errorLine1="    fun utcToday(): LocalDate = LocalDate.now(ZoneOffset.UTC)"
+        errorLine2="                                          ~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/LocationDbPaths.kt"
+            line="19"
+            column="43"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Field requires API level 26, or core library desugaring (current min is 24): `java.time.ZoneOffset#UTC`"
+        errorLine1="    fun utcToday(): LocalDate = LocalDate.now(ZoneOffset.UTC)"
+        errorLine2="                                              ~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/LocationDbPaths.kt"
+            line="19"
+            column="47"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.LocalDate#getYear`"
+        errorLine1="            append(dayUtc.year)"
+        errorLine2="                          ~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/LocationDbPaths.kt"
+            line="37"
+            column="27"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.LocalDate#getMonthValue`"
+        errorLine1="            append(String.format(Locale.US, &quot;%02d&quot;, dayUtc.monthValue))"
+        errorLine2="                                                           ~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/LocationDbPaths.kt"
+            line="39"
+            column="60"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.LocalDate#format`"
+        errorLine1="        return &quot;blackbox-${dayUtc.format(DB_DATE_FORMATTER)}.$DB_EXTENSION&quot;"
+        errorLine2="                                  ~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/LocationDbPaths.kt"
+            line="46"
+            column="35"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.LocalDate#format`"
+        errorLine1="        return &quot;blackbox-${dayUtc.format(DB_DATE_FORMATTER)}--$snapshotId.$DB_EXTENSION&quot;"
+        errorLine2="                                  ~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/LocationDbPaths.kt"
+            line="50"
+            column="35"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.LocalDate#getYear`"
+        errorLine1="        val year = dayUtc.year.toString()"
+        errorLine2="                          ~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/LocationDbPaths.kt"
+            line="54"
+            column="27"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.LocalDate#getMonthValue`"
+        errorLine1="        val month = String.format(Locale.US, &quot;%02d&quot;, dayUtc.monthValue)"
+        errorLine2="                                                            ~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/LocationDbPaths.kt"
+            line="55"
+            column="61"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.LocalDate#getYear`"
+        errorLine1="        val year = dayUtc.year.toString()"
+        errorLine2="                          ~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/LocationDbPaths.kt"
+            line="60"
+            column="27"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.LocalDate#getMonthValue`"
+        errorLine1="        val month = String.format(Locale.US, &quot;%02d&quot;, dayUtc.monthValue)"
+        errorLine2="                                                            ~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/LocationDbPaths.kt"
+            line="61"
+            column="61"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.LocalDate#getYear`"
+        errorLine1="        val year = dayUtc.year.toString()"
+        errorLine2="                          ~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/LocationDbPaths.kt"
+            line="66"
+            column="27"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.LocalDate#getMonthValue`"
+        errorLine1="        val month = String.format(Locale.US, &quot;%02d&quot;, dayUtc.monthValue)"
+        errorLine2="                                                            ~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/LocationDbPaths.kt"
+            line="67"
+            column="61"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.LocalDate#parse`"
+        errorLine1="        return runCatching { LocalDate.parse(rawDate, DB_DATE_FORMATTER) }.getOrNull()"
+        errorLine2="                                       ~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/LocationDbPaths.kt"
+            line="78"
+            column="40"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.Instant#now`"
+        errorLine1="            scope.launch { refreshLiveDayEntryCount(Instant.now()) }"
+        errorLine2="                                                            ~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/LocationPersistenceController.kt"
+            line="119"
+            column="61"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.Instant#now`"
+        errorLine1="        val nowUtc = Instant.now()"
+        errorLine2="                             ~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/LocationPersistenceController.kt"
+            line="151"
+            column="30"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.Instant#now`"
+        errorLine1="        val nowUtc = Instant.now()"
+        errorLine2="                             ~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/LocationPersistenceController.kt"
+            line="187"
+            column="30"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.Instant#ofEpochMilli`"
+        errorLine1="            val liveDayCount = refreshLiveDayEntryCount(Instant.ofEpochMilli(event.receivedAtMs))"
+        errorLine2="                                                                ~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/LocationPersistenceController.kt"
+            line="536"
+            column="65"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.format.DateTimeFormatter#ofPattern`"
+        errorLine1="    val formatter = DateTimeFormatter.ofPattern(&quot;yyyy-MM-dd HH:mm:ss&quot;)"
+        errorLine2="                                      ~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/LocationScreen.kt"
+            line="189"
+            column="39"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.format.DateTimeFormatter#withLocale`"
+        errorLine1="        .withLocale(Locale.US)"
+        errorLine2="         ~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/LocationScreen.kt"
+            line="190"
+            column="10"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.ZoneId#systemDefault`"
+        errorLine1="        .withZone(ZoneId.systemDefault())"
+        errorLine2="                         ~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/LocationScreen.kt"
+            line="191"
+            column="26"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.format.DateTimeFormatter#withZone`"
+        errorLine1="        .withZone(ZoneId.systemDefault())"
+        errorLine2="         ~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/LocationScreen.kt"
+            line="191"
+            column="10"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.Instant#ofEpochMilli`"
+        errorLine1="    return formatter.format(Instant.ofEpochMilli(timestampMillis))"
+        errorLine2="                                    ~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/LocationScreen.kt"
+            line="192"
+            column="37"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.format.DateTimeFormatter#format`"
+        errorLine1="    return formatter.format(Instant.ofEpochMilli(timestampMillis))"
+        errorLine2="                     ~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/LocationScreen.kt"
+            line="192"
+            column="22"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.util.Base64#getUrlEncoder`"
+        errorLine1="        return Base64.getUrlEncoder().withoutPadding().encodeToString(this)"
+        errorLine2="                      ~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/sharing/LocationSharingController.kt"
+            line="1246"
+            column="23"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.util.Base64.Encoder#encodeToString`"
+        errorLine1="        return Base64.getUrlEncoder().withoutPadding().encodeToString(this)"
+        errorLine2="                                                       ~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/sharing/LocationSharingController.kt"
+            line="1246"
+            column="56"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.util.Base64.Encoder#withoutPadding`"
+        errorLine1="        return Base64.getUrlEncoder().withoutPadding().encodeToString(this)"
+        errorLine2="                                      ~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/sharing/LocationSharingController.kt"
+            line="1246"
+            column="39"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.util.Base64#getUrlDecoder`"
+        errorLine1="        return Base64.getUrlDecoder().decode(this)"
+        errorLine2="                      ~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/sharing/LocationSharingController.kt"
+            line="1250"
+            column="23"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.util.Base64.Decoder#decode`"
+        errorLine1="        return Base64.getUrlDecoder().decode(this)"
+        errorLine2="                                      ~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/sharing/LocationSharingController.kt"
+            line="1250"
+            column="39"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.Instant#atZone`"
+        errorLine1="            val startDay = Instant.ofEpochMilli(startInclusiveMs).atZone(ZoneOffset.UTC).toLocalDate()"
+        errorLine2="                                                                  ~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/MergedLocationReadRepository.kt"
+            line="30"
+            column="67"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.Instant#ofEpochMilli`"
+        errorLine1="            val startDay = Instant.ofEpochMilli(startInclusiveMs).atZone(ZoneOffset.UTC).toLocalDate()"
+        errorLine2="                                   ~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/MergedLocationReadRepository.kt"
+            line="30"
+            column="36"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.ZonedDateTime#toLocalDate`"
+        errorLine1="            val startDay = Instant.ofEpochMilli(startInclusiveMs).atZone(ZoneOffset.UTC).toLocalDate()"
+        errorLine2="                                                                                         ~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/MergedLocationReadRepository.kt"
+            line="30"
+            column="90"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Field requires API level 26, or core library desugaring (current min is 24): `java.time.ZoneOffset#UTC`"
+        errorLine1="            val startDay = Instant.ofEpochMilli(startInclusiveMs).atZone(ZoneOffset.UTC).toLocalDate()"
+        errorLine2="                                                                         ~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/MergedLocationReadRepository.kt"
+            line="30"
+            column="74"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.Instant#atZone`"
+        errorLine1="            val endDay = Instant.ofEpochMilli(endInclusiveMs).atZone(ZoneOffset.UTC).toLocalDate()"
+        errorLine2="                                                              ~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/MergedLocationReadRepository.kt"
+            line="31"
+            column="63"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.Instant#ofEpochMilli`"
+        errorLine1="            val endDay = Instant.ofEpochMilli(endInclusiveMs).atZone(ZoneOffset.UTC).toLocalDate()"
+        errorLine2="                                 ~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/MergedLocationReadRepository.kt"
+            line="31"
+            column="34"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.ZonedDateTime#toLocalDate`"
+        errorLine1="            val endDay = Instant.ofEpochMilli(endInclusiveMs).atZone(ZoneOffset.UTC).toLocalDate()"
+        errorLine2="                                                                                     ~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/MergedLocationReadRepository.kt"
+            line="31"
+            column="86"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Field requires API level 26, or core library desugaring (current min is 24): `java.time.ZoneOffset#UTC`"
+        errorLine1="            val endDay = Instant.ofEpochMilli(endInclusiveMs).atZone(ZoneOffset.UTC).toLocalDate()"
+        errorLine2="                                                                     ~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/MergedLocationReadRepository.kt"
+            line="31"
+            column="70"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.LocalDate#isAfter`"
+        errorLine1="            day.plusDays(1).takeIf { !it.isAfter(endDay) }"
+        errorLine2="                                         ~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/MergedLocationReadRepository.kt"
+            line="205"
+            column="42"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.LocalDate#plusDays`"
+        errorLine1="            day.plusDays(1).takeIf { !it.isAfter(endDay) }"
+        errorLine2="                ~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/MergedLocationReadRepository.kt"
+            line="205"
+            column="17"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Implicit cast from `LocalDate` to `ChronoLocalDate` requires API level 26, or core library desugaring (current min is 24)"
+        errorLine1="            day.plusDays(1).takeIf { !it.isAfter(endDay) }"
+        errorLine2="                                                 ~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/MergedLocationReadRepository.kt"
+            line="205"
+            column="50"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.util.Base64#getUrlEncoder`"
+        errorLine1="        return Base64.getUrlEncoder().withoutPadding().encodeToString(this)"
+        errorLine2="                      ~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/sharing/SharingCrypto.kt"
+            line="362"
+            column="23"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.util.Base64.Encoder#encodeToString`"
+        errorLine1="        return Base64.getUrlEncoder().withoutPadding().encodeToString(this)"
+        errorLine2="                                                       ~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/sharing/SharingCrypto.kt"
+            line="362"
+            column="56"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.util.Base64.Encoder#withoutPadding`"
+        errorLine1="        return Base64.getUrlEncoder().withoutPadding().encodeToString(this)"
+        errorLine2="                                      ~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/sharing/SharingCrypto.kt"
+            line="362"
+            column="39"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.util.Base64#getUrlDecoder`"
+        errorLine1="        return Base64.getUrlDecoder().decode(this)"
+        errorLine2="                      ~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/sharing/SharingCrypto.kt"
+            line="366"
+            column="23"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.util.Base64.Decoder#decode`"
+        errorLine1="        return Base64.getUrlDecoder().decode(this)"
+        errorLine2="                                      ~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/sharing/SharingCrypto.kt"
+            line="366"
+            column="39"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.format.DateTimeFormatter#ofPattern`"
+        errorLine1="    val formatter = DateTimeFormatter.ofPattern(&quot;yyyy-MM-dd HH:mm:ss&quot;)"
+        errorLine2="                                      ~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/SharingScreen.kt"
+            line="1261"
+            column="39"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.format.DateTimeFormatter#withLocale`"
+        errorLine1="        .withLocale(Locale.US)"
+        errorLine2="         ~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/SharingScreen.kt"
+            line="1262"
+            column="10"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.ZoneId#systemDefault`"
+        errorLine1="        .withZone(ZoneId.systemDefault())"
+        errorLine2="                         ~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/SharingScreen.kt"
+            line="1263"
+            column="26"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.format.DateTimeFormatter#withZone`"
+        errorLine1="        .withZone(ZoneId.systemDefault())"
+        errorLine2="         ~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/SharingScreen.kt"
+            line="1263"
+            column="10"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.Instant#ofEpochMilli`"
+        errorLine1="    return formatter.format(Instant.ofEpochMilli(timestampMillis))"
+        errorLine2="                                    ~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/SharingScreen.kt"
+            line="1264"
+            column="37"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.format.DateTimeFormatter#format`"
+        errorLine1="    return formatter.format(Instant.ofEpochMilli(timestampMillis))"
+        errorLine2="                     ~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/SharingScreen.kt"
+            line="1264"
+            column="22"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.time.Instant#ofEpochMilli`"
+        errorLine1="        val db = dailyDbManager.currentWritableDb(Instant.ofEpochMilli(event.receivedAtMs))"
+        errorLine2="                                                          ~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/SqlCipherLocationWriteRepository.kt"
+            line="14"
+            column="59"/>
+    </issue>
+
+    <issue
+        id="RedundantLabel"
+        message="Redundant label can be removed"
+        errorLine1="            android:label=&quot;@string/app_name&quot;"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/AndroidManifest.xml"
+            line="30"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="AndroidGradlePluginVersion"
+        message="A newer version of Gradle than 9.1.0 is available: 9.3.1"
+        errorLine1="distributionUrl=https\://services.gradle.org/distributions/gradle-9.1.0-bin.zip"
+        errorLine2="                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="../gradle/wrapper/gradle-wrapper.properties"
+            line="4"
+            column="17"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of com.google.devtools.ksp than 2.0.21-1.0.27 is available: 2.3.2"
+        errorLine1="ksp = &quot;2.0.21-1.0.27&quot;"
+        errorLine2="      ~~~~~~~~~~~~~~~">
+        <location
+            file="../gradle/libs.versions.toml"
+            line="4"
+            column="7"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.compose:compose-bom than 2024.09.00 is available: 2026.02.00"
+        errorLine1="composeBom = &quot;2024.09.00&quot;"
+        errorLine2="             ~~~~~~~~~~~~">
+        <location
+            file="../gradle/libs.versions.toml"
+            line="11"
+            column="14"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.room:room-compiler than 2.7.0 is available: 2.8.4"
+        errorLine1="room = &quot;2.7.0&quot;"
+        errorLine2="       ~~~~~~~">
+        <location
+            file="../gradle/libs.versions.toml"
+            line="12"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.room:room-ktx than 2.7.0 is available: 2.8.4"
+        errorLine1="room = &quot;2.7.0&quot;"
+        errorLine2="       ~~~~~~~">
+        <location
+            file="../gradle/libs.versions.toml"
+            line="12"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.room:room-runtime than 2.7.0 is available: 2.8.4"
+        errorLine1="room = &quot;2.7.0&quot;"
+        errorLine2="       ~~~~~~~">
+        <location
+            file="../gradle/libs.versions.toml"
+            line="12"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.documentfile:documentfile than 1.0.1 is available: 1.1.0"
+        errorLine1="documentfile = &quot;1.0.1&quot;"
+        errorLine2="               ~~~~~~~">
+        <location
+            file="../gradle/libs.versions.toml"
+            line="14"
+            column="16"/>
+    </issue>
+
+    <issue
+        id="NewerVersionAvailable"
+        message="A newer version of org.jetbrains.kotlin.android than 2.0.21 is available: 2.3.10"
+        errorLine1="kotlin = &quot;2.0.21&quot;"
+        errorLine2="         ~~~~~~~~">
+        <location
+            file="../gradle/libs.versions.toml"
+            line="3"
+            column="10"/>
+    </issue>
+
+    <issue
+        id="NewerVersionAvailable"
+        message="A newer version of org.jetbrains.kotlin.plugin.compose than 2.0.21 is available: 2.3.10"
+        errorLine1="kotlin = &quot;2.0.21&quot;"
+        errorLine2="         ~~~~~~~~">
+        <location
+            file="../gradle/libs.versions.toml"
+            line="3"
+            column="10"/>
+    </issue>
+
+    <issue
+        id="NewerVersionAvailable"
+        message="A newer version of org.jetbrains.kotlin.plugin.serialization than 2.0.21 is available: 2.3.10"
+        errorLine1="kotlin = &quot;2.0.21&quot;"
+        errorLine2="         ~~~~~~~~">
+        <location
+            file="../gradle/libs.versions.toml"
+            line="3"
+            column="10"/>
+    </issue>
+
+    <issue
+        id="NewerVersionAvailable"
+        message="A newer version of com.squareup.okhttp3:okhttp than 4.12.0 is available: 5.3.2"
+        errorLine1="okhttp = &quot;4.12.0&quot;"
+        errorLine2="         ~~~~~~~~">
+        <location
+            file="../gradle/libs.versions.toml"
+            line="15"
+            column="10"/>
+    </issue>
+
+    <issue
+        id="NewerVersionAvailable"
+        message="A newer version of org.jetbrains.kotlinx:kotlinx-serialization-json than 1.7.3 is available: 1.10.0"
+        errorLine1="kotlinxSerialization = &quot;1.7.3&quot;"
+        errorLine2="                       ~~~~~~~">
+        <location
+            file="../gradle/libs.versions.toml"
+            line="16"
+            column="24"/>
+    </issue>
+
+    <issue
+        id="NewerVersionAvailable"
+        message="A newer version of com.google.crypto.tink:tink-android than 1.13.0 is available: 1.20.0"
+        errorLine1="tink = &quot;1.13.0&quot;"
+        errorLine2="       ~~~~~~~~">
+        <location
+            file="../gradle/libs.versions.toml"
+            line="17"
+            column="8"/>
+    </issue>
+
+    <issue
+        id="NewerVersionAvailable"
+        message="A newer version of com.google.zxing:core than 3.5.3 is available: 3.5.4"
+        errorLine1="zxingCore = &quot;3.5.3&quot;"
+        errorLine2="            ~~~~~~~">
+        <location
+            file="../gradle/libs.versions.toml"
+            line="18"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="PermissionImpliesUnsupportedChromeOsHardware"
+        message="Permission exists without corresponding hardware `&lt;uses-feature android:name=&quot;android.hardware.camera&quot; required=&quot;false&quot;>` tag"
+        errorLine1="    &lt;uses-permission android:name=&quot;android.permission.CAMERA&quot; />"
+        errorLine2="     ~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/AndroidManifest.xml"
+            line="11"
+            column="6"/>
+    </issue>
+
+    <issue
+        id="ObsoleteSdkInt"
+        message="Unnecessary; `SDK_INT` is never &lt; 24"
+        errorLine1="        if (Build.VERSION.SDK_INT &lt; Build.VERSION_CODES.N) {"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/location/LocationEngine.kt"
+            line="751"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.color.purple_200` appears to be unused"
+        errorLine1="    &lt;color name=&quot;purple_200&quot;>#FFBB86FC&lt;/color>"
+        errorLine2="           ~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/colors.xml"
+            line="3"
+            column="12"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.color.purple_500` appears to be unused"
+        errorLine1="    &lt;color name=&quot;purple_500&quot;>#FF6200EE&lt;/color>"
+        errorLine2="           ~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/colors.xml"
+            line="4"
+            column="12"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.color.purple_700` appears to be unused"
+        errorLine1="    &lt;color name=&quot;purple_700&quot;>#FF3700B3&lt;/color>"
+        errorLine2="           ~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/colors.xml"
+            line="5"
+            column="12"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.color.teal_200` appears to be unused"
+        errorLine1="    &lt;color name=&quot;teal_200&quot;>#FF03DAC5&lt;/color>"
+        errorLine2="           ~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/colors.xml"
+            line="6"
+            column="12"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.color.teal_700` appears to be unused"
+        errorLine1="    &lt;color name=&quot;teal_700&quot;>#FF018786&lt;/color>"
+        errorLine2="           ~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/colors.xml"
+            line="7"
+            column="12"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.color.black` appears to be unused"
+        errorLine1="    &lt;color name=&quot;black&quot;>#FF000000&lt;/color>"
+        errorLine2="           ~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/colors.xml"
+            line="8"
+            column="12"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.color.white` appears to be unused"
+        errorLine1="    &lt;color name=&quot;white&quot;>#FFFFFFFF&lt;/color>"
+        errorLine2="           ~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/colors.xml"
+            line="9"
+            column="12"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_launcher_background` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot;"
+        errorLine2="^">
+        <location
+            file="src/main/res/drawable/ic_launcher_background.xml"
+            line="2"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.drawable.ic_launcher_foreground` appears to be unused"
+        errorLine1="&lt;vector xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot;"
+        errorLine2="^">
+        <location
+            file="src/main/res/drawable/ic_launcher_foreground.xml"
+            line="1"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UnusedResources"
+        message="The resource `R.string.location_stop_button` appears to be unused"
+        errorLine1="    &lt;string name=&quot;location_stop_button&quot;>Stop&lt;/string>"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/strings.xml"
+            line="14"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="MonochromeLauncherIcon"
+        message="The application adaptive icon is missing a monochrome tag"
+        errorLine1="&lt;adaptive-icon xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot;>"
+        errorLine2="^">
+        <location
+            file="src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
+            line="2"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="MonochromeLauncherIcon"
+        message="The application adaptive roundIcon is missing a monochrome tag"
+        errorLine1="&lt;adaptive-icon xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot;>"
+        errorLine2="^">
+        <location
+            file="src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml"
+            line="2"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `SharedPreferences.edit` instead?"
+        errorLine1="        navigationPrefs.edit().putString(KEY_LAST_ROUTE, currentRoute).apply()"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/BlackboxApp.kt"
+            line="79"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `String.toUri` instead?"
+        errorLine1="        return runCatching { Uri.parse(raw) }.getOrNull()"
+        errorLine2="                             ~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/LocationArchivePreferences.kt"
+            line="12"
+            column="30"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `SharedPreferences.edit` instead?"
+        errorLine1="        preferences"
+        errorLine2="        ^">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/LocationArchivePreferences.kt"
+            line="22"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `SharedPreferences.edit` instead?"
+        errorLine1="        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)"
+        errorLine2="        ^">
+        <location
+            file="src/main/java/com/example/blackbox/location/LocationEngineForegroundController.kt"
+            line="134"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `SQLiteDatabase.transaction` instead?"
+        errorLine1="            db.beginTransaction()"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/data/locationdb/LocationPersistenceController.kt"
+            line="438"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX function `createBitmap` instead?"
+        errorLine1="        val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)"
+        errorLine2="                     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/SharingQrUtils.kt"
+            line="13"
+            column="22"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `Bitmap.set` instead?"
+        errorLine1="                bitmap.setPixel("
+        errorLine2="                ^">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/SharingQrUtils.kt"
+            line="16"
+            column="17"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `String.toUri` instead?"
+        errorLine1="    val uri = runCatching { android.net.Uri.parse(normalized) }.getOrNull() ?: return false"
+        errorLine2="                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/ui/screens/SharingScreen.kt"
+            line="755"
+            column="29"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `SharedPreferences.edit` instead?"
+        errorLine1="        preferences.edit().putBoolean(KEY_SHARING_ENABLED, enabled).apply()"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/sharing/SharingSettingsStore.kt"
+            line="20"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `SharedPreferences.edit` instead?"
+        errorLine1="        preferences.edit().putString(KEY_USERNAME, normalizeUsername(username)).apply()"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/sharing/SharingSettingsStore.kt"
+            line="25"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `SharedPreferences.edit` instead?"
+        errorLine1="        preferences.edit().putString(KEY_RELAY_BASE_URL, normalized).apply()"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/blackbox/sharing/SharingSettingsStore.kt"
+            line="31"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `SharedPreferences.edit` instead?"
+        errorLine1="        preferences"
+        errorLine2="        ^">
+        <location
+            file="src/main/java/com/example/blackbox/sharing/SharingSettingsStore.kt"
+            line="38"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `SharedPreferences.edit` instead?"
+        errorLine1="        preferences"
+        errorLine2="        ^">
+        <location
+            file="src/main/java/com/example/blackbox/data/settings/UiSettingsStore.kt"
+            line="22"
+            column="9"/>
+    </issue>
+
+</issues>
