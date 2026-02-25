@@ -3,6 +3,7 @@ package com.example.blackbox.ui.screens
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -73,12 +74,10 @@ import com.example.blackbox.sharing.MAX_FAST_INTERVAL_MS
 import com.example.blackbox.sharing.MAX_NORMAL_INTERVAL_MS
 import com.example.blackbox.sharing.MIN_FAST_INTERVAL_MS
 import com.example.blackbox.sharing.MIN_NORMAL_INTERVAL_MS
-import com.example.blackbox.sharing.PortraitQrCaptureActivity
+import com.example.blackbox.sharing.QrScannerActivity
 import com.example.blackbox.sharing.hasSharingNetworkPermissions
 import com.example.blackbox.sharing.isValidUsername
 import com.example.blackbox.ui.components.ButtonLabel
-import com.journeyapps.barcodescanner.ScanContract
-import com.journeyapps.barcodescanner.ScanOptions
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -172,9 +171,15 @@ fun SharingScreen(modifier: Modifier = Modifier) {
         }
     }
 
-    val scanQrLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
-        val scanned = result.contents?.trim().orEmpty()
+    val scanQrLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val scanned = result.data?.getStringExtra(QrScannerActivity.EXTRA_QR_TEXT)?.trim().orEmpty()
         if (scanned.isBlank()) {
+            val error = result.data?.getStringExtra(QrScannerActivity.EXTRA_ERROR)
+            if (!error.isNullOrBlank()) {
+                scanManualCodeError = error
+            }
             return@rememberLauncherForActivityResult
         }
         importContactCodeAndHandle(
@@ -527,13 +532,7 @@ fun SharingScreen(modifier: Modifier = Modifier) {
                 scanManualCodeError = null
             },
             onScanCamera = {
-                val options = ScanOptions()
-                    .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                    .setPrompt("Scan a Blackbox location code")
-                    .setBeepEnabled(false)
-                    .setCaptureActivity(PortraitQrCaptureActivity::class.java)
-                    .setOrientationLocked(true)
-                scanQrLauncher.launch(options)
+                scanQrLauncher.launch(Intent(context, QrScannerActivity::class.java))
             },
             onVerifyPaste = {
                 importContactCodeAndHandle(

@@ -38,7 +38,7 @@
             </intent-filter>
         </activity>
         <activity
-            android:name=".sharing.PortraitQrCaptureActivity"
+            android:name=".sharing.QrScannerActivity"
             android:exported="false"
             android:screenOrientation="portrait"
             android:stateNotNeeded="true"
