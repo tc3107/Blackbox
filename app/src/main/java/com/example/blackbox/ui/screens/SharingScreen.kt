@@ -47,6 +47,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
@@ -610,33 +611,28 @@ private fun RelayConnectionStatusBar(sharingState: LocationSharingState) {
     val containerColor: Color
     val contentColor: Color
     val dotColor: Color
+    val checkingContainerColor = Color(0xFFFFF3E0)
+    val checkingContentColor = Color(0xFF8A4B00)
+    val checkingDotColor = Color(0xFFFB8C00)
 
     when {
         sync.relayStatusChecking && sync.relayReachable == null -> {
-            title = "Checking relay connection..."
-            detail = "Contacting ${sharingState.settings.relayBaseUrl}"
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
-            dotColor = MaterialTheme.colorScheme.primary
+            title = "Checking relay connection"
+            detail = ""
+            containerColor = checkingContainerColor
+            contentColor = checkingContentColor
+            dotColor = checkingDotColor
         }
         sync.relayStatusChecking -> {
-            title = if (sync.relayReachable == true) "Relay reachable (refreshing...)" else "Relay reconnecting..."
-            detail = "Last check ${formatTime(sync.lastRelayStatusCheckAtMs)}"
-            containerColor = if (sync.relayReachable == true) {
-                MaterialTheme.colorScheme.secondaryContainer
-            } else {
-                MaterialTheme.colorScheme.errorContainer
-            }
-            contentColor = if (sync.relayReachable == true) {
-                MaterialTheme.colorScheme.onSecondaryContainer
-            } else {
-                MaterialTheme.colorScheme.onErrorContainer
-            }
-            dotColor = if (sync.relayReachable == true) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error
+            title = if (sync.relayReachable == true) "Relay connected" else "Checking relay connection"
+            detail = ""
+            containerColor = checkingContainerColor
+            contentColor = checkingContentColor
+            dotColor = checkingDotColor
         }
         sync.relayReachable == true -> {
             title = "Relay connected"
-            detail = "Last successful check ${formatTime(sync.lastRelayStatusOkAtMs)}"
+            detail = ""
             containerColor = MaterialTheme.colorScheme.secondaryContainer
             contentColor = MaterialTheme.colorScheme.onSecondaryContainer
             dotColor = Color(0xFF2E7D32)
@@ -668,7 +664,8 @@ private fun RelayConnectionStatusBar(sharingState: LocationSharingState) {
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
             StatusDot(dotColor, CircleShape)
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -676,10 +673,12 @@ private fun RelayConnectionStatusBar(sharingState: LocationSharingState) {
                     text = title,
                     style = MaterialTheme.typography.titleSmall
                 )
-                Text(
-                    text = detail,
-                    style = MaterialTheme.typography.bodySmall
-                )
+                if (detail.isNotBlank()) {
+                    Text(
+                        text = detail,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             }
         }
     }
@@ -689,7 +688,6 @@ private fun RelayConnectionStatusBar(sharingState: LocationSharingState) {
 private fun StatusDot(color: Color, shape: Shape) {
     Box(
         modifier = Modifier
-            .padding(top = 4.dp)
             .size(10.dp)
             .clip(shape)
             .background(color)
