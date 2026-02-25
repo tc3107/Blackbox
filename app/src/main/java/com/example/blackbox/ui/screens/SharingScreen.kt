@@ -73,6 +73,7 @@ import com.example.blackbox.sharing.MAX_FAST_INTERVAL_MS
 import com.example.blackbox.sharing.MAX_NORMAL_INTERVAL_MS
 import com.example.blackbox.sharing.MIN_FAST_INTERVAL_MS
 import com.example.blackbox.sharing.MIN_NORMAL_INTERVAL_MS
+import com.example.blackbox.sharing.PortraitQrCaptureActivity
 import com.example.blackbox.sharing.hasSharingNetworkPermissions
 import com.example.blackbox.sharing.isValidUsername
 import com.example.blackbox.ui.components.ButtonLabel
@@ -530,7 +531,8 @@ fun SharingScreen(modifier: Modifier = Modifier) {
                     .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
                     .setPrompt("Scan a Blackbox location code")
                     .setBeepEnabled(false)
-                    .setOrientationLocked(false)
+                    .setCaptureActivity(PortraitQrCaptureActivity::class.java)
+                    .setOrientationLocked(true)
                 scanQrLauncher.launch(options)
             },
             onVerifyPaste = {
