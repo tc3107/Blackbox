@@ -23,6 +23,15 @@ class OkHttpRelayApi(
         explicitNulls = true
     }
 
+    override suspend fun relayStatus(request: RelayStatusRequest): Result<RelayStatusResponse> {
+        return postJson(
+            path = apiPath("/relay/status"),
+            request = request,
+            requestSerializer = RelayStatusRequest.serializer(),
+            responseSerializer = RelayStatusResponse.serializer()
+        )
+    }
+
     override suspend fun upsertAcl(request: UpsertAclRequest): Result<UpsertAclResponse> {
         return postJson(
             path = apiPath("/acl/upsert"),

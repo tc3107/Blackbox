@@ -7,6 +7,8 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
@@ -18,9 +20,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -41,13 +46,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.shape.CircleShape
 import com.example.blackbox.location.LocationEngine
 import com.example.blackbox.sharing.LocationSharingController
 import com.example.blackbox.sharing.LocationSharingState
@@ -227,6 +236,10 @@ fun SharingScreen(modifier: Modifier = Modifier) {
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        item {
+            RelayConnectionStatusBar(sharingState)
+        }
+
         item {
             Text(
                 text = "Location Sharing",
@@ -587,6 +600,100 @@ fun SharingScreen(modifier: Modifier = Modifier) {
             }
         )
     }
+}
+
+@Composable
+private fun RelayConnectionStatusBar(sharingState: LocationSharingState) {
+    val sync = sharingState.sync
+    val title: String
+    val detail: String
+    val containerColor: Color
+    val contentColor: Color
+    val dotColor: Color
+
+    when {
+        sync.relayStatusChecking && sync.relayReachable == null -> {
+            title = "Checking relay connection..."
+            detail = "Contacting ${sharingState.settings.relayBaseUrl}"
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+            dotColor = MaterialTheme.colorScheme.primary
+        }
+        sync.relayStatusChecking -> {
+            title = if (sync.relayReachable == true) "Relay reachable (refreshing...)" else "Relay reconnecting..."
+            detail = "Last check ${formatTime(sync.lastRelayStatusCheckAtMs)}"
+            containerColor = if (sync.relayReachable == true) {
+                MaterialTheme.colorScheme.secondaryContainer
+            } else {
+                MaterialTheme.colorScheme.errorContainer
+            }
+            contentColor = if (sync.relayReachable == true) {
+                MaterialTheme.colorScheme.onSecondaryContainer
+            } else {
+                MaterialTheme.colorScheme.onErrorContainer
+            }
+            dotColor = if (sync.relayReachable == true) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error
+        }
+        sync.relayReachable == true -> {
+            title = "Relay connected"
+            detail = "Last successful check ${formatTime(sync.lastRelayStatusOkAtMs)}"
+            containerColor = MaterialTheme.colorScheme.secondaryContainer
+            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+            dotColor = Color(0xFF2E7D32)
+        }
+        sync.relayReachable == false -> {
+            title = "Relay unreachable"
+            detail = sync.lastRelayStatusError ?: "Last check ${formatTime(sync.lastRelayStatusCheckAtMs)}"
+            containerColor = MaterialTheme.colorScheme.errorContainer
+            contentColor = MaterialTheme.colorScheme.onErrorContainer
+            dotColor = MaterialTheme.colorScheme.error
+        }
+        else -> {
+            title = "Relay status unknown"
+            detail = "Open this page to check relay connectivity."
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+            dotColor = MaterialTheme.colorScheme.outline
+        }
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = containerColor,
+            contentColor = contentColor
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            StatusDot(dotColor, CircleShape)
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall
+                )
+                Text(
+                    text = detail,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatusDot(color: Color, shape: Shape) {
+    Box(
+        modifier = Modifier
+            .padding(top = 4.dp)
+            .size(10.dp)
+            .clip(shape)
+            .background(color)
+    )
 }
 
 @Composable

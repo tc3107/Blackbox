@@ -3,12 +3,27 @@ package com.example.blackbox.sharing
 import kotlinx.serialization.Serializable
 
 interface RelayApi {
+    suspend fun relayStatus(request: RelayStatusRequest): Result<RelayStatusResponse>
     suspend fun upsertAcl(request: UpsertAclRequest): Result<UpsertAclResponse>
     suspend fun pushLocation(request: PushLocationRequest): Result<PushLocationResponse>
     suspend fun pullBatch(request: PullBatchRequest): Result<PullBatchResponse>
     suspend fun selfStatus(request: SelfStatusRequest): Result<SelfStatusResponse>
     suspend fun clearLocation(request: ClearLocationRequest): Result<ClearLocationResponse>
 }
+
+@Serializable
+data class RelayStatusRequest(
+    val clientTimestampMs: Long
+)
+
+@Serializable
+data class RelayStatusResponse(
+    val ok: Boolean,
+    val status: String = "ok",
+    val serverTimestampMs: Long,
+    val apiVersion: String = "v1",
+    val message: String? = null
+)
 
 @Serializable
 data class AclUnsigned(

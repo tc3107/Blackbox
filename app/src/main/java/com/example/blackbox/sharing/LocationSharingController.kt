@@ -45,6 +45,7 @@ object LocationSharingController {
     private var settingsJob: Job? = null
     private var locationEventsJob: Job? = null
     private var pollingJob: Job? = null
+    private var relayStatusJob: Job? = null
     private var retryJob: Job? = null
 
     private var currentSettings: SharingSettings = SharingSettings()
@@ -155,8 +156,10 @@ object LocationSharingController {
             publishState()
             if (visible) {
                 startPollingLoop()
+                startRelayStatusLoop()
             } else {
                 stopPollingLoop()
+                stopRelayStatusLoop()
             }
         }
     }
@@ -462,6 +465,72 @@ object LocationSharingController {
         pollingJob?.cancel()
         pollingJob = null
         Log.d(SHARING_DEBUG_TAG, "Stopped poll loop")
+    }
+
+    private fun startRelayStatusLoop() {
+        if (relayStatusJob != null) return
+        Log.d(SHARING_DEBUG_TAG, "Starting relay status loop intervalMs=$RELAY_STATUS_INTERVAL_MS")
+        relayStatusJob = scope.launch {
+            refreshRelayStatus(trigger = "page_open")
+            while (true) {
+                delay(RELAY_STATUS_INTERVAL_MS)
+                refreshRelayStatus(trigger = "interval")
+            }
+        }
+    }
+
+    private fun stopRelayStatusLoop() {
+        relayStatusJob?.cancel()
+        relayStatusJob = null
+        mutateSyncOnly { it.copy(relayStatusChecking = false) }
+        Log.d(SHARING_DEBUG_TAG, "Stopped relay status loop")
+    }
+
+    private suspend fun refreshRelayStatus(trigger: String) {
+        val localRelay = relayApi ?: return
+        val now = System.currentTimeMillis()
+        mutateSyncOnly {
+            it.copy(
+                lastRelayStatusCheckAtMs = now,
+                relayStatusChecking = true
+            )
+        }
+
+        val request = RelayStatusRequest(clientTimestampMs = now)
+        localRelay.relayStatus(request)
+            .onSuccess { response ->
+                val successAt = System.currentTimeMillis()
+                Log.d(
+                    SHARING_DEBUG_TAG,
+                    "Relay status success trigger=$trigger status=${response.status} serverTs=${response.serverTimestampMs}"
+                )
+                mutateSyncOnly {
+                    it.copy(
+                        relayStatusChecking = false,
+                        relayReachable = response.ok,
+                        lastRelayStatusOkAtMs = if (response.ok) successAt else it.lastRelayStatusOkAtMs,
+                        lastRelayStatusError = if (response.ok) null else (response.message ?: "Relay status unavailable."),
+                        lastRelayStatusErrorAtMs = if (response.ok) null else successAt
+                    )
+                }
+            }
+            .onFailure { throwable ->
+                val failedAt = System.currentTimeMillis()
+                val error = throwable.message ?: "Relay status failed."
+                Log.w(
+                    SHARING_DEBUG_TAG,
+                    "Relay status failed trigger=$trigger error=$error",
+                    throwable
+                )
+                mutateSyncOnly {
+                    it.copy(
+                        relayStatusChecking = false,
+                        relayReachable = false,
+                        lastRelayStatusError = error,
+                        lastRelayStatusErrorAtMs = failedAt
+                    )
+                }
+            }
     }
 
     private suspend fun pollNow(trigger: String) {
@@ -1163,6 +1232,16 @@ object LocationSharingController {
         val localStore = stateStore ?: return
         snapshot = localStore.update { current ->
             current.copy(sync = transform(current.sync))
+        }
+    }
+
+    private fun mutateSyncOnly(transform: (SharingSyncState) -> SharingSyncState) {
+        val localStore = stateStore ?: return
+        synchronized(this) {
+            snapshot = localStore.update { current ->
+                current.copy(sync = transform(current.sync))
+            }
+            publishState()
         }
     }
 

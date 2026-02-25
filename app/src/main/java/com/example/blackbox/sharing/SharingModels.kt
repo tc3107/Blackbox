@@ -124,6 +124,12 @@ data class SharingSyncState(
     val lastPollSuccessAtMs: Long? = null,
     val lastPollErrorAtMs: Long? = null,
     val lastPollError: String? = null,
+    val lastRelayStatusCheckAtMs: Long? = null,
+    val lastRelayStatusOkAtMs: Long? = null,
+    val lastRelayStatusErrorAtMs: Long? = null,
+    val lastRelayStatusError: String? = null,
+    val relayReachable: Boolean? = null,
+    val relayStatusChecking: Boolean = false,
     val pollingActive: Boolean = false,
     val nextSeq: Long = 1L,
     val lastAclSeq: Long = 0L,
@@ -200,6 +206,7 @@ const val DEFAULT_NORMAL_PUSH_INTERVAL_MS = 5 * 60_000L
 const val DEFAULT_FAST_PUSH_INTERVAL_MS = 60_000L
 const val DEFAULT_FAST_SPEED_THRESHOLD_MPS = 8.0f
 const val POLL_INTERVAL_MS = 2 * 60_000L
+const val RELAY_STATUS_INTERVAL_MS = 20_000L
 
 fun normalizeUsername(raw: String): String {
     return raw.trim().take(USERNAME_MAX_LENGTH)

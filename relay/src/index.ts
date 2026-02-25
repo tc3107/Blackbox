@@ -14,6 +14,8 @@ import {
   normalizeReceiverIds,
   normalizeRecipientCiphertexts,
   parseJson,
+  RelayStatusRequest,
+  RelayStatusResponse,
   PullBatchRequest,
   PullRecord,
   PushLocationRequest,
@@ -51,6 +53,10 @@ export default {
       return handlePullBatch(rawBody, env);
     }
 
+    if (url.pathname === "/v1/relay/status") {
+      return handleRelayStatus(rawBody);
+    }
+
     const routing = routeToSenderObject(url.pathname);
     if (!routing) {
       return jsonResponse({ ok: false, message: "Endpoint not found." }, { status: 404 });
@@ -70,6 +76,29 @@ export default {
     });
   },
 };
+
+function handleRelayStatus(rawBody: string): Response {
+  // Endpoint intentionally unauthenticated: connectivity/health check only.
+  let parsed: RelayStatusRequest | null = null;
+  if (rawBody.trim().length > 0) {
+    try {
+      parsed = JSON.parse(rawBody) as RelayStatusRequest;
+    } catch {
+      return badRequest("Invalid JSON body.");
+    }
+    if (parsed.clientTimestampMs !== undefined && !validateSeq(parsed.clientTimestampMs)) {
+      return badRequest("Invalid clientTimestampMs.");
+    }
+  }
+
+  const response: RelayStatusResponse = {
+    ok: true,
+    status: "ok",
+    serverTimestampMs: nowMs(),
+    apiVersion: "v1",
+  };
+  return jsonResponse(response);
+}
 
 async function handlePullBatch(rawBody: string, env: Env): Promise<Response> {
   let body: PullBatchRequest;

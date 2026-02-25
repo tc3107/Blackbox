@@ -52,6 +52,18 @@ export interface PullRecord {
   message?: string;
 }
 
+export interface RelayStatusRequest {
+  clientTimestampMs?: number;
+}
+
+export interface RelayStatusResponse {
+  ok: boolean;
+  status: "ok";
+  serverTimestampMs: number;
+  apiVersion: string;
+  message?: string;
+}
+
 export interface SelfStatusRequest {
   senderId: string;
   timestampMs: number;
