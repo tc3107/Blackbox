@@ -14,6 +14,7 @@ import androidx.core.app.NotificationManagerCompat
 import com.example.blackbox.MainActivity
 import com.example.blackbox.R
 import com.example.blackbox.data.locationdb.LocationPersistenceController
+import com.example.blackbox.sharing.LocationSharingController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -33,6 +34,7 @@ class LocationEngineForegroundService : Service() {
         createNotificationChannel()
         LocationEngine.initialize(applicationContext)
         LocationPersistenceController.initialize(applicationContext)
+        LocationSharingController.initialize(applicationContext)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

@@ -3,6 +3,7 @@
     <string name="app_brand_upper">BLACKBOX</string>
     <string name="nav_location_engine">Location Engine</string>
     <string name="nav_location">Live Location</string>
+    <string name="nav_sharing">Location Sharing</string>
     <string name="nav_data_values">Debug</string>
     <string name="nav_database">Database Controls</string>
     <string name="nav_theme">Theme</string>

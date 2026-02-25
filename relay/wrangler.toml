@@ -1,0 +1,11 @@
+name = "blackbox-relay"
+main = "src/index.ts"
+compatibility_date = "2026-02-25"
+
+[[durable_objects.bindings]]
+name = "SENDER_STATE"
+class_name = "SenderStateDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SenderStateDO"]

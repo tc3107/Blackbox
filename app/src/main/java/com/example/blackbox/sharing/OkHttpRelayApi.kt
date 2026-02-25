@@ -1,0 +1,107 @@
+package com.example.blackbox.sharing
+
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.json.Json
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+
+class OkHttpRelayApi(
+    private val baseUrlProvider: () -> String,
+    private val client: OkHttpClient = OkHttpClient.Builder().build()
+) : RelayApi {
+    private val json = Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+        explicitNulls = true
+    }
+
+    override suspend fun upsertAcl(request: UpsertAclRequest): Result<UpsertAclResponse> {
+        return postJson(
+            path = apiPath("/acl/upsert"),
+            request = request,
+            requestSerializer = UpsertAclRequest.serializer(),
+            responseSerializer = UpsertAclResponse.serializer()
+        )
+    }
+
+    override suspend fun pushLocation(request: PushLocationRequest): Result<PushLocationResponse> {
+        return postJson(
+            path = apiPath("/location/push"),
+            request = request,
+            requestSerializer = PushLocationRequest.serializer(),
+            responseSerializer = PushLocationResponse.serializer()
+        )
+    }
+
+    override suspend fun pullBatch(request: PullBatchRequest): Result<PullBatchResponse> {
+        return postJson(
+            path = apiPath("/location/pull"),
+            request = request,
+            requestSerializer = PullBatchRequest.serializer(),
+            responseSerializer = PullBatchResponse.serializer()
+        )
+    }
+
+    override suspend fun selfStatus(request: SelfStatusRequest): Result<SelfStatusResponse> {
+        return postJson(
+            path = apiPath("/location/self-status"),
+            request = request,
+            requestSerializer = SelfStatusRequest.serializer(),
+            responseSerializer = SelfStatusResponse.serializer()
+        )
+    }
+
+    override suspend fun clearLocation(request: ClearLocationRequest): Result<ClearLocationResponse> {
+        return postJson(
+            path = apiPath("/location/clear"),
+            request = request,
+            requestSerializer = ClearLocationRequest.serializer(),
+            responseSerializer = ClearLocationResponse.serializer()
+        )
+    }
+
+    private fun apiPath(pathSuffix: String): String {
+        val version = SharingVersions.RELAY_API_VERSION.trim('/').ifBlank { "v1" }
+        return "/$version$pathSuffix"
+    }
+
+    private suspend fun <Req : Any, Res : Any> postJson(
+        path: String,
+        request: Req,
+        requestSerializer: KSerializer<Req>,
+        responseSerializer: KSerializer<Res>
+    ): Result<Res> {
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val baseUrl = baseUrlProvider().trim().trimEnd('/')
+                require(baseUrl.startsWith("http://") || baseUrl.startsWith("https://")) {
+                    "Relay URL must be absolute (http/https)."
+                }
+
+                val bodyJson = json.encodeToString(requestSerializer, request)
+                val httpRequest = Request.Builder()
+                    .url(baseUrl + path)
+                    .post(bodyJson.toRequestBody(JSON_MEDIA_TYPE))
+                    .header("Accept", "application/json")
+                    .header("Content-Type", "application/json")
+                    .build()
+
+                client.newCall(httpRequest).execute().use { response ->
+                    val body = response.body?.string().orEmpty()
+                    if (!response.isSuccessful) {
+                        error("Relay request failed (${response.code}): $body")
+                    }
+                    json.decodeFromString(responseSerializer, body)
+                }
+            }
+        }
+    }
+
+    private companion object {
+        val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+    }
+}

@@ -6,6 +6,7 @@ import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import com.example.blackbox.BuildConfig
 import java.io.File
 import java.security.KeyStore
 import java.security.MessageDigest
@@ -378,9 +379,9 @@ class LocationDbKeyManager(context: Context) : KeyBackupService {
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val DB_KEY_SIZE_BYTES = 32
 
-        private const val LOCAL_STATE_VERSION = 1
-        private const val EXPORT_PAYLOAD_VERSION = 1
-        private const val KEY_BUNDLE_VERSION = "keybundle-v1"
+        private val LOCAL_STATE_VERSION = BuildConfig.LOCATION_DB_LOCAL_STATE_VERSION
+        private val EXPORT_PAYLOAD_VERSION = BuildConfig.LOCATION_DB_EXPORT_PAYLOAD_VERSION
+        private val KEY_BUNDLE_VERSION = BuildConfig.LOCATION_DB_BUNDLE_VERSION
 
         private const val JSON_VERSION = "version"
         private const val JSON_ACTIVE_KEY_ID = "activeKeyId"

@@ -49,6 +49,7 @@ import com.example.blackbox.ui.screens.DatabaseScreen
 import com.example.blackbox.ui.screens.DataValuesScreen
 import com.example.blackbox.ui.screens.LocationEngineScreen
 import com.example.blackbox.ui.screens.LocationScreen
+import com.example.blackbox.ui.screens.SharingScreen
 import com.example.blackbox.ui.screens.ThemeScreen
 import kotlinx.coroutines.launch
 
@@ -150,6 +151,7 @@ fun BlackboxApp(
             when (currentDestination) {
                 AppDestination.LOCATION_ENGINE -> LocationEngineScreen(modifier = contentModifier)
                 AppDestination.LOCATION -> LocationScreen(modifier = contentModifier)
+                AppDestination.SHARING -> SharingScreen(modifier = contentModifier)
                 AppDestination.DATABASE -> DatabaseScreen(modifier = contentModifier)
                 AppDestination.THEME -> ThemeScreen(
                     settings = settings,
@@ -188,6 +190,7 @@ private enum class AppDestination(
 ) {
     LOCATION_ENGINE(route = "location_engine", titleRes = R.string.nav_location_engine),
     LOCATION(route = "location", titleRes = R.string.nav_location),
+    SHARING(route = "sharing", titleRes = R.string.nav_sharing),
     DATABASE(route = "database", titleRes = R.string.nav_database),
     THEME(route = "theme", titleRes = R.string.nav_theme),
     DATA_VALUES(route = "data_values", titleRes = R.string.nav_data_values);

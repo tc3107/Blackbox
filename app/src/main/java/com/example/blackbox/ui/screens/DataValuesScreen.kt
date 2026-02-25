@@ -46,6 +46,7 @@ import com.example.blackbox.location.LocationEngineForegroundController
 import com.example.blackbox.location.LocationEngineState
 import com.example.blackbox.location.hasAnyLocationPermission
 import com.example.blackbox.location.hasNotificationPermission
+import com.example.blackbox.sharing.LocationSharingController
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -67,6 +68,7 @@ fun DataValuesScreen(modifier: Modifier = Modifier) {
     val locationState by LocationEngine.state.collectAsState()
     val foregroundState by LocationEngineForegroundController.state.collectAsState()
     val persistenceState by LocationPersistenceController.state.collectAsState()
+    val sharingState by LocationSharingController.state.collectAsState()
     val dbWriteIndicator = debugDbWriteIndicator(
         initialized = persistenceState.initialized,
         lastError = persistenceState.lastError,
@@ -77,6 +79,7 @@ fun DataValuesScreen(modifier: Modifier = Modifier) {
     LaunchedEffect(context) {
         LocationEngine.initialize(context.applicationContext)
         LocationPersistenceController.initialize(context.applicationContext)
+        LocationSharingController.initialize(context.applicationContext)
         scanVersion += 1
     }
 
@@ -322,6 +325,28 @@ fun DataValuesScreen(modifier: Modifier = Modifier) {
         DebugStatItem("Archived Files", archivedCount.toString()),
         DebugStatItem("Failed Files", failedCount.toString())
     )
+    val sharingRows = listOf(
+        DebugStatItem(
+            "Identity Sender ID",
+            sharingState.identitySenderId ?: "Not ready",
+            isError = sharingState.identitySenderId == null
+        ),
+        DebugStatItem(
+            "Safety Fingerprint",
+            sharingState.mySafetyFingerprint ?: "Unavailable",
+            isError = sharingState.mySafetyFingerprint == null
+        ),
+        DebugStatItem("Sharing Enabled", yesNo(sharingState.settings.sharingEnabled)),
+        DebugStatItem("Outbound Recipients", sharingState.outboundRecipientsCount.toString()),
+        DebugStatItem("Following", sharingState.followingCount.toString()),
+        DebugStatItem("Polling Visible", yesNo(sharingState.pollingVisible)),
+        DebugStatItem("Last Push Success", formatNullableTime(sharingState.sync.lastPushSuccessAtMs)),
+        DebugStatItem("Last Poll Success", formatNullableTime(sharingState.sync.lastPollSuccessAtMs)),
+        DebugStatItem("Last Push Error", sharingState.sync.lastPushError ?: "None", isError = sharingState.sync.lastPushError != null),
+        DebugStatItem("Last Poll Error", sharingState.sync.lastPollError ?: "None", isError = sharingState.sync.lastPollError != null),
+        DebugStatItem("Last Info", sharingState.lastInfo),
+        DebugStatItem("Last Error", sharingState.lastError ?: "None", isError = sharingState.lastError != null)
+    )
 
     val groups = listOf(
         DataGroup(
@@ -436,6 +461,16 @@ fun DataValuesScreen(modifier: Modifier = Modifier) {
                 title = "Folder Scan",
                 summary = "Live scan across local + SAF folders",
                 rows = scanRows,
+                initiallyExpanded = false
+            )
+        }
+
+        item {
+            DebugStatBox(
+                stateKey = "debug_location_sharing",
+                title = "Location Sharing",
+                summary = "Identity, sync, and diagnostics",
+                rows = sharingRows,
                 initiallyExpanded = false
             )
         }
@@ -1134,6 +1169,10 @@ private fun formatTime(timestampMillis: Long): String {
         .withLocale(Locale.US)
         .withZone(ZoneId.systemDefault())
     return formatter.format(Instant.ofEpochMilli(timestampMillis))
+}
+
+private fun formatNullableTime(timestampMillis: Long?): String {
+    return timestampMillis?.let(::formatTime) ?: "Never"
 }
 
 private fun formatElapsed(deltaMillis: Long): String {

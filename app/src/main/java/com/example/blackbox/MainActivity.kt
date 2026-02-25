@@ -11,6 +11,7 @@ import com.example.blackbox.data.locationdb.LocationPersistenceController
 import com.example.blackbox.data.settings.UiSettingsStore
 import com.example.blackbox.location.LocationEngine
 import com.example.blackbox.location.LocationEngineForegroundController
+import com.example.blackbox.sharing.LocationSharingController
 import com.example.blackbox.ui.BlackboxApp
 import com.example.blackbox.ui.theme.BlackboxTheme
 
@@ -20,6 +21,7 @@ class MainActivity : ComponentActivity() {
         LocationEngine.initialize(applicationContext)
         LocationEngineForegroundController.initialize(applicationContext)
         LocationPersistenceController.initialize(applicationContext)
+        LocationSharingController.initialize(applicationContext)
         enableEdgeToEdge()
         setContent {
             val settingsStore = remember { UiSettingsStore(applicationContext) }
