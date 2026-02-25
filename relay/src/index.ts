@@ -574,13 +574,98 @@ async function verifySignature(
       false,
       ["verify"],
     );
-    return await crypto.subtle.verify(
+    const rawVerified = await crypto.subtle.verify(
       { name: "ECDSA", hash: "SHA-256" },
       key,
       signatureBuffer,
       messageBuffer,
     );
+    if (rawVerified) {
+      return true;
+    }
+
+    // Android/JCA ECDSA signatures are DER-encoded; WebCrypto expects raw r||s.
+    const derConverted = derEcdsaSignatureToRaw(signature, 32);
+    if (!derConverted) {
+      return false;
+    }
+    return await crypto.subtle.verify(
+      { name: "ECDSA", hash: "SHA-256" },
+      key,
+      asArrayBuffer(derConverted),
+      messageBuffer,
+    );
   });
+}
+
+function derEcdsaSignatureToRaw(signature: Uint8Array, componentSize: number): Uint8Array | null {
+  // Fast path: already raw r||s.
+  if (signature.length === componentSize * 2) {
+    return signature;
+  }
+
+  // Minimal DER parser for: SEQUENCE(INTEGER r, INTEGER s)
+  if (signature.length < 8 || signature[0] !== 0x30) return null;
+  let offset = 1;
+  const [seqLen, seqLenSize] = readDerLength(signature, offset);
+  if (seqLen === null) return null;
+  offset += seqLenSize;
+  if (offset + seqLen !== signature.length) return null;
+
+  if (signature[offset] !== 0x02) return null;
+  offset += 1;
+  const [rLen, rLenSize] = readDerLength(signature, offset);
+  if (rLen === null) return null;
+  offset += rLenSize;
+  const r = signature.slice(offset, offset + rLen);
+  offset += rLen;
+
+  if (signature[offset] !== 0x02) return null;
+  offset += 1;
+  const [sLen, sLenSize] = readDerLength(signature, offset);
+  if (sLen === null) return null;
+  offset += sLenSize;
+  const s = signature.slice(offset, offset + sLen);
+  offset += sLen;
+  if (offset !== signature.length) return null;
+
+  const raw = new Uint8Array(componentSize * 2);
+  const normalizedR = normalizeDerIntComponent(r, componentSize);
+  const normalizedS = normalizeDerIntComponent(s, componentSize);
+  if (!normalizedR || !normalizedS) return null;
+  raw.set(normalizedR, 0);
+  raw.set(normalizedS, componentSize);
+  return raw;
+}
+
+function normalizeDerIntComponent(component: Uint8Array, size: number): Uint8Array | null {
+  // DER INTEGER may include a leading 0x00 to force positive.
+  let value = component;
+  while (value.length > 0 && value[0] === 0x00) {
+    value = value.slice(1);
+  }
+  if (value.length > size) {
+    return null;
+  }
+  const out = new Uint8Array(size);
+  out.set(value, size - value.length);
+  return out;
+}
+
+function readDerLength(bytes: Uint8Array, offset: number): [number | null, number] {
+  if (offset >= bytes.length) return [null, 0];
+  const first = bytes[offset];
+  if ((first & 0x80) === 0) {
+    return [first, 1];
+  }
+  const lengthBytes = first & 0x7f;
+  if (lengthBytes === 0 || lengthBytes > 4) return [null, 0];
+  if (offset + 1 + lengthBytes > bytes.length) return [null, 0];
+  let value = 0;
+  for (let i = 0; i < lengthBytes; i += 1) {
+    value = (value << 8) | bytes[offset + 1 + i];
+  }
+  return [value, 1 + lengthBytes];
 }
 
 function asArrayBuffer(bytes: Uint8Array): ArrayBuffer {
