@@ -87,7 +87,23 @@ class SharingCrypto {
         if (identity.encPublicKeysetJson.isBlank()) return false
 
         return runCatching {
-            senderIdFromSignPublicKey(identity.signPublicKeySpkiB64Url) == identity.senderId
+            if (senderIdFromSignPublicKey(identity.signPublicKeySpkiB64Url) != identity.senderId) {
+                return@runCatching false
+            }
+
+            // Ensure signing private/public keys are a matching pair.
+            val probeMessage = "bbx-signing-self-check".toByteArray(Charsets.UTF_8)
+            val privateKey = decodePrivateSigningKey(identity.signPrivateKeyPkcs8B64Url)
+            val publicKey = decodePublicSigningKey(identity.signPublicKeySpkiB64Url)
+            val signer = Signature.getInstance(signatureAlgorithmForKey(privateKey.algorithm))
+            signer.initSign(privateKey)
+            signer.update(probeMessage)
+            val signature = signer.sign()
+
+            val verifier = Signature.getInstance(signatureAlgorithmForKey(publicKey.algorithm))
+            verifier.initVerify(publicKey)
+            verifier.update(probeMessage)
+            verifier.verify(signature)
         }.getOrDefault(false)
     }
 
