@@ -103,7 +103,7 @@ async function handlePullBatch(rawBody: string, env: Env): Promise<Response> {
     body.timestampMs,
     body.nonceB64Url,
   );
-  const pullSignatureValid = await verifyEd25519Signature(
+  const pullSignatureValid = await verifySignature(
     body.receiverSignPublicKeySpkiB64Url,
     pullMessage,
     body.signatureB64Url,
@@ -217,7 +217,7 @@ export class SenderStateDO {
       return unauthorized("ACL senderId does not match signing key.");
     }
 
-    const signatureValid = await verifyEd25519Signature(
+    const signatureValid = await verifySignature(
       body.senderSignPublicKeySpkiB64Url,
       canonicalAclMessage(body.acl),
       body.signatureB64Url,
@@ -278,7 +278,7 @@ export class SenderStateDO {
       return unauthorized("Push senderId does not match signing key.");
     }
 
-    const signatureValid = await verifyEd25519Signature(
+    const signatureValid = await verifySignature(
       body.senderSignPublicKeySpkiB64Url,
       canonicalPushMessage(envelope),
       body.push.signatureB64Url,
@@ -355,7 +355,7 @@ export class SenderStateDO {
       return unauthorized("Self-status senderId does not match signing key.");
     }
 
-    const signatureValid = await verifyEd25519Signature(
+    const signatureValid = await verifySignature(
       body.senderSignPublicKeySpkiB64Url,
       canonicalSelfStatusMessage(body.senderId, body.timestampMs, body.nonceB64Url),
       body.signatureB64Url,
@@ -399,7 +399,7 @@ export class SenderStateDO {
       return unauthorized("Clear senderId does not match signing key.");
     }
 
-    const signatureValid = await verifyEd25519Signature(
+    const signatureValid = await verifySignature(
       body.senderSignPublicKeySpkiB64Url,
       canonicalClearMessage(body.senderId, body.timestampMs, body.nonceB64Url),
       body.signatureB64Url,
@@ -443,7 +443,7 @@ export class SenderStateDO {
       return jsonResponse({ senderId: body.senderId, status: "unauthorized", message: "Receiver key mismatch." });
     }
 
-    const pullSignatureValid = await verifyEd25519Signature(
+    const pullSignatureValid = await verifySignature(
       body.receiverSignPublicKeySpkiB64Url,
       canonicalPullMessage(body.receiverId, body.senderIds, body.timestampMs, body.nonceB64Url),
       body.signatureB64Url,
@@ -537,15 +537,20 @@ async function senderIdFromSignPublicKey(signPublicKeySpkiB64Url: string): Promi
   return encodeBase64Url(new Uint8Array(digest));
 }
 
-async function verifyEd25519Signature(
+async function verifySignature(
   signPublicKeySpkiB64Url: string,
   message: Uint8Array,
   signatureB64Url: string,
 ): Promise<boolean> {
-  return runBoolean(async () => {
+  const spki = decodeBase64Url(signPublicKeySpkiB64Url);
+  const signature = decodeBase64Url(signatureB64Url);
+  const messageBuffer = asArrayBuffer(message);
+  const signatureBuffer = asArrayBuffer(signature);
+
+  const ed25519Verified = await runBoolean(async () => {
     const key = await crypto.subtle.importKey(
       "spki",
-      asArrayBuffer(decodeBase64Url(signPublicKeySpkiB64Url)),
+      asArrayBuffer(spki),
       { name: "Ed25519" },
       false,
       ["verify"],
@@ -553,8 +558,27 @@ async function verifyEd25519Signature(
     return await crypto.subtle.verify(
       { name: "Ed25519" },
       key,
-      asArrayBuffer(decodeBase64Url(signatureB64Url)),
-      asArrayBuffer(message),
+      signatureBuffer,
+      messageBuffer,
+    );
+  });
+  if (ed25519Verified) {
+    return true;
+  }
+
+  return await runBoolean(async () => {
+    const key = await crypto.subtle.importKey(
+      "spki",
+      asArrayBuffer(spki),
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["verify"],
+    );
+    return await crypto.subtle.verify(
+      { name: "ECDSA", hash: "SHA-256" },
+      key,
+      signatureBuffer,
+      messageBuffer,
     );
   });
 }

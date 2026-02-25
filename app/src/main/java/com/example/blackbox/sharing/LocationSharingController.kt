@@ -369,6 +369,12 @@ object LocationSharingController {
         scope.launch {
             val localRelay = relayApi ?: return@launch
             val identity = snapshot.identity ?: return@launch
+            val networkError = networkPreflightError()
+            if (networkError != null) {
+                Log.w(SHARING_DEBUG_TAG, "Clear relay blocked sender=${shortSharingId(identity.senderId)} reason=$networkError")
+                setError(networkError)
+                return@launch
+            }
             Log.d(SHARING_DEBUG_TAG, "Clear relay requested sender=${shortSharingId(identity.senderId)}")
             val now = System.currentTimeMillis()
             val nonce = randomNonceB64Url()
@@ -463,6 +469,24 @@ object LocationSharingController {
         val localCrypto = crypto ?: return
         val localSnapshot = snapshot
         val identity = localSnapshot.identity ?: return
+        val networkError = networkPreflightError()
+        if (networkError != null) {
+            Log.w(
+                SHARING_DEBUG_TAG,
+                "Poll blocked trigger=$trigger sender=${shortSharingId(identity.senderId)} reason=$networkError"
+            )
+            mutateSnapshot {
+                it.copy(
+                    sync = it.sync.copy(
+                        lastPollAttemptAtMs = System.currentTimeMillis(),
+                        lastPollError = networkError,
+                        lastPollErrorAtMs = System.currentTimeMillis()
+                    )
+                )
+            }
+            setError(networkError)
+            return
+        }
         Log.d(
             SHARING_DEBUG_TAG,
             "Poll start trigger=$trigger sender=${shortSharingId(identity.senderId)} following=${localSnapshot.contacts.count { it.iFollow }}"
@@ -867,6 +891,16 @@ object LocationSharingController {
         identity: SharingIdentityState
     ) {
         val localRelay = relayApi ?: return
+        val networkError = networkPreflightError()
+        if (networkError != null) {
+            Log.w(
+                SHARING_DEBUG_TAG,
+                "Push blocked sender=${shortSharingId(identity.senderId)} seq=${claim.seq} reason=$networkError"
+            )
+            queuePendingPush(envelope = envelope, claim = claim, reason = networkError)
+            setError(networkError)
+            return
+        }
         val now = System.currentTimeMillis()
         Log.d(
             SHARING_DEBUG_TAG,
@@ -1029,6 +1063,14 @@ object LocationSharingController {
 
                 val localRelay = relayApi ?: continue
                 val identity = snapshot.identity ?: continue
+                val networkError = networkPreflightError()
+                if (networkError != null) {
+                    reschedulePendingWithBackoff(
+                        pending = snapshot.pendingPush ?: continue,
+                        reason = networkError
+                    )
+                    continue
+                }
 
                 val aclResult = ensureAclUpToDate(identity)
                 if (aclResult.isFailure) {
@@ -1224,6 +1266,14 @@ object LocationSharingController {
             SHARING_DEBUG_TAG,
             "Skipping push reason=$reason sharingEnabled=${currentSettings.sharingEnabled} usernameValid=${isValidUsername(normalizeUsername(currentSettings.username))} recipients=${snapshot.contacts.count { it.canReceiveFromMe }}"
         )
+    }
+
+    private fun networkPreflightError(): String? {
+        val context = appContext ?: return "Sharing is not initialized."
+        if (!context.hasSharingNetworkPermissions()) {
+            return "Network permission missing (INTERNET/ACCESS_NETWORK_STATE). Update or reinstall the app."
+        }
+        return null
     }
 
     private fun buildPushContext(senderId: String, recipientId: String, seq: Long): ByteArray {

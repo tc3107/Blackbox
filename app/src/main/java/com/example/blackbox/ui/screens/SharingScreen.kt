@@ -63,6 +63,7 @@ import com.example.blackbox.sharing.MAX_FAST_INTERVAL_MS
 import com.example.blackbox.sharing.MAX_NORMAL_INTERVAL_MS
 import com.example.blackbox.sharing.MIN_FAST_INTERVAL_MS
 import com.example.blackbox.sharing.MIN_NORMAL_INTERVAL_MS
+import com.example.blackbox.sharing.hasSharingNetworkPermissions
 import com.example.blackbox.sharing.isValidUsername
 import com.example.blackbox.ui.components.ButtonLabel
 import com.journeyapps.barcodescanner.ScanContract
@@ -101,6 +102,9 @@ fun SharingScreen(modifier: Modifier = Modifier) {
     var zoneDialogError by rememberSaveable { mutableStateOf<String?>(null) }
     var passphraseInput by rememberSaveable { mutableStateOf("") }
     var passphraseConfirmInput by rememberSaveable { mutableStateOf("") }
+    var networkPermissionGranted by rememberSaveable {
+        mutableStateOf(context.applicationContext.hasSharingNetworkPermissions())
+    }
 
     val aliasDrafts = remember { mutableStateMapOf<String, String>() }
 
@@ -176,7 +180,12 @@ fun SharingScreen(modifier: Modifier = Modifier) {
     }
 
     LaunchedEffect(context) {
-        LocationSharingController.initialize(context.applicationContext)
+        val appContext = context.applicationContext
+        LocationSharingController.initialize(appContext)
+        networkPermissionGranted = appContext.hasSharingNetworkPermissions()
+        if (!networkPermissionGranted) {
+            statusMessage = "Network permission is missing. Update/reinstall app and reopen Location Sharing."
+        }
     }
 
     DisposableEffect(Unit) {
@@ -228,6 +237,16 @@ fun SharingScreen(modifier: Modifier = Modifier) {
 
         item {
             SharingStatusHeader(sharingState = sharingState)
+        }
+
+        if (!networkPermissionGranted) {
+            item {
+                Text(
+                    text = "Network permissions are required for relay communication. If this persists after updating, reinstall the app.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
         }
 
         item {

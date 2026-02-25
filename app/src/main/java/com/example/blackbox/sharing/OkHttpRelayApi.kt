@@ -1,10 +1,13 @@
 package com.example.blackbox.sharing
 
 import android.util.Log
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
+import javax.net.ssl.SSLException
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -111,13 +114,36 @@ class OkHttpRelayApi(
                     )
                     json.decodeFromString(responseSerializer, body)
                 }
-            }.onFailure { throwable ->
+            }.fold(
+                onSuccess = { Result.success(it) },
+                onFailure = { throwable ->
+                    val mapped = mapRelayThrowable(throwable)
                 Log.e(
                     SHARING_DEBUG_TAG,
-                    "Relay transport exception path=$path error=${throwable.message}",
-                    throwable
+                        "Relay transport exception path=$path error=${mapped.message}",
+                        throwable
                 )
-            }
+                    Result.failure(mapped)
+                }
+            )
+        }
+    }
+
+    private fun mapRelayThrowable(throwable: Throwable): Throwable {
+        return when (throwable) {
+            is UnknownHostException -> IllegalStateException(
+                "Cannot resolve relay host. Check internet, DNS/Private DNS, or relay URL.",
+                throwable
+            )
+            is SocketTimeoutException -> IllegalStateException(
+                "Relay request timed out. Check connection quality and retry.",
+                throwable
+            )
+            is SSLException -> IllegalStateException(
+                "Secure relay connection failed. Check device date/time and TLS interception settings.",
+                throwable
+            )
+            else -> throwable
         }
     }
 
