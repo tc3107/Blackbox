@@ -38,7 +38,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -845,7 +844,17 @@ private fun ToggleRow(
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Text(title, style = MaterialTheme.typography.titleSmall)
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Button(
+            onClick = { onCheckedChange(!checked) },
+            shape = CircleShape,
+            modifier = Modifier.size(68.dp),
+            contentPadding = PaddingValues(0.dp)
+        ) {
+            Text(
+                text = if (checked) "ON" else "OFF",
+                style = MaterialTheme.typography.labelLarge
+            )
+        }
     }
 }
 
@@ -858,25 +867,25 @@ private fun ActionWidget(
 ) {
     OutlinedCard(
         modifier = modifier
-            .aspectRatio(3f / 2f)
+            .aspectRatio(2.2f)
             .clickable(onClick = onClick)
     ) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(12.dp)
+                .padding(10.dp)
         ) {
             Icon(
                 painter = painterResource(iconRes),
                 contentDescription = null,
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .size(34.dp),
+                    .size(26.dp),
                 tint = MaterialTheme.colorScheme.primary
             )
             Text(
                 text = title,
-                style = MaterialTheme.typography.titleSmall,
+                style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
                 modifier = Modifier
                     .align(Alignment.Center)
