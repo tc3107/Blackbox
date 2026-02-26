@@ -47,10 +47,9 @@ import com.example.blackbox.R
 import com.example.blackbox.data.settings.UiSettings
 import com.example.blackbox.ui.screens.DatabaseScreen
 import com.example.blackbox.ui.screens.DataValuesScreen
-import com.example.blackbox.ui.screens.LocationEngineScreen
 import com.example.blackbox.ui.screens.LocationScreen
+import com.example.blackbox.ui.screens.MainViewScreen
 import com.example.blackbox.ui.screens.SettingsScreen
-import com.example.blackbox.ui.screens.SharingScreen
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -149,9 +148,11 @@ fun BlackboxApp(
                 .background(MaterialTheme.colorScheme.background)
 
             when (currentDestination) {
-                AppDestination.LOCATION_ENGINE -> LocationEngineScreen(modifier = contentModifier)
+                AppDestination.MAIN_VIEW -> MainViewScreen(
+                    modifier = contentModifier,
+                    onOpenSettings = { currentRoute = AppDestination.SETTINGS.route }
+                )
                 AppDestination.LOCATION -> LocationScreen(modifier = contentModifier)
-                AppDestination.SHARING -> SharingScreen(modifier = contentModifier)
                 AppDestination.DATABASE -> DatabaseScreen(modifier = contentModifier)
                 AppDestination.SETTINGS -> SettingsScreen(
                     settings = settings,
@@ -188,9 +189,8 @@ private enum class AppDestination(
     val route: String,
     @StringRes val titleRes: Int
 ) {
-    LOCATION_ENGINE(route = "location_engine", titleRes = R.string.nav_location_engine),
+    MAIN_VIEW(route = "main_view", titleRes = R.string.nav_main_view),
     LOCATION(route = "location", titleRes = R.string.nav_location),
-    SHARING(route = "sharing", titleRes = R.string.nav_sharing),
     DATABASE(route = "database", titleRes = R.string.nav_database),
     SETTINGS(route = "settings", titleRes = R.string.nav_settings),
     DATA_VALUES(route = "data_values", titleRes = R.string.nav_data_values);

@@ -31,6 +31,7 @@ private const val PERSIST_DEBUG_TAG = "BlackboxPersistDebug"
 
 data class LocationPersistenceState(
     val initialized: Boolean = false,
+    val loggingEnabled: Boolean = true,
     val archiveRootUri: Uri? = null,
     val pendingArchiveCount: Int = 0,
     val liveDayEntryCount: Long = 0L,
@@ -109,6 +110,7 @@ object LocationPersistenceController {
 
             _state.value = _state.value.copy(
                 initialized = true,
+                loggingEnabled = loggingEnabled,
                 archiveRootUri = localArchiveRepository.getArchiveTreeUri(),
                 pendingArchiveCount = localArchiveRepository.pendingArchiveCount(),
                 lastArchiveMessage = "Persistence initialized."
@@ -121,6 +123,29 @@ object LocationPersistenceController {
             scope.launch { runArchiveIntegrityCheck() }
 
             initialized = true
+        }
+    }
+
+    fun setLoggingEnabled(enabled: Boolean) {
+        loggingEnabled = enabled
+        _state.update {
+            it.copy(
+                loggingEnabled = enabled,
+                lastArchiveMessage = if (enabled) {
+                    "Location logging enabled."
+                } else {
+                    "Location logging disabled."
+                }
+            )
+        }
+        if (!enabled) {
+            scope.launch {
+                writeThrottleMutex.withLock {
+                    pendingEvent = null
+                    cooldownJob?.cancel()
+                    cooldownJob = null
+                }
+            }
         }
     }
 
@@ -472,6 +497,7 @@ object LocationPersistenceController {
     }
 
     private suspend fun handleLocationEvent(event: LocationSampleEvent) {
+        if (!loggingEnabled) return
         var shouldPersistImmediately = false
 
         writeThrottleMutex.withLock {
@@ -619,3 +645,4 @@ object LocationPersistenceController {
             }
     }
 }
+    private var loggingEnabled: Boolean = true
