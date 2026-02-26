@@ -1,5 +1,8 @@
 package com.example.blackbox.ui.screens
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -29,6 +32,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -53,6 +57,9 @@ import com.example.blackbox.sharing.isValidUsername
 import com.example.blackbox.ui.components.ButtonLabel
 import com.example.blackbox.ui.theme.accentColorFromHex
 import com.example.blackbox.ui.theme.normalizeAccentHex
+import kotlinx.coroutines.launch
+
+private const val SETTINGS_DIALOG_WIDTH_FRACTION = 0.96f
 
 @Composable
 fun SettingsScreen(
@@ -61,17 +68,64 @@ fun SettingsScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val sharingState by LocationSharingController.state.collectAsState()
 
     var activeSettingsEditor by remember { mutableStateOf<SharingConfigEditor?>(null) }
     var settingsEditorInput by rememberSaveable { mutableStateOf("") }
     var settingsEditorError by rememberSaveable { mutableStateOf<String?>(null) }
     var statusMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    var backupAction by rememberSaveable { mutableStateOf<BackupAction?>(null) }
+    var backupPassphrase by rememberSaveable { mutableStateOf("") }
+    var backupPassphraseConfirm by rememberSaveable { mutableStateOf("") }
+    var backupDialogError by rememberSaveable { mutableStateOf<String?>(null) }
 
     var inputHex by rememberSaveable(settings.customAccentHex) {
         mutableStateOf(settings.customAccentHex.orEmpty())
     }
     var validationError by rememberSaveable { mutableStateOf<String?>(null) }
+
+    val exportIdentityLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val passphrase = backupPassphrase.toCharArray()
+        val confirm = backupPassphraseConfirm.toCharArray()
+        backupPassphrase = ""
+        backupPassphraseConfirm = ""
+        backupAction = null
+        backupDialogError = null
+        scope.launch {
+            val result = LocationSharingController.exportIdentityBundle(passphrase = passphrase, target = uri)
+            statusMessage = result.fold(
+                onSuccess = { "Identity bundle exported." },
+                onFailure = { "Identity export failed: ${it.message ?: "unknown"}" }
+            )
+            passphrase.fill('\u0000')
+            confirm.fill('\u0000')
+        }
+    }
+
+    val importIdentityLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val passphrase = backupPassphrase.toCharArray()
+        val confirm = backupPassphraseConfirm.toCharArray()
+        backupPassphrase = ""
+        backupPassphraseConfirm = ""
+        backupAction = null
+        backupDialogError = null
+        scope.launch {
+            val result = LocationSharingController.importIdentityBundle(passphrase = passphrase, source = uri)
+            statusMessage = result.fold(
+                onSuccess = { "Identity bundle imported." },
+                onFailure = { "Identity import failed: ${it.message ?: "unknown"}" }
+            )
+            passphrase.fill('\u0000')
+            confirm.fill('\u0000')
+        }
+    }
 
     LaunchedEffect(context) {
         LocationSharingController.initialize(context.applicationContext)
@@ -191,6 +245,44 @@ fun SettingsScreen(
                         modifier = Modifier.weight(1f)
                     ) {
                         ButtonLabel("Edit Fast Interval")
+                    }
+                }
+            }
+        }
+
+        OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text("Identity Backup", style = MaterialTheme.typography.titleSmall)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            backupAction = BackupAction.Export
+                            backupPassphrase = ""
+                            backupPassphraseConfirm = ""
+                            backupDialogError = null
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        ButtonLabel("Export Identity")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            backupAction = BackupAction.Import
+                            backupPassphrase = ""
+                            backupPassphraseConfirm = ""
+                            backupDialogError = null
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        ButtonLabel("Import Identity")
                     }
                 }
             }
@@ -334,6 +426,82 @@ fun SettingsScreen(
             }
         )
     }
+
+    if (backupAction != null) {
+        val action = backupAction ?: return
+        AlertDialog(
+            modifier = Modifier.fillMaxWidth(SETTINGS_DIALOG_WIDTH_FRACTION),
+            onDismissRequest = {
+                backupAction = null
+                backupPassphrase = ""
+                backupPassphraseConfirm = ""
+                backupDialogError = null
+            },
+            title = {
+                Text(if (action == BackupAction.Export) "Export Identity" else "Import Identity")
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = backupPassphrase,
+                        onValueChange = {
+                            backupPassphrase = it
+                            backupDialogError = null
+                        },
+                        label = { Text("Passphrase") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = backupPassphraseConfirm,
+                        onValueChange = {
+                            backupPassphraseConfirm = it
+                            backupDialogError = null
+                        },
+                        label = { Text("Confirm passphrase") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    if (!backupDialogError.isNullOrBlank()) {
+                        Text(
+                            text = backupDialogError.orEmpty(),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (backupPassphrase.isBlank()) {
+                            backupDialogError = "Passphrase required."
+                            return@TextButton
+                        }
+                        if (backupPassphrase != backupPassphraseConfirm) {
+                            backupDialogError = "Passphrases must match."
+                            return@TextButton
+                        }
+                        if (action == BackupAction.Export) {
+                            exportIdentityLauncher.launch("blackbox-identity-bundle.json")
+                        } else {
+                            importIdentityLauncher.launch(arrayOf("application/json"))
+                        }
+                    }
+                ) { Text("Continue") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        backupAction = null
+                        backupPassphrase = ""
+                        backupPassphraseConfirm = ""
+                        backupDialogError = null
+                    }
+                ) { Text("Cancel") }
+            }
+        )
+    }
 }
 
 @Composable
@@ -361,6 +529,11 @@ private enum class SharingConfigEditor {
     RelayUrl,
     NormalIntervalMinutes,
     FastIntervalSeconds
+}
+
+private enum class BackupAction {
+    Export,
+    Import
 }
 
 @Composable

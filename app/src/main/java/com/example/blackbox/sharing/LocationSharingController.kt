@@ -54,6 +54,7 @@ object LocationSharingController {
     private var currentSettings: SharingSettings = SharingSettings()
     private var snapshot: SharingStateSnapshot = SharingStateSnapshot()
     private var pollingVisible: Boolean = false
+    private var mainViewVisible: Boolean = false
     private var lastError: String? = null
     private var lastInfo: String = "Sharing subsystem idle."
     private var lastEligibilityDebugReason: String? = null
@@ -159,11 +160,20 @@ object LocationSharingController {
             publishState()
             if (visible) {
                 startPollingLoop()
-                startRelayStatusLoop()
             } else {
                 stopPollingLoop()
-                stopRelayStatusLoop()
             }
+            updateRelayStatusLoopState()
+        }
+    }
+
+    fun onMainViewVisible(visible: Boolean) {
+        Log.d(SHARING_DEBUG_TAG, "Main view visibility changed visible=$visible")
+        scope.launch {
+            stateMutex.withLock {
+                mainViewVisible = visible
+            }
+            updateRelayStatusLoopState()
         }
     }
 
@@ -456,10 +466,18 @@ object LocationSharingController {
         if (pollingJob != null) return
         Log.d(SHARING_DEBUG_TAG, "Starting poll loop intervalMs=$POLL_INTERVAL_MS")
         pollingJob = scope.launch {
-            pollNow(trigger = "page_open")
-            while (true) {
-                delay(POLL_INTERVAL_MS)
-                pollNow(trigger = "interval")
+            try {
+                pollNow(trigger = "page_open")
+                while (true) {
+                    delay(POLL_INTERVAL_MS)
+                    if (!pollingVisible) {
+                        Log.d(SHARING_DEBUG_TAG, "Poll loop paused: sharing page not visible.")
+                        break
+                    }
+                    pollNow(trigger = "interval")
+                }
+            } finally {
+                pollingJob = null
             }
         }
     }
@@ -474,10 +492,18 @@ object LocationSharingController {
         if (relayStatusJob != null) return
         Log.d(SHARING_DEBUG_TAG, "Starting relay status loop intervalMs=$RELAY_STATUS_INTERVAL_MS")
         relayStatusJob = scope.launch {
-            refreshRelayStatus(trigger = "page_open")
-            while (true) {
-                delay(RELAY_STATUS_INTERVAL_MS)
-                refreshRelayStatus(trigger = "interval")
+            try {
+                refreshRelayStatus(trigger = "page_open")
+                while (true) {
+                    delay(RELAY_STATUS_INTERVAL_MS)
+                    if (!shouldRunRelayStatusLoop()) {
+                        Log.d(SHARING_DEBUG_TAG, "Relay status loop paused: no visible relay status surface.")
+                        break
+                    }
+                    refreshRelayStatus(trigger = "interval")
+                }
+            } finally {
+                relayStatusJob = null
             }
         }
     }
@@ -487,6 +513,18 @@ object LocationSharingController {
         relayStatusJob = null
         mutateSyncOnly { it.copy(relayStatusChecking = false) }
         Log.d(SHARING_DEBUG_TAG, "Stopped relay status loop")
+    }
+
+    private fun shouldRunRelayStatusLoop(): Boolean {
+        return pollingVisible || mainViewVisible
+    }
+
+    private fun updateRelayStatusLoopState() {
+        if (shouldRunRelayStatusLoop()) {
+            startRelayStatusLoop()
+        } else {
+            stopRelayStatusLoop()
+        }
     }
 
     private suspend fun refreshRelayStatus(trigger: String) {
@@ -513,7 +551,8 @@ object LocationSharingController {
                         relayReachable = response.ok,
                         lastRelayStatusOkAtMs = if (response.ok) successAt else it.lastRelayStatusOkAtMs,
                         lastRelayStatusError = if (response.ok) null else (response.message ?: "Relay status unavailable."),
-                        lastRelayStatusErrorAtMs = if (response.ok) null else successAt
+                        lastRelayStatusErrorAtMs = if (response.ok) null else successAt,
+                        relayCheckFailureStreak = if (response.ok) 0 else (it.relayCheckFailureStreak + 1)
                     )
                 }
             }
@@ -530,7 +569,8 @@ object LocationSharingController {
                         relayStatusChecking = false,
                         relayReachable = false,
                         lastRelayStatusError = error,
-                        lastRelayStatusErrorAtMs = failedAt
+                        lastRelayStatusErrorAtMs = failedAt,
+                        relayCheckFailureStreak = it.relayCheckFailureStreak + 1
                     )
                 }
             }
@@ -552,7 +592,8 @@ object LocationSharingController {
                     sync = it.sync.copy(
                         lastPollAttemptAtMs = System.currentTimeMillis(),
                         lastPollError = networkError,
-                        lastPollErrorAtMs = System.currentTimeMillis()
+                        lastPollErrorAtMs = System.currentTimeMillis(),
+                        pollFailureStreak = it.sync.pollFailureStreak + 1
                     )
                 )
             }
@@ -592,7 +633,8 @@ object LocationSharingController {
                 it.copy(
                     sync = it.sync.copy(
                         lastPollError = error,
-                        lastPollErrorAtMs = System.currentTimeMillis()
+                        lastPollErrorAtMs = System.currentTimeMillis(),
+                        pollFailureStreak = it.sync.pollFailureStreak + 1
                     )
                 )
             }
@@ -611,7 +653,8 @@ object LocationSharingController {
                     sync = it.sync.copy(
                         lastPollSuccessAtMs = System.currentTimeMillis(),
                         lastPollError = null,
-                        lastPollErrorAtMs = null
+                        lastPollErrorAtMs = null,
+                        pollFailureStreak = 0
                     )
                 )
             }
@@ -658,7 +701,8 @@ object LocationSharingController {
                     it.copy(
                         sync = it.sync.copy(
                             lastPollError = error,
-                            lastPollErrorAtMs = System.currentTimeMillis()
+                            lastPollErrorAtMs = System.currentTimeMillis(),
+                            pollFailureStreak = it.sync.pollFailureStreak + 1
                         )
                     )
                 }
@@ -820,7 +864,8 @@ object LocationSharingController {
                 sync = current.sync.copy(
                     lastPollSuccessAtMs = now,
                     lastPollError = null,
-                    lastPollErrorAtMs = null
+                    lastPollErrorAtMs = null,
+                    pollFailureStreak = 0
                 )
             )
         }
@@ -1026,6 +1071,7 @@ object LocationSharingController {
                             lastPushSuccessAtMs = it.storedAtMs,
                             lastPushError = null,
                             lastPushErrorAtMs = null,
+                            pushFailureStreak = 0,
                             nextSeq = maxOf(current.sync.nextSeq, it.appliedSeq + 1L)
                         )
                     )
@@ -1049,7 +1095,8 @@ object LocationSharingController {
                             sync = current.sync.copy(
                                 nextSeq = maxOf(current.sync.nextSeq, claim.seq + 1L),
                                 lastPushError = "Dropped stale push after sequence conflict.",
-                                lastPushErrorAtMs = System.currentTimeMillis()
+                                lastPushErrorAtMs = System.currentTimeMillis(),
+                                pushFailureStreak = current.sync.pushFailureStreak + 1
                             )
                         )
                     }
@@ -1139,7 +1186,8 @@ object LocationSharingController {
                 ),
                 sync = current.sync.copy(
                     lastPushError = reason ?: "Push failed",
-                    lastPushErrorAtMs = now
+                    lastPushErrorAtMs = now,
+                    pushFailureStreak = current.sync.pushFailureStreak + 1
                 )
             )
         }
@@ -1231,6 +1279,7 @@ object LocationSharingController {
                                     lastPushSuccessAtMs = it.storedAtMs,
                                     lastPushError = null,
                                     lastPushErrorAtMs = null,
+                                    pushFailureStreak = 0,
                                     nextSeq = maxOf(current.sync.nextSeq, it.appliedSeq + 1L)
                                 )
                             )
@@ -1255,7 +1304,8 @@ object LocationSharingController {
                                         sync = current.sync.copy(
                                             nextSeq = maxOf(current.sync.nextSeq, pending.claim.seq + 1L),
                                             lastPushError = "Dropped stale pending push after seq conflict.",
-                                            lastPushErrorAtMs = System.currentTimeMillis()
+                                            lastPushErrorAtMs = System.currentTimeMillis(),
+                                            pushFailureStreak = current.sync.pushFailureStreak + 1
                                         )
                                     )
                                 } else {
@@ -1298,7 +1348,8 @@ object LocationSharingController {
                     ),
                     sync = current.sync.copy(
                         lastPushError = reason,
-                        lastPushErrorAtMs = System.currentTimeMillis()
+                        lastPushErrorAtMs = System.currentTimeMillis(),
+                        pushFailureStreak = current.sync.pushFailureStreak + 1
                     )
                 )
             }
