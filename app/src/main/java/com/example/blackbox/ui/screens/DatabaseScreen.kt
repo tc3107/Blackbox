@@ -12,14 +12,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.material3.Button
-import androidx.compose.material3.AlertDialog
+import com.example.blackbox.ui.components.NeoButton as Button
+import com.example.blackbox.ui.components.NeoAlertDialog as AlertDialog
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedCard
-import androidx.compose.material3.OutlinedTextField
+import com.example.blackbox.ui.components.NeoOutlinedButton as OutlinedButton
+import com.example.blackbox.ui.components.NeoOutlinedCard as OutlinedCard
+import com.example.blackbox.ui.components.NeoOutlinedTextField as OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.example.blackbox.ui.components.NeoTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState

@@ -8,6 +8,7 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import java.util.Locale
@@ -66,18 +67,18 @@ private fun blackboxColorScheme(customAccentHex: String?): ColorScheme {
     return baseScheme.copy(
         primary = accentColor,
         onPrimary = colorForForeground(accentColor),
-        primaryContainer = accentColor.copy(alpha = 0.24f),
+        primaryContainer = lerp(NeoSurface, accentColor, 0.22f),
         onPrimaryContainer = Color.White,
         secondary = customAccentColor?.let { accentColor.copy(alpha = 0.84f) } ?: baseScheme.secondary,
         tertiary = customAccentColor?.let { accentColor.copy(alpha = 0.68f) } ?: baseScheme.tertiary,
-        background = PureBlack,
+        background = NeoBackground,
         onBackground = Color.White,
-        surface = PureBlack,
+        surface = NeoSurface,
         onSurface = Color.White,
-        surfaceVariant = BlackSurfaceVariant,
+        surfaceVariant = NeoSurfaceVariant,
         onSurfaceVariant = Color(0xFFDADADA),
-        outline = accentColor.copy(alpha = 0.66f),
-        outlineVariant = accentColor.copy(alpha = 0.36f)
+        outline = lerp(NeoSurface, Color.White, 0.18f),
+        outlineVariant = lerp(NeoSurface, Color.Black, 0.26f)
     )
 }
 

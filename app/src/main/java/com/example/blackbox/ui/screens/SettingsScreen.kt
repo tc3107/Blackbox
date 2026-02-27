@@ -17,15 +17,15 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import com.example.blackbox.ui.components.NeoAlertDialog as AlertDialog
+import com.example.blackbox.ui.components.NeoButton as Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedCard
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
+import com.example.blackbox.ui.components.NeoOutlinedButton as OutlinedButton
+import com.example.blackbox.ui.components.NeoOutlinedCard as OutlinedCard
+import com.example.blackbox.ui.components.NeoOutlinedTextField as OutlinedTextField
+import com.example.blackbox.ui.components.NeoSwitch as Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.example.blackbox.ui.components.NeoTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState

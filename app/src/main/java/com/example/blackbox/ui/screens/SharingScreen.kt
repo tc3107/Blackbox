@@ -37,18 +37,19 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import com.example.blackbox.ui.components.NeoAlertDialog as AlertDialog
+import com.example.blackbox.ui.components.NeoButton as Button
+import com.example.blackbox.ui.components.NeoCard as Card
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedCard
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
+import com.example.blackbox.ui.components.NeoOutlinedButton as OutlinedButton
+import com.example.blackbox.ui.components.NeoOutlinedCard as OutlinedCard
+import com.example.blackbox.ui.components.NeoOutlinedTextField as OutlinedTextField
+import com.example.blackbox.ui.components.NeoSwitch as Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.example.blackbox.ui.components.NeoTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -556,32 +557,31 @@ private fun RefreshDelaysCard(
                 statusColor = statusDotColor(
                     failureStreak = sharingState.sync.relayCheckFailureStreak,
                     lastSuccessAtMs = sharingState.sync.lastRelayStatusOkAtMs
-                )
+                ),
+                isActive = true
             )
-            if (retrieveWaiting) {
-                DelayProgressRow(
-                    label = "Retrieve Locations",
-                    totalMs = pollTotal,
-                    remainingMs = pollRemaining,
-                    nowMs = nowMs,
-                    statusColor = statusDotColor(
-                        failureStreak = sharingState.sync.pollFailureStreak,
-                        lastSuccessAtMs = sharingState.sync.lastPollSuccessAtMs
-                    )
-                )
-            }
-            if (sendWaiting) {
-                DelayProgressRow(
-                    label = "Sending Location",
-                    totalMs = sendDisplayTotal,
-                    remainingMs = sendDisplayRemaining,
-                    nowMs = nowMs,
-                    statusColor = statusDotColor(
-                        failureStreak = sharingState.sync.pushFailureStreak,
-                        lastSuccessAtMs = sharingState.sync.lastPushSuccessAtMs
-                    )
-                )
-            }
+            DelayProgressRow(
+                label = "Retrieve Locations",
+                totalMs = pollTotal,
+                remainingMs = pollRemaining,
+                nowMs = nowMs,
+                statusColor = statusDotColor(
+                    failureStreak = sharingState.sync.pollFailureStreak,
+                    lastSuccessAtMs = sharingState.sync.lastPollSuccessAtMs
+                ),
+                isActive = retrieveWaiting
+            )
+            DelayProgressRow(
+                label = "Sending Location",
+                totalMs = sendDisplayTotal,
+                remainingMs = sendDisplayRemaining,
+                nowMs = nowMs,
+                statusColor = statusDotColor(
+                    failureStreak = sharingState.sync.pushFailureStreak,
+                    lastSuccessAtMs = sharingState.sync.lastPushSuccessAtMs
+                ),
+                isActive = sendWaiting
+            )
         }
     }
 }
@@ -592,7 +592,8 @@ private fun DelayProgressRow(
     totalMs: Long,
     remainingMs: Long,
     nowMs: Long,
-    statusColor: Color
+    statusColor: Color,
+    isActive: Boolean
 ) {
     val progress = if (totalMs <= 0L) {
         1f
@@ -603,6 +604,10 @@ private fun DelayProgressRow(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
+        val muted = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+        val effectiveStatusColor = if (isActive) statusColor else muted
+        val labelColor = if (isActive) MaterialTheme.colorScheme.onSurface else muted
+        val valueColor = if (isActive) MaterialTheme.colorScheme.onSurfaceVariant else muted
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -613,31 +618,40 @@ private fun DelayProgressRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 StatusDot(
-                    color = statusColor,
+                    color = effectiveStatusColor,
                     shape = CircleShape,
                     size = 8.dp,
                     edgePadding = 0.dp
                 )
                 Text(
                     text = label,
-                    style = MaterialTheme.typography.labelMedium
+                    style = MaterialTheme.typography.labelMedium,
+                    color = labelColor
                 )
             }
             Text(
                 text = formatDelayMs(remainingMs),
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = valueColor
             )
         }
-        DelayProgressBar(progress = progress, nowMs = nowMs)
+        DelayProgressBar(progress = progress, nowMs = nowMs, isActive = isActive)
     }
 }
 
 @Composable
-private fun DelayProgressBar(progress: Float, nowMs: Long) {
+private fun DelayProgressBar(progress: Float, nowMs: Long, isActive: Boolean) {
     val scope = rememberCoroutineScope()
-    val outlineColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.75f)
-    val trailColor = MaterialTheme.colorScheme.primary
+    val outlineColor = if (isActive) {
+        MaterialTheme.colorScheme.outline.copy(alpha = 0.75f)
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.28f)
+    }
+    val trailColor = if (isActive) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+    }
     var boostStartMs by remember { mutableStateOf<Long?>(null) }
     var boostFromProgress by remember { mutableStateOf(0f) }
     var boostToken by remember { mutableStateOf(0L) }
@@ -659,7 +673,7 @@ private fun DelayProgressBar(progress: Float, nowMs: Long) {
             .clip(shape)
             .border(width = 1.5.dp, color = outlineColor, shape = shape)
             .padding(1.dp)
-            .clickable {
+            .clickable(enabled = isActive) {
                 boostFromProgress = progress.coerceIn(0f, 1f)
                 boostStartMs = nowMs
                 val token = boostToken + 1L
@@ -1124,64 +1138,50 @@ fun ContactsSection(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                if (contact.canReceiveFromMe) {
-                                    Button(
-                                        onClick = { onToggleShareTo(contact.senderId, false) },
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Text(
-                                            text = "Sharing",
-                                            textAlign = TextAlign.Center,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            style = MaterialTheme.typography.labelMedium,
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                    }
-                                } else {
-                                    OutlinedButton(
-                                        onClick = { onToggleShareTo(contact.senderId, true) },
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Text(
-                                            text = "Sharing",
-                                            textAlign = TextAlign.Center,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            style = MaterialTheme.typography.labelMedium,
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                    }
+                                Button(
+                                    onClick = { onToggleShareTo(contact.senderId, !contact.canReceiveFromMe) },
+                                    latched = contact.canReceiveFromMe,
+                                    modifier = Modifier.weight(1f),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.surface,
+                                        contentColor = if (contact.canReceiveFromMe) {
+                                            MaterialTheme.colorScheme.onPrimaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        }
+                                    )
+                                ) {
+                                    Text(
+                                        text = "Sharing",
+                                        textAlign = TextAlign.Center,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
                                 }
 
-                                if (contact.iFollow) {
-                                    Button(
-                                        onClick = { onToggleFollow(contact.senderId, false) },
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Text(
-                                            text = "Following",
-                                            textAlign = TextAlign.Center,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            style = MaterialTheme.typography.labelMedium,
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                    }
-                                } else {
-                                    OutlinedButton(
-                                        onClick = { onToggleFollow(contact.senderId, true) },
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Text(
-                                            text = "Following",
-                                            textAlign = TextAlign.Center,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            style = MaterialTheme.typography.labelMedium,
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                    }
+                                Button(
+                                    onClick = { onToggleFollow(contact.senderId, !contact.iFollow) },
+                                    latched = contact.iFollow,
+                                    modifier = Modifier.weight(1f),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.surface,
+                                        contentColor = if (contact.iFollow) {
+                                            MaterialTheme.colorScheme.onPrimaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        }
+                                    )
+                                ) {
+                                    Text(
+                                        text = "Following",
+                                        textAlign = TextAlign.Center,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
                                 }
                             }
 

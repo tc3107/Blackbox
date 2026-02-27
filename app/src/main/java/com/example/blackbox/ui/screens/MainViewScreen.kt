@@ -31,15 +31,15 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import com.example.blackbox.ui.components.NeoButton as Button
+import com.example.blackbox.ui.components.NeoCard as Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedCard
+import com.example.blackbox.ui.components.NeoOutlinedButton as OutlinedButton
+import com.example.blackbox.ui.components.NeoOutlinedCard as OutlinedCard
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.example.blackbox.ui.components.NeoTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -552,7 +552,7 @@ private fun MainOverlayDialog(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     Text(
                         text = title,
@@ -565,7 +565,9 @@ private fun MainOverlayDialog(
                         content()
                     }
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 6.dp, bottom = 2.dp),
                         horizontalArrangement = Arrangement.End
                     ) {
                         actions()
@@ -653,32 +655,31 @@ private fun MainRefreshDelaysCard(
                 statusColor = mainStatusDotColor(
                     failureStreak = sharingState.sync.relayCheckFailureStreak,
                     lastSuccessAtMs = sharingState.sync.lastRelayStatusOkAtMs
-                )
+                ),
+                isActive = true
             )
-            if (retrieveWaiting) {
-                MainDelayProgressRow(
-                    label = "Retrieve Locations",
-                    totalMs = pollTotal,
-                    remainingMs = pollRemaining,
-                    nowMs = nowMs,
-                    statusColor = mainStatusDotColor(
-                        failureStreak = sharingState.sync.pollFailureStreak,
-                        lastSuccessAtMs = sharingState.sync.lastPollSuccessAtMs
-                    )
-                )
-            }
-            if (sendWaiting) {
-                MainDelayProgressRow(
-                    label = "Sending Location",
-                    totalMs = sendDisplayTotal,
-                    remainingMs = sendDisplayRemaining,
-                    nowMs = nowMs,
-                    statusColor = mainStatusDotColor(
-                        failureStreak = sharingState.sync.pushFailureStreak,
-                        lastSuccessAtMs = sharingState.sync.lastPushSuccessAtMs
-                    )
-                )
-            }
+            MainDelayProgressRow(
+                label = "Retrieve Locations",
+                totalMs = pollTotal,
+                remainingMs = pollRemaining,
+                nowMs = nowMs,
+                statusColor = mainStatusDotColor(
+                    failureStreak = sharingState.sync.pollFailureStreak,
+                    lastSuccessAtMs = sharingState.sync.lastPollSuccessAtMs
+                ),
+                isActive = retrieveWaiting
+            )
+            MainDelayProgressRow(
+                label = "Sending Location",
+                totalMs = sendDisplayTotal,
+                remainingMs = sendDisplayRemaining,
+                nowMs = nowMs,
+                statusColor = mainStatusDotColor(
+                    failureStreak = sharingState.sync.pushFailureStreak,
+                    lastSuccessAtMs = sharingState.sync.lastPushSuccessAtMs
+                ),
+                isActive = sendWaiting
+            )
         }
     }
 }
@@ -689,7 +690,8 @@ private fun MainDelayProgressRow(
     totalMs: Long,
     remainingMs: Long,
     nowMs: Long,
-    statusColor: Color
+    statusColor: Color,
+    isActive: Boolean
 ) {
     val progress = if (totalMs <= 0L) {
         1f
@@ -701,6 +703,18 @@ private fun MainDelayProgressRow(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
+        val muted = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+        val effectiveStatusColor = if (isActive) statusColor else muted
+        val labelColor = if (isActive) {
+            MaterialTheme.colorScheme.onSurface
+        } else {
+            muted
+        }
+        val valueColor = if (isActive) {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        } else {
+            muted
+        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -718,24 +732,33 @@ private fun MainDelayProgressRow(
                 )
                 Text(
                     text = label,
-                    style = MaterialTheme.typography.labelMedium
+                    style = MaterialTheme.typography.labelMedium,
+                    color = labelColor
                 )
             }
             Text(
                 text = mainFormatDelayMs(remainingMs),
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = valueColor
             )
         }
-        MainDelayProgressBar(progress = progress, nowMs = nowMs)
+        MainDelayProgressBar(progress = progress, nowMs = nowMs, isActive = isActive)
     }
 }
 
 @Composable
-private fun MainDelayProgressBar(progress: Float, nowMs: Long) {
+private fun MainDelayProgressBar(progress: Float, nowMs: Long, isActive: Boolean) {
     val scope = rememberCoroutineScope()
-    val outlineColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.75f)
-    val trailColor = MaterialTheme.colorScheme.primary
+    val outlineColor = if (isActive) {
+        MaterialTheme.colorScheme.outline.copy(alpha = 0.75f)
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.28f)
+    }
+    val trailColor = if (isActive) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+    }
     var boostStartMs by remember { mutableStateOf<Long?>(null) }
     var boostFromProgress by remember { mutableStateOf(0f) }
     var boostToken by remember { mutableStateOf(0L) }
@@ -758,7 +781,7 @@ private fun MainDelayProgressBar(progress: Float, nowMs: Long) {
             .clip(shape)
             .border(width = 1.5.dp, color = outlineColor, shape = shape)
             .padding(1.dp)
-            .clickable {
+            .clickable(enabled = isActive) {
                 boostFromProgress = progress.coerceIn(0f, 1f)
                 boostStartMs = nowMs
                 val token = boostToken + 1L
@@ -846,8 +869,9 @@ private fun ToggleRow(
         Text(title, style = MaterialTheme.typography.titleSmall)
         Button(
             onClick = { onCheckedChange(!checked) },
-            shape = CircleShape,
-            modifier = Modifier.size(68.dp),
+            latched = checked,
+            shape = RoundedCornerShape(22.dp),
+            modifier = Modifier.size(width = 108.dp, height = 56.dp),
             contentPadding = PaddingValues(0.dp)
         ) {
             Text(
