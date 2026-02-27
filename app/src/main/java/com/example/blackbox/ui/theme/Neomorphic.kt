@@ -24,6 +24,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
+private const val ENABLE_NEOMORPHIC_EFFECTS = true
+private const val ENABLE_NEOMORPHIC_BLUR_SHADOWS = true
+
 @Immutable
 data class NeomorphicPalette(
     val surface: Color,
@@ -54,7 +57,7 @@ fun Modifier.neomorphicShadow(
     depth: Dp = 2.dp,
     blurRadius: Dp = 4.dp
 ): Modifier = composed {
-    if (!enabled) {
+    if (!enabled || !ENABLE_NEOMORPHIC_EFFECTS) {
         return@composed this
     }
 
@@ -67,8 +70,6 @@ fun Modifier.neomorphicShadow(
     this.drawWithCache {
         val outline = shape.createOutline(size, layoutDirection, this)
         val path = outline.toPath()
-        val blurPx = blurRadius.toPx()
-        val offsetPx = depth.toPx()
         val rimWidthPx = 1.dp.toPx()
 
         val outerLight = palette.lightShadow.copy(alpha = 0.82f)
@@ -83,22 +84,41 @@ fun Modifier.neomorphicShadow(
             start = Offset.Zero,
             end = Offset(size.width, size.height)
         )
+        if (!ENABLE_NEOMORPHIC_BLUR_SHADOWS) {
+            return@drawWithCache onDrawWithContent {
+                drawContent()
+                if (addBorder) {
+                    drawPath(path = path, brush = rimBrush, style = Stroke(width = rimWidthPx))
+                }
+            }
+        }
+
+        val blurPx = blurRadius.toPx()
+        val offsetPx = depth.toPx()
+        val topLeftShadowPaint = Paint().apply {
+            asFrameworkPaint().maskFilter = BlurMaskFilter(blurPx, BlurMaskFilter.Blur.NORMAL)
+        }
+        val bottomRightShadowPaint = Paint().apply {
+            asFrameworkPaint().maskFilter = BlurMaskFilter(blurPx, BlurMaskFilter.Blur.NORMAL)
+        }
 
         onDrawWithContent {
+            topLeftShadowPaint.color = topLeftColor
+            bottomRightShadowPaint.color = bottomRightColor
+
             // Raised state: light top-left + dark bottom-right.
             // Pressed state: same positions, swapped colors.
-            drawBlurredPath(
-                path = path,
-                color = topLeftColor,
-                blurPx = blurPx,
-                offset = Offset(-offsetPx, -offsetPx)
-            )
-            drawBlurredPath(
-                path = path,
-                color = bottomRightColor,
-                blurPx = blurPx,
-                offset = Offset(offsetPx, offsetPx)
-            )
+            drawIntoCanvas { canvas ->
+                canvas.save()
+                canvas.translate(-offsetPx, -offsetPx)
+                canvas.drawPath(path, topLeftShadowPaint)
+                canvas.restore()
+
+                canvas.save()
+                canvas.translate(offsetPx, offsetPx)
+                canvas.drawPath(path, bottomRightShadowPaint)
+                canvas.restore()
+            }
 
             drawContent()
 
@@ -114,23 +134,5 @@ private fun Outline.toPath(): Path {
         is Outline.Generic -> path
         is Outline.Rounded -> Path().apply { addRoundRect(roundRect) }
         is Outline.Rectangle -> Path().apply { addRect(rect) }
-    }
-}
-
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawBlurredPath(
-    path: Path,
-    color: Color,
-    blurPx: Float,
-    offset: Offset
-) {
-    drawIntoCanvas { canvas ->
-        val paint = Paint().apply {
-            this.color = color
-            asFrameworkPaint().maskFilter = BlurMaskFilter(blurPx, BlurMaskFilter.Blur.NORMAL)
-        }
-        canvas.save()
-        canvas.translate(offset.x, offset.y)
-        canvas.drawPath(path, paint)
-        canvas.restore()
     }
 }

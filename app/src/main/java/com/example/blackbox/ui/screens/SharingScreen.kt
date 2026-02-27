@@ -61,7 +61,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
@@ -187,9 +186,12 @@ fun SharingScreen(modifier: Modifier = Modifier) {
     }
 
     LaunchedEffect(context) {
-        val appContext = context.applicationContext
-        LocationSharingController.initialize(appContext)
-        networkPermissionGranted = appContext.hasSharingNetworkPermissions()
+        val permissionGranted = withContext(Dispatchers.IO) {
+            val appContext = context.applicationContext
+            LocationSharingController.initialize(appContext)
+            appContext.hasSharingNetworkPermissions()
+        }
+        networkPermissionGranted = permissionGranted
         if (!networkPermissionGranted) {
             statusMessage = "Network permission is missing. Update/reinstall app and reopen Location Sharing."
         }
@@ -490,9 +492,8 @@ private fun RefreshDelaysCard(
 ) {
     val nowMs by produceState(initialValue = System.currentTimeMillis()) {
         while (true) {
-            withFrameNanos {
-                value = System.currentTimeMillis()
-            }
+            delay(1_000L)
+            value = System.currentTimeMillis()
         }
     }
     val relayTotal = com.example.blackbox.sharing.RELAY_STATUS_INTERVAL_MS

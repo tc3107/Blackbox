@@ -139,6 +139,6 @@ object LocationEngineForegroundController {
 
     private fun readEnabledPreference(context: Context): Boolean {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getBoolean(KEY_ENABLED, true)
+            .getBoolean(KEY_ENABLED, false)
     }
 }

@@ -8,6 +8,9 @@ import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -50,7 +53,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
@@ -65,12 +67,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.blackbox.data.locationdb.LocationPersistenceController
 import com.example.blackbox.location.LocationEngine
 import com.example.blackbox.location.LocationEngineMode
+import com.example.blackbox.location.MotionFix
+import com.example.blackbox.location.PositionFix
 import com.example.blackbox.location.hasAnyLocationPermission
 import com.example.blackbox.sharing.LocationSharingController
 import com.example.blackbox.sharing.SharingLogic
@@ -82,8 +83,12 @@ import com.example.blackbox.sharing.ZONE_RADIUS_MIN_METERS
 import com.example.blackbox.sharing.isValidUsername
 import com.example.blackbox.sharing.normalizeUsername
 import com.example.blackbox.ui.components.ButtonLabel
+import com.example.blackbox.ui.perf.UiPerfSection
+import com.example.blackbox.ui.perf.uiPerfDraw
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -92,6 +97,14 @@ private const val MAIN_EXPANDED_CONTACT_POLL_INTERVAL_MS = 20_000L
 private const val MAIN_BAR_TAP_BOOST_DURATION_MS = 420L
 private const val MAIN_ACTIVE_LOCATION_EVENT_INTERVAL_MS = 1_000L
 private const val MAIN_LOW_POWER_LOCATION_EVENT_INTERVAL_MS = 3 * 60_000L
+private const val MAIN_PROGRESS_SMOOTH_ANIM_MS = 900
+
+private data class MainViewLocationState(
+    val bestPositionFix: PositionFix?,
+    val bestMotionFix: MotionFix?,
+    val engineEnabled: Boolean,
+    val engineMode: LocationEngineMode
+)
 
 @Composable
 fun MainViewScreen(
@@ -100,7 +113,25 @@ fun MainViewScreen(
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
-    val locationState by LocationEngine.state.collectAsState()
+    val locationState by remember {
+        LocationEngine.state
+            .map { engine ->
+                MainViewLocationState(
+                    bestPositionFix = engine.bestPositionFix,
+                    bestMotionFix = engine.bestMotionFix,
+                    engineEnabled = engine.engineEnabled,
+                    engineMode = engine.engineMode
+                )
+            }
+            .distinctUntilChanged()
+    }.collectAsState(
+        initial = MainViewLocationState(
+            bestPositionFix = LocationEngine.state.value.bestPositionFix,
+            bestMotionFix = LocationEngine.state.value.bestMotionFix,
+            engineEnabled = LocationEngine.state.value.engineEnabled,
+            engineMode = LocationEngine.state.value.engineMode
+        )
+    )
     val sharingState by LocationSharingController.state.collectAsState()
     val persistenceState by LocationPersistenceController.state.collectAsState()
 
@@ -143,30 +174,13 @@ fun MainViewScreen(
     }
 
     LaunchedEffect(context) {
-        val appContext = context.applicationContext
-        LocationEngine.initialize(appContext)
-        LocationSharingController.initialize(appContext)
-        LocationPersistenceController.initialize(appContext)
+        withContext(Dispatchers.IO) {
+            val appContext = context.applicationContext
+            LocationEngine.initialize(appContext)
+            LocationSharingController.initialize(appContext)
+            LocationPersistenceController.initialize(appContext)
+        }
         permissionGranted = context.hasAnyLocationPermission()
-    }
-
-    val lifecycleOwner = LocalLifecycleOwner.current
-    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            when (event) {
-                Lifecycle.Event.ON_START -> LocationSharingController.onMainViewVisible(true)
-                Lifecycle.Event.ON_STOP -> LocationSharingController.onMainViewVisible(false)
-                else -> Unit
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        LocationSharingController.onMainViewVisible(
-            lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
-        )
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-            LocationSharingController.onMainViewVisible(false)
-        }
     }
 
     val desiredEngineOn = sharingState.settings.sharingEnabled || persistenceState.loggingEnabled
@@ -201,120 +215,136 @@ fun MainViewScreen(
     }
 
     val lastFix = locationState.bestPositionFix
-    val nowMs by produceState(initialValue = System.currentTimeMillis(), key1 = lastFix?.receivedAtMillis) {
-        while (true) {
-            delay(1_000L)
-            value = System.currentTimeMillis()
-        }
-    }
 
     LazyColumn(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier
+            .fillMaxSize()
+            .uiPerfDraw("Main Lazy Column"),
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            OutlinedCard(modifier = Modifier.fillMaxWidth()) {
-                Box(
+            UiPerfSection("Main Map Card") {
+                OutlinedCard(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(220.dp)
-                        .padding(12.dp)
+                        .uiPerfDraw("Main Map Card")
                 ) {
-                    Text(
-                        text = if (lastFix != null) {
-                            "Map Placeholder\n${formatLatLon(lastFix.location.latitude, lastFix.location.longitude)}"
-                        } else {
-                            "Map Placeholder\nNo location yet"
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.align(Alignment.Center)
-                    )
-                    Text(
-                        text = formatRelativeAge(lastFix?.receivedAtMillis, nowMs),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
-                        modifier = Modifier.align(Alignment.BottomStart)
-                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(220.dp)
+                            .padding(12.dp)
+                    ) {
+                        Text(
+                            text = if (lastFix != null) {
+                                "Map Placeholder\n${formatLatLon(lastFix.location.latitude, lastFix.location.longitude)}"
+                            } else {
+                                "Map Placeholder\nNo location yet"
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.align(Alignment.Center)
+                        )
+                        RelativeAgeLabel(
+                            timestampMs = lastFix?.receivedAtMillis,
+                            modifier = Modifier.align(Alignment.BottomStart)
+                        )
+                    }
                 }
             }
         }
 
         item {
-            MainRefreshDelaysCard(
-                sharingState = sharingState,
-                locationState = locationState,
-                contactsOpen = viewContactsDialogVisible
-            )
+            UiPerfSection("Main Refresh Delays Card") {
+                MainRefreshDelaysCard(
+                    sharingState = sharingState,
+                    locationState = locationState,
+                    contactsOpen = viewContactsDialogVisible
+                )
+            }
         }
 
         item {
-            OutlinedCard(modifier = Modifier.fillMaxWidth()) {
-                Column(
+            UiPerfSection("Main Toggle Card") {
+                OutlinedCard(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                        .uiPerfDraw("Main Toggle Card")
                 ) {
-                    ToggleRow(
-                        title = "Location Sharing",
-                        checked = sharingState.settings.sharingEnabled
-                    ) { enabled ->
-                        if (enabled && !isValidUsername(normalizeUsername(sharingState.settings.username))) {
-                            onOpenSettings()
-                            return@ToggleRow
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        ToggleRow(
+                            title = "Location Sharing",
+                            checked = sharingState.settings.sharingEnabled
+                        ) { enabled ->
+                            if (enabled && !isValidUsername(normalizeUsername(sharingState.settings.username))) {
+                                onOpenSettings()
+                                return@ToggleRow
+                            }
+                            LocationSharingController.setSharingEnabled(enabled)
                         }
-                        LocationSharingController.setSharingEnabled(enabled)
-                    }
-                    ToggleRow(
-                        title = "Location Logging",
-                        checked = persistenceState.loggingEnabled
-                    ) { enabled ->
-                        LocationPersistenceController.setLoggingEnabled(enabled)
+                        ToggleRow(
+                            title = "Location Logging",
+                            checked = persistenceState.loggingEnabled
+                        ) { enabled ->
+                            LocationPersistenceController.setLoggingEnabled(enabled)
+                        }
                     }
                 }
             }
         }
 
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                ActionWidget(
-                    title = "Add Contacts",
-                    iconRes = android.R.drawable.ic_menu_add,
-                    modifier = Modifier.weight(1f),
-                    onClick = { addContactsDialogVisible = true }
-                )
-                ActionWidget(
-                    title = "View Contacts",
-                    iconRes = android.R.drawable.ic_menu_myplaces,
-                    modifier = Modifier.weight(1f),
-                    onClick = { viewContactsDialogVisible = true }
-                )
+            UiPerfSection("Main Action Row A") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .uiPerfDraw("Main Action Row A"),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    ActionWidget(
+                        title = "Add Contacts",
+                        iconRes = android.R.drawable.ic_menu_add,
+                        modifier = Modifier.weight(1f),
+                        onClick = { addContactsDialogVisible = true }
+                    )
+                    ActionWidget(
+                        title = "View Contacts",
+                        iconRes = android.R.drawable.ic_menu_myplaces,
+                        modifier = Modifier.weight(1f),
+                        onClick = { viewContactsDialogVisible = true }
+                    )
+                }
             }
         }
 
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                ActionWidget(
-                    title = "My Zones",
-                    iconRes = android.R.drawable.ic_menu_mapmode,
-                    modifier = Modifier.weight(1f),
-                    onClick = { zonesDialogVisible = true }
-                )
-                ActionWidget(
-                    title = "Settings",
-                    iconRes = android.R.drawable.ic_menu_preferences,
-                    modifier = Modifier.weight(1f),
-                    onClick = onOpenSettings
-                )
+            UiPerfSection("Main Action Row B") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .uiPerfDraw("Main Action Row B"),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    ActionWidget(
+                        title = "My Zones",
+                        iconRes = android.R.drawable.ic_menu_mapmode,
+                        modifier = Modifier.weight(1f),
+                        onClick = { zonesDialogVisible = true }
+                    )
+                    ActionWidget(
+                        title = "Settings",
+                        iconRes = android.R.drawable.ic_menu_preferences,
+                        modifier = Modifier.weight(1f),
+                        onClick = onOpenSettings
+                    )
+                }
             }
         }
     }
@@ -581,14 +611,13 @@ private fun MainOverlayDialog(
 @Composable
 private fun MainRefreshDelaysCard(
     sharingState: com.example.blackbox.sharing.LocationSharingState,
-    locationState: com.example.blackbox.location.LocationEngineState,
+    locationState: MainViewLocationState,
     contactsOpen: Boolean
 ) {
     val nowMs by produceState(initialValue = System.currentTimeMillis(), key1 = contactsOpen) {
         while (true) {
-            withFrameNanos {
-                value = System.currentTimeMillis()
-            }
+            delay(1_000L)
+            value = System.currentTimeMillis()
         }
     }
     val relayTotal = com.example.blackbox.sharing.RELAY_STATUS_INTERVAL_MS
@@ -659,17 +688,6 @@ private fun MainRefreshDelaysCard(
                 isActive = true
             )
             MainDelayProgressRow(
-                label = "Retrieve Locations",
-                totalMs = pollTotal,
-                remainingMs = pollRemaining,
-                nowMs = nowMs,
-                statusColor = mainStatusDotColor(
-                    failureStreak = sharingState.sync.pollFailureStreak,
-                    lastSuccessAtMs = sharingState.sync.lastPollSuccessAtMs
-                ),
-                isActive = retrieveWaiting
-            )
-            MainDelayProgressRow(
                 label = "Sending Location",
                 totalMs = sendDisplayTotal,
                 remainingMs = sendDisplayRemaining,
@@ -679,6 +697,17 @@ private fun MainRefreshDelaysCard(
                     lastSuccessAtMs = sharingState.sync.lastPushSuccessAtMs
                 ),
                 isActive = sendWaiting
+            )
+            MainDelayProgressRow(
+                label = "Retrieve Locations",
+                totalMs = pollTotal,
+                remainingMs = pollRemaining,
+                nowMs = nowMs,
+                statusColor = mainStatusDotColor(
+                    failureStreak = sharingState.sync.pollFailureStreak,
+                    lastSuccessAtMs = sharingState.sync.lastPollSuccessAtMs
+                ),
+                isActive = retrieveWaiting
             )
         }
     }
@@ -698,6 +727,14 @@ private fun MainDelayProgressRow(
     } else {
         ((totalMs - remainingMs).toFloat() / totalMs.toFloat()).coerceIn(0f, 1f)
     }
+    val smoothProgress by animateFloatAsState(
+        targetValue = progress,
+        animationSpec = tween(
+            durationMillis = MAIN_PROGRESS_SMOOTH_ANIM_MS,
+            easing = LinearEasing
+        ),
+        label = "mainDelaySmoothProgress"
+    )
 
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -728,7 +765,7 @@ private fun MainDelayProgressRow(
                     modifier = Modifier
                         .size(8.dp)
                         .clip(CircleShape)
-                        .background(statusColor)
+                        .background(effectiveStatusColor)
                 )
                 Text(
                     text = label,
@@ -742,7 +779,7 @@ private fun MainDelayProgressRow(
                 color = valueColor
             )
         }
-        MainDelayProgressBar(progress = progress, nowMs = nowMs, isActive = isActive)
+        MainDelayProgressBar(progress = smoothProgress, nowMs = nowMs, isActive = isActive)
     }
 }
 
@@ -759,6 +796,7 @@ private fun MainDelayProgressBar(progress: Float, nowMs: Long, isActive: Boolean
     } else {
         MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
     }
+    val inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.60f)
     var boostStartMs by remember { mutableStateOf<Long?>(null) }
     var boostFromProgress by remember { mutableStateOf(0f) }
     var boostToken by remember { mutableStateOf(0L) }
@@ -797,6 +835,16 @@ private fun MainDelayProgressBar(progress: Float, nowMs: Long, isActive: Boolean
         Canvas(modifier = Modifier.fillMaxSize()) {
             val width = size.width
             val height = size.height
+
+            if (!isActive) {
+                drawRect(
+                    color = inactiveTrackColor,
+                    topLeft = Offset.Zero,
+                    size = Size(width, height)
+                )
+                return@Canvas
+            }
+
             val headX = width * displayedProgress
             val trailLength = width * 0.34f
             val trailStart = (headX - trailLength).coerceAtLeast(0f)
@@ -929,6 +977,25 @@ private fun formatRelativeAge(timestampMs: Long?, nowMs: Long): String {
         seconds < 86_400L -> "${seconds / 3600L} hours ago"
         else -> "${seconds / 86_400L} days ago"
     }
+}
+
+@Composable
+private fun RelativeAgeLabel(
+    timestampMs: Long?,
+    modifier: Modifier = Modifier
+) {
+    val nowMs by produceState(initialValue = System.currentTimeMillis(), key1 = timestampMs) {
+        while (true) {
+            delay(1_000L)
+            value = System.currentTimeMillis()
+        }
+    }
+    Text(
+        text = formatRelativeAge(timestampMs = timestampMs, nowMs = nowMs),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+        modifier = modifier
+    )
 }
 
 private fun copyToClipboard(context: Context, label: String, text: String) {

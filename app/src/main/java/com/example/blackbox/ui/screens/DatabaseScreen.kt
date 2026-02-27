@@ -43,7 +43,9 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun DatabaseScreen(modifier: Modifier = Modifier) {
@@ -74,7 +76,9 @@ fun DatabaseScreen(modifier: Modifier = Modifier) {
     var clearAllRunning by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(context) {
-        LocationPersistenceController.initialize(context.applicationContext)
+        withContext(Dispatchers.IO) {
+            LocationPersistenceController.initialize(context.applicationContext)
+        }
     }
 
     val folderLauncher = rememberLauncherForActivityResult(

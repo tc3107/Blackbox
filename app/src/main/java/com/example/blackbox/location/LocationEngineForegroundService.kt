@@ -32,9 +32,11 @@ class LocationEngineForegroundService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        LocationEngine.initialize(applicationContext)
-        LocationPersistenceController.initialize(applicationContext)
-        LocationSharingController.initialize(applicationContext)
+        serviceScope.launch(Dispatchers.IO) {
+            LocationEngine.initialize(applicationContext)
+            LocationPersistenceController.initialize(applicationContext)
+            LocationSharingController.initialize(applicationContext)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

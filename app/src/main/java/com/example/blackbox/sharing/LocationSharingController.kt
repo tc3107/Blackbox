@@ -49,7 +49,10 @@ object LocationSharingController {
     private var locationEventsJob: Job? = null
     private var pollingJob: Job? = null
     private var relayStatusJob: Job? = null
+    private var relayStatusStopJob: Job? = null
     private var retryJob: Job? = null
+    private val loopJobLock = Any()
+    private val relayStatusStopGraceMs = 1_200L
 
     private var currentSettings: SharingSettings = SharingSettings()
     private var snapshot: SharingStateSnapshot = SharingStateSnapshot()
@@ -151,12 +154,16 @@ object LocationSharingController {
     }
 
     fun onSharingPageVisible(visible: Boolean) {
-        Log.d(SHARING_DEBUG_TAG, "Sharing page visibility changed visible=$visible")
         scope.launch {
+            var changed = false
             stateMutex.withLock {
+                if (pollingVisible == visible) return@withLock
                 pollingVisible = visible
                 updateSyncState { it.copy(pollingActive = visible) }
+                changed = true
             }
+            if (!changed) return@launch
+            Log.d(SHARING_DEBUG_TAG, "Sharing page visibility changed visible=$visible")
             publishState()
             if (visible) {
                 startPollingLoop()
@@ -168,11 +175,14 @@ object LocationSharingController {
     }
 
     fun onMainViewVisible(visible: Boolean) {
-        Log.d(SHARING_DEBUG_TAG, "Main view visibility changed visible=$visible")
         scope.launch {
+            var changed = false
             stateMutex.withLock {
+                if (mainViewVisible == visible) return@withLock
                 mainViewVisible = visible
+                changed = true
             }
+            if (!changed) return@launch
             updateRelayStatusLoopState()
         }
     }
@@ -463,54 +473,78 @@ object LocationSharingController {
     }
 
     private fun startPollingLoop() {
-        if (pollingJob != null) return
-        Log.d(SHARING_DEBUG_TAG, "Starting poll loop intervalMs=$POLL_INTERVAL_MS")
-        pollingJob = scope.launch {
-            try {
-                pollNow(trigger = "page_open")
-                while (true) {
-                    delay(POLL_INTERVAL_MS)
-                    if (!pollingVisible) {
-                        Log.d(SHARING_DEBUG_TAG, "Poll loop paused: sharing page not visible.")
-                        break
+        synchronized(loopJobLock) {
+            if (pollingJob != null) return
+            Log.d(SHARING_DEBUG_TAG, "Starting poll loop intervalMs=$POLL_INTERVAL_MS")
+            lateinit var createdJob: Job
+            createdJob = scope.launch {
+                try {
+                    pollNow(trigger = "page_open")
+                    while (true) {
+                        delay(POLL_INTERVAL_MS)
+                        if (!pollingVisible) {
+                            Log.d(SHARING_DEBUG_TAG, "Poll loop paused: sharing page not visible.")
+                            break
+                        }
+                        pollNow(trigger = "interval")
                     }
-                    pollNow(trigger = "interval")
+                } finally {
+                    synchronized(loopJobLock) {
+                        if (pollingJob === createdJob) {
+                            pollingJob = null
+                        }
+                    }
                 }
-            } finally {
-                pollingJob = null
             }
+            pollingJob = createdJob
         }
     }
 
     private fun stopPollingLoop() {
-        pollingJob?.cancel()
-        pollingJob = null
+        synchronized(loopJobLock) {
+            pollingJob?.cancel()
+            pollingJob = null
+        }
         Log.d(SHARING_DEBUG_TAG, "Stopped poll loop")
     }
 
     private fun startRelayStatusLoop() {
-        if (relayStatusJob != null) return
-        Log.d(SHARING_DEBUG_TAG, "Starting relay status loop intervalMs=$RELAY_STATUS_INTERVAL_MS")
-        relayStatusJob = scope.launch {
-            try {
-                refreshRelayStatus(trigger = "page_open")
-                while (true) {
-                    delay(RELAY_STATUS_INTERVAL_MS)
-                    if (!shouldRunRelayStatusLoop()) {
-                        Log.d(SHARING_DEBUG_TAG, "Relay status loop paused: no visible relay status surface.")
-                        break
+        synchronized(loopJobLock) {
+            relayStatusStopJob?.cancel()
+            relayStatusStopJob = null
+            if (relayStatusJob != null) return
+            Log.d(SHARING_DEBUG_TAG, "Starting relay status loop intervalMs=$RELAY_STATUS_INTERVAL_MS")
+            lateinit var createdJob: Job
+            createdJob = scope.launch {
+                try {
+                    refreshRelayStatus(trigger = "page_open")
+                    while (true) {
+                        delay(RELAY_STATUS_INTERVAL_MS)
+                        if (!shouldRunRelayStatusLoop()) {
+                            Log.d(SHARING_DEBUG_TAG, "Relay status loop paused: no visible relay status surface.")
+                            break
+                        }
+                        refreshRelayStatus(trigger = "interval")
                     }
-                    refreshRelayStatus(trigger = "interval")
+                } finally {
+                    synchronized(loopJobLock) {
+                        if (relayStatusJob === createdJob) {
+                            relayStatusJob = null
+                        }
+                    }
                 }
-            } finally {
-                relayStatusJob = null
             }
+            relayStatusJob = createdJob
         }
     }
 
-    private fun stopRelayStatusLoop() {
-        relayStatusJob?.cancel()
-        relayStatusJob = null
+    private fun stopRelayStatusLoopNow() {
+        synchronized(loopJobLock) {
+            relayStatusStopJob?.cancel()
+            relayStatusStopJob = null
+            relayStatusJob?.cancel()
+            relayStatusJob = null
+        }
         mutateSyncOnly { it.copy(relayStatusChecking = false) }
         Log.d(SHARING_DEBUG_TAG, "Stopped relay status loop")
     }
@@ -523,7 +557,24 @@ object LocationSharingController {
         if (shouldRunRelayStatusLoop()) {
             startRelayStatusLoop()
         } else {
-            stopRelayStatusLoop()
+            scheduleRelayStatusLoopStop()
+        }
+    }
+
+    private fun scheduleRelayStatusLoopStop() {
+        synchronized(loopJobLock) {
+            if (relayStatusJob == null) {
+                relayStatusStopJob?.cancel()
+                relayStatusStopJob = null
+                return
+            }
+            if (relayStatusStopJob != null) return
+            relayStatusStopJob = scope.launch {
+                delay(relayStatusStopGraceMs)
+                if (!shouldRunRelayStatusLoop()) {
+                    stopRelayStatusLoopNow()
+                }
+            }
         }
     }
 
@@ -1358,6 +1409,12 @@ object LocationSharingController {
     }
 
     private fun isPushSeqConflictError(throwable: Throwable): Boolean {
+        val relayHttp = throwable as? RelayHttpException
+        if (relayHttp?.statusCode == 409 &&
+            relayHttp.responseBody.contains("Push seq must increase monotonically", ignoreCase = true)
+        ) {
+            return true
+        }
         val message = throwable.message ?: return false
         return message.contains("Push seq must increase monotonically", ignoreCase = true)
     }

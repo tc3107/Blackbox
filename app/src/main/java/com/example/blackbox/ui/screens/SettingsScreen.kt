@@ -57,7 +57,9 @@ import com.example.blackbox.sharing.isValidUsername
 import com.example.blackbox.ui.components.ButtonLabel
 import com.example.blackbox.ui.theme.accentColorFromHex
 import com.example.blackbox.ui.theme.normalizeAccentHex
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private const val SETTINGS_DIALOG_WIDTH_FRACTION = 0.96f
 
@@ -128,7 +130,9 @@ fun SettingsScreen(
     }
 
     LaunchedEffect(context) {
-        LocationSharingController.initialize(context.applicationContext)
+        withContext(Dispatchers.IO) {
+            LocationSharingController.initialize(context.applicationContext)
+        }
     }
 
     fun openSettingsEditor(editor: SharingConfigEditor) {

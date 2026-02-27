@@ -52,7 +52,9 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 private const val BATTERY_API_SOURCE = "Intent.ACTION_BATTERY_CHANGED"
 private const val TIME_API_SOURCE = "System clock + kotlinx.coroutines.delay"
@@ -77,9 +79,11 @@ fun DataValuesScreen(modifier: Modifier = Modifier) {
     var scanVersion by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(context) {
-        LocationEngine.initialize(context.applicationContext)
-        LocationPersistenceController.initialize(context.applicationContext)
-        LocationSharingController.initialize(context.applicationContext)
+        withContext(Dispatchers.IO) {
+            LocationEngine.initialize(context.applicationContext)
+            LocationPersistenceController.initialize(context.applicationContext)
+            LocationSharingController.initialize(context.applicationContext)
+        }
         scanVersion += 1
     }
 

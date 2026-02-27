@@ -12,11 +12,12 @@ import android.location.LocationManager
 import android.location.LocationRequest
 import android.os.Build
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
-import androidx.core.content.ContextCompat
 import java.util.Locale
+import java.util.concurrent.Executor
 import kotlin.math.abs
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -39,6 +40,8 @@ private const val SIGNIFICANT_MOTION_ACTIVE_WINDOW_MS = 2 * 60_000L
 private const val MAX_STATUS_HISTORY = 100
 private const val UI_HIGH_DEMAND_CONSUMER_PREFIX = "ui:"
 private const val PERSIST_DEBUG_TAG = "BlackboxPersistDebug"
+private const val ENABLE_VERBOSE_LOCATION_EVENT_LOGS = false
+private const val LOCATION_ENGINE_THREAD_NAME = "bbx-location-engine"
 
 object LocationEngine {
     private data class CandidateFix(
@@ -62,7 +65,11 @@ object LocationEngine {
     )
     val locationEvents: SharedFlow<LocationSampleEvent> = _locationEvents.asSharedFlow()
 
-    private val mainHandler = Handler(Looper.getMainLooper())
+    private val engineThreadLock = Any()
+    @Volatile
+    private var engineHandler: Handler? = null
+    @Volatile
+    private var engineExecutor: Executor? = null
 
     private var appContext: Context? = null
     private var locationManager: LocationManager? = null
@@ -104,9 +111,9 @@ object LocationEngine {
     }
 
     fun initialize(context: Context) {
-        postToMain {
+        postToEngine {
             if (appContext != null) {
-                return@postToMain
+                return@postToEngine
             }
 
             appContext = context.applicationContext
@@ -132,8 +139,8 @@ object LocationEngine {
     }
 
     fun setEngineEnabled(enabled: Boolean) {
-        postToMain {
-            if (engineEnabled == enabled) return@postToMain
+        postToEngine {
+            if (engineEnabled == enabled) return@postToEngine
             engineEnabled = enabled
             if (!enabled) {
                 motionBoostUntilElapsedRealtimeNanos = null
@@ -145,8 +152,8 @@ object LocationEngine {
     }
 
     fun setAllowLowPowerBackground(enabled: Boolean) {
-        postToMain {
-            if (allowLowPowerBackground == enabled) return@postToMain
+        postToEngine {
+            if (allowLowPowerBackground == enabled) return@postToEngine
             allowLowPowerBackground = enabled
             recordStatus(
                 if (enabled) {
@@ -160,8 +167,8 @@ object LocationEngine {
     }
 
     fun setForceActive(enabled: Boolean) {
-        postToMain {
-            if (forceActive == enabled) return@postToMain
+        postToEngine {
+            if (forceActive == enabled) return@postToEngine
             forceActive = enabled
             recordStatus(if (enabled) "Force Active enabled." else "Force Active disabled.")
             reevaluateAndApply("Force Active changed")
@@ -169,8 +176,8 @@ object LocationEngine {
     }
 
     fun registerHighDemandConsumer(consumerId: String) {
-        postToMain {
-            if (consumerId.isBlank()) return@postToMain
+        postToEngine {
+            if (consumerId.isBlank()) return@postToEngine
             val changed = highDemandConsumers.add(consumerId)
             if (changed) {
                 recordStatus("High-demand consumer added: $consumerId")
@@ -180,8 +187,8 @@ object LocationEngine {
     }
 
     fun unregisterHighDemandConsumer(consumerId: String) {
-        postToMain {
-            if (consumerId.isBlank()) return@postToMain
+        postToEngine {
+            if (consumerId.isBlank()) return@postToEngine
             val changed = highDemandConsumers.remove(consumerId)
             if (changed) {
                 recordStatus("High-demand consumer removed: $consumerId")
@@ -191,7 +198,7 @@ object LocationEngine {
     }
 
     fun clearUiHighDemandConsumers() {
-        postToMain {
+        postToEngine {
             val changed = highDemandConsumers.removeAll { it.startsWith(UI_HIGH_DEMAND_CONSUMER_PREFIX) }
             if (changed) {
                 recordStatus("UI high-demand consumers cleared.")
@@ -318,7 +325,6 @@ object LocationEngine {
 
             val requested = requestProviderUpdates(
                 manager = manager,
-                context = context,
                 provider = provider,
                 listener = listener
             )
@@ -340,10 +346,11 @@ object LocationEngine {
 
     private fun requestProviderUpdates(
         manager: LocationManager,
-        context: Context,
         provider: String,
         listener: LocationListener
     ): Boolean {
+        val handler = ensureEngineHandler()
+        val executor = ensureEngineExecutor()
         val (intervalMillis, quality) = when {
             provider == LocationManager.PASSIVE_PROVIDER -> 0L to LocationRequest.QUALITY_LOW_POWER
             engineMode == LocationEngineMode.LowPower && provider == LocationManager.NETWORK_PROVIDER -> {
@@ -364,7 +371,7 @@ object LocationEngine {
                 manager.requestLocationUpdates(
                     provider,
                     request,
-                    ContextCompat.getMainExecutor(context),
+                    executor,
                     listener
                 )
             } else {
@@ -374,7 +381,7 @@ object LocationEngine {
                     intervalMillis,
                     0f,
                     listener,
-                    Looper.getMainLooper()
+                    handler.looper
                 )
             }
         }
@@ -391,7 +398,7 @@ object LocationEngine {
                     intervalMillis,
                     0f,
                     listener,
-                    Looper.getMainLooper()
+                    handler.looper
                 )
             }
             return fallback.isSuccess
@@ -433,12 +440,14 @@ object LocationEngine {
             receivedAtMillis = receivedAtMillis
         )
         val emitted = _locationEvents.tryEmit(event)
-        Log.d(
-            PERSIST_DEBUG_TAG,
-            "Location update pushed emitted=$emitted provider=${event.provider} " +
-                "lat=${event.lat} lon=${event.lon} acc=${event.accuracyM} " +
-                "receivedAtMs=${event.receivedAtMs} mode=${event.engineMode}"
-        )
+        if (ENABLE_VERBOSE_LOCATION_EVENT_LOGS) {
+            Log.d(
+                PERSIST_DEBUG_TAG,
+                "Location update pushed emitted=$emitted provider=${event.provider} " +
+                    "lat=${event.lat} lon=${event.lon} acc=${event.accuracyM} " +
+                    "receivedAtMs=${event.receivedAtMs} mode=${event.engineMode}"
+            )
+        }
         recomputeAndPublishState()
     }
 
@@ -701,7 +710,7 @@ object LocationEngine {
 
         val listener = significantMotionListener ?: object : TriggerEventListener() {
             override fun onTrigger(event: TriggerEvent?) {
-                postToMain {
+                postToEngine {
                     significantMotionArmed = false
                     significantMotionLastTriggeredAtMillis = System.currentTimeMillis()
                     motionBoostUntilElapsedRealtimeNanos =
@@ -755,15 +764,17 @@ object LocationEngine {
 
         if (gnssStatusRegistered) return
 
+        val handler = ensureEngineHandler()
+        val executor = ensureEngineExecutor()
         val callback = createGnssStatusCallback()
         val registered = runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                manager.registerGnssStatusCallback(ContextCompat.getMainExecutor(context), callback)
+                manager.registerGnssStatusCallback(executor, callback)
             } else {
                 @Suppress("DEPRECATION")
                 manager.registerGnssStatusCallback(
                     callback,
-                    Handler(Looper.getMainLooper())
+                    handler
                 )
             }
         }.getOrDefault(false)
@@ -917,17 +928,18 @@ object LocationEngine {
         }
 
         val nextDelayMillis = delaysMillis.minOrNull()
+        val handler = ensureEngineHandler()
         if (nextDelayMillis == null) {
             if (tickScheduled) {
-                mainHandler.removeCallbacks(tickRunnable)
+                handler.removeCallbacks(tickRunnable)
                 tickScheduled = false
             }
             return
         }
 
-        mainHandler.removeCallbacks(tickRunnable)
+        handler.removeCallbacks(tickRunnable)
         tickScheduled = true
-        mainHandler.postDelayed(tickRunnable, nextDelayMillis)
+        handler.postDelayed(tickRunnable, nextDelayMillis)
     }
 
     private fun recordStatus(message: String, clearError: Boolean = false) {
@@ -982,12 +994,41 @@ object LocationEngine {
         statusHistorySnapshot = statusHistory.toList()
     }
 
-    private fun postToMain(block: () -> Unit) {
-        if (Looper.myLooper() == Looper.getMainLooper()) {
+    private fun postToEngine(block: () -> Unit) {
+        val handler = ensureEngineHandler()
+        if (Looper.myLooper() == handler.looper) {
             block()
         } else {
-            mainHandler.post(block)
+            handler.post(block)
         }
+    }
+
+    private fun ensureEngineHandler(): Handler {
+        val current = engineHandler
+        if (current != null && current.looper.thread.isAlive) {
+            return current
+        }
+        synchronized(engineThreadLock) {
+            val existing = engineHandler
+            if (existing != null && existing.looper.thread.isAlive) {
+                return existing
+            }
+            val thread = HandlerThread(LOCATION_ENGINE_THREAD_NAME)
+            thread.start()
+            return Handler(thread.looper).also { created ->
+                engineHandler = created
+                engineExecutor = Executor { runnable ->
+                    if (!created.post(runnable)) {
+                        runnable.run()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun ensureEngineExecutor(): Executor {
+        ensureEngineHandler()
+        return engineExecutor ?: Executor { runnable -> runnable.run() }
     }
 
     private fun computeAgeMillis(

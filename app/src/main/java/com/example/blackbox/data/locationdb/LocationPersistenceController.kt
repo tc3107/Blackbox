@@ -27,7 +27,9 @@ import kotlinx.coroutines.withContext
 
 private const val MAX_WRITE_RATE_MS = 1_000L
 private const val ARCHIVE_RETRY_INTERVAL_MS = 60_000L
+private const val STARTUP_ARCHIVE_DELAY_MS = 45_000L
 private const val PERSIST_DEBUG_TAG = "BlackboxPersistDebug"
+private const val ENABLE_VERBOSE_PERSIST_LOGS = false
 
 data class LocationPersistenceState(
     val initialized: Boolean = false,
@@ -77,6 +79,8 @@ object LocationPersistenceController {
     private var cooldownJob: Job? = null
     private var pendingEvent: LocationSampleEvent? = null
     private var archiveRetryJob: Job? = null
+    @Volatile
+    private var loggingEnabled: Boolean = true
 
     fun initialize(context: Context) {
         if (initialized) return
@@ -119,8 +123,10 @@ object LocationPersistenceController {
             startEventCollector()
             startArchiveRetryLoop()
             scope.launch { refreshLiveDayEntryCount(Instant.now()) }
-            scope.launch { runArchiveNowInternal(reason = "startup") }
-            scope.launch { runArchiveIntegrityCheck() }
+            scope.launch {
+                delay(STARTUP_ARCHIVE_DELAY_MS)
+                runArchiveNowInternal(reason = "startup delayed")
+            }
 
             initialized = true
         }
@@ -160,10 +166,14 @@ object LocationPersistenceController {
                     "Archive folder cleared."
                 } else {
                     "Archive folder updated."
+                },
+                integrityMessage = if (uri == null) {
+                    "Integrity check pending."
+                } else {
+                    "Archive updated. Run integrity check manually."
                 }
             )
         }
-        scope.launch { runArchiveIntegrityCheck() }
     }
 
     fun getArchiveTreeUri(): Uri? {
@@ -342,8 +352,10 @@ object LocationPersistenceController {
         return repository.queryRange(startInclusiveMs, endInclusiveMs)
     }
 
-    fun getArchiveRecords(): List<ArchiveRecord> {
-        return archiveRepository?.getArchiveRecords().orEmpty()
+    suspend fun getArchiveRecords(): List<ArchiveRecord> {
+        return withContext(Dispatchers.IO) {
+            archiveRepository?.getArchiveRecords().orEmpty()
+        }
     }
 
     suspend fun runArchiveIntegrityCheck(): Result<ArchiveIntegrityResult> {
@@ -393,14 +405,13 @@ object LocationPersistenceController {
             return
         }
 
-        Log.d(PERSIST_DEBUG_TAG, "Starting location event collector.")
+        debugPersistLog { "Starting location event collector." }
         eventCollectorJob = scope.launch {
             LocationEngine.locationEvents.collect { event ->
-                Log.d(
-                    PERSIST_DEBUG_TAG,
+                debugPersistLog {
                     "Location event collected provider=${event.provider} " +
                         "receivedAtMs=${event.receivedAtMs} acc=${event.accuracyM}"
-                )
+                }
                 handleLocationEvent(event)
             }
         }
@@ -503,16 +514,15 @@ object LocationPersistenceController {
         writeThrottleMutex.withLock {
             if (cooldownJob == null) {
                 shouldPersistImmediately = true
-                Log.d(PERSIST_DEBUG_TAG, "Write throttle open; persisting immediately.")
+                debugPersistLog { "Write throttle open; persisting immediately." }
                 cooldownJob = scope.launch {
                     runCooldownLoop()
                 }
             } else {
                 pendingEvent = event
-                Log.d(
-                    PERSIST_DEBUG_TAG,
+                debugPersistLog {
                     "Write throttled; queued pending event receivedAtMs=${event.receivedAtMs}."
-                )
+                }
             }
         }
 
@@ -537,33 +547,30 @@ object LocationPersistenceController {
             }
 
             if (eventToPersist == null) {
-                Log.d(PERSIST_DEBUG_TAG, "Cooldown loop idle; stopping.")
+                debugPersistLog { "Cooldown loop idle; stopping." }
                 return
             }
-            Log.d(
-                PERSIST_DEBUG_TAG,
+            debugPersistLog {
                 "Cooldown tick persisting queued event receivedAtMs=${eventToPersist.receivedAtMs}."
-            )
+            }
             persistEvent(eventToPersist)
         }
     }
 
     private suspend fun persistEvent(event: LocationSampleEvent) {
         val writer = writeRepository ?: return
-        Log.d(
-            PERSIST_DEBUG_TAG,
+        debugPersistLog {
             "DB write start provider=${event.provider} receivedAtMs=${event.receivedAtMs}."
-        )
+        }
         val result = runCatching {
             writer.ingest(event)
         }
 
         if (result.isSuccess) {
             val liveDayCount = refreshLiveDayEntryCount(Instant.ofEpochMilli(event.receivedAtMs))
-            Log.d(
-                PERSIST_DEBUG_TAG,
+            debugPersistLog {
                 "DB write success receivedAtMs=${event.receivedAtMs} liveDayCount=$liveDayCount."
-            )
+            }
             _state.update {
                 it.copy(
                     liveDayEntryCount = liveDayCount ?: it.liveDayEntryCount,
@@ -592,7 +599,7 @@ object LocationPersistenceController {
         return runCatching {
             manager.currentDayEntryCount(nowUtc)
         }.onSuccess { count ->
-            Log.d(PERSIST_DEBUG_TAG, "Live day entry recount success count=$count nowUtc=$nowUtc")
+            debugPersistLog { "Live day entry recount success count=$count nowUtc=$nowUtc" }
         }.onFailure { throwable ->
             Log.e(
                 PERSIST_DEBUG_TAG,
@@ -644,5 +651,9 @@ object LocationPersistenceController {
                 }
             }
     }
+
+    private inline fun debugPersistLog(message: () -> String) {
+        if (!ENABLE_VERBOSE_PERSIST_LOGS) return
+        Log.d(PERSIST_DEBUG_TAG, message())
+    }
 }
-    private var loggingEnabled: Boolean = true

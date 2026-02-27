@@ -13,6 +13,12 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
+class RelayHttpException(
+    val statusCode: Int,
+    val endpoint: String,
+    val responseBody: String
+) : IllegalStateException("Relay request failed ($statusCode): $responseBody")
+
 class OkHttpRelayApi(
     private val baseUrlProvider: () -> String,
     private val client: OkHttpClient = OkHttpClient.Builder().build()
@@ -115,7 +121,11 @@ class OkHttpRelayApi(
                             SHARING_DEBUG_TAG,
                             "Relay request failed endpoint=$endpoint code=${response.code} body=${summarizeRelayBody(body)}"
                         )
-                        error("Relay request failed (${response.code}): $body")
+                        throw RelayHttpException(
+                            statusCode = response.code,
+                            endpoint = endpoint,
+                            responseBody = body
+                        )
                     }
                     Log.d(
                         SHARING_DEBUG_TAG,
@@ -127,11 +137,23 @@ class OkHttpRelayApi(
                 onSuccess = { Result.success(it) },
                 onFailure = { throwable ->
                     val mapped = mapRelayThrowable(throwable)
-                Log.e(
-                    SHARING_DEBUG_TAG,
-                        "Relay transport exception path=$path error=${mapped.message}",
-                        throwable
-                )
+                    when (mapped) {
+                        is RelayHttpException -> {
+                            val levelMessage = "Relay request error path=$path code=${mapped.statusCode} error=${mapped.message}"
+                            if (mapped.statusCode in 400..499) {
+                                Log.w(SHARING_DEBUG_TAG, levelMessage)
+                            } else {
+                                Log.e(SHARING_DEBUG_TAG, levelMessage, mapped)
+                            }
+                        }
+                        else -> {
+                            Log.e(
+                                SHARING_DEBUG_TAG,
+                                "Relay transport exception path=$path error=${mapped.message}",
+                                mapped
+                            )
+                        }
+                    }
                     Result.failure(mapped)
                 }
             )
@@ -140,6 +162,7 @@ class OkHttpRelayApi(
 
     private fun mapRelayThrowable(throwable: Throwable): Throwable {
         return when (throwable) {
+            is RelayHttpException -> throwable
             is UnknownHostException -> IllegalStateException(
                 "Cannot resolve relay host. Check internet, DNS/Private DNS, or relay URL.",
                 throwable
