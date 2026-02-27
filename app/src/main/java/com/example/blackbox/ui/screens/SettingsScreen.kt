@@ -12,9 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import com.example.blackbox.ui.components.NeoAlertDialog as AlertDialog
@@ -23,7 +21,6 @@ import androidx.compose.material3.MaterialTheme
 import com.example.blackbox.ui.components.NeoOutlinedButton as OutlinedButton
 import com.example.blackbox.ui.components.NeoOutlinedCard as OutlinedCard
 import com.example.blackbox.ui.components.NeoOutlinedTextField as OutlinedTextField
-import com.example.blackbox.ui.components.NeoSwitch as Switch
 import androidx.compose.material3.Text
 import com.example.blackbox.ui.components.NeoTextButton as TextButton
 import androidx.compose.runtime.Composable
@@ -37,11 +34,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.blackbox.data.settings.UiSettings
@@ -50,13 +45,10 @@ import com.example.blackbox.sharing.MAX_FAST_INTERVAL_MS
 import com.example.blackbox.sharing.MAX_NORMAL_INTERVAL_MS
 import com.example.blackbox.sharing.MIN_FAST_INTERVAL_MS
 import com.example.blackbox.sharing.MIN_NORMAL_INTERVAL_MS
-import com.example.blackbox.sharing.SharingSettings
 import com.example.blackbox.sharing.USERNAME_MAX_LENGTH
 import com.example.blackbox.sharing.USERNAME_MIN_LENGTH
 import com.example.blackbox.sharing.isValidUsername
 import com.example.blackbox.ui.components.ButtonLabel
-import com.example.blackbox.ui.theme.accentColorFromHex
-import com.example.blackbox.ui.theme.normalizeAccentHex
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -66,6 +58,7 @@ private val SETTINGS_TOP_BAR_SCROLL_CLEARANCE = 16.dp
 private val SETTINGS_BOTTOM_BAR_SCROLL_CLEARANCE = 104.dp
 
 @Composable
+@Suppress("UNUSED_PARAMETER")
 fun SettingsScreen(
     settings: UiSettings,
     onCustomAccentSaved: (String?) -> Unit,
@@ -83,11 +76,6 @@ fun SettingsScreen(
     var backupPassphrase by rememberSaveable { mutableStateOf("") }
     var backupPassphraseConfirm by rememberSaveable { mutableStateOf("") }
     var backupDialogError by rememberSaveable { mutableStateOf<String?>(null) }
-
-    var inputHex by rememberSaveable(settings.customAccentHex) {
-        mutableStateOf(settings.customAccentHex.orEmpty())
-    }
-    var validationError by rememberSaveable { mutableStateOf<String?>(null) }
 
     val exportIdentityLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
@@ -148,26 +136,6 @@ fun SettingsScreen(
         }
     }
 
-    fun missingOrInvalidEditor(config: SharingSettings): SharingConfigEditor? {
-        if (!isValidUsername(config.username)) return SharingConfigEditor.Username
-        if (!isValidRelayBaseUrl(config.relayBaseUrl)) return SharingConfigEditor.RelayUrl
-        if (config.normalIntervalMs !in MIN_NORMAL_INTERVAL_MS..MAX_NORMAL_INTERVAL_MS) {
-            return SharingConfigEditor.NormalIntervalMinutes
-        }
-        if (config.fastIntervalMs !in MIN_FAST_INTERVAL_MS..MAX_FAST_INTERVAL_MS) {
-            return SharingConfigEditor.FastIntervalSeconds
-        }
-        return null
-    }
-
-    val activeAccentColor = settings.customAccentHex?.let(::accentColorFromHex)
-        ?: MaterialTheme.colorScheme.primary
-    val modeDescription = if (settings.customAccentHex == null) {
-        "Automatic mode: system Material 3 colors when available, otherwise terminal green."
-    } else {
-        "Custom mode: #${settings.customAccentHex}"
-    }
-
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -194,42 +162,6 @@ fun SettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text("Sharing Configuration", style = MaterialTheme.typography.titleSmall)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("Share my location", style = MaterialTheme.typography.bodySmall)
-                    Switch(
-                        checked = sharingState.settings.sharingEnabled,
-                        onCheckedChange = { enabled ->
-                            if (!enabled) {
-                                LocationSharingController.setSharingEnabled(false)
-                                return@Switch
-                            }
-                            val missing = missingOrInvalidEditor(sharingState.settings)
-                            if (missing != null) {
-                                openSettingsEditor(missing)
-                                statusMessage = when (missing) {
-                                    SharingConfigEditor.Username -> "Username required before enabling Share My Location."
-                                    SharingConfigEditor.RelayUrl -> "Relay URL is invalid. Update it before enabling Share My Location."
-                                    SharingConfigEditor.NormalIntervalMinutes -> "Normal interval is invalid. Update it before enabling Share My Location."
-                                    SharingConfigEditor.FastIntervalSeconds -> "Fast interval is invalid. Update it before enabling Share My Location."
-                                }
-                                return@Switch
-                            }
-                            LocationSharingController.setSharingEnabled(true)
-                        }
-                    )
-                }
-                Text(
-                    text = "Username: ${sharingState.settings.username.ifBlank { "(unset)" }}",
-                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
-                )
-                Text(
-                    text = "Relay: ${sharingState.settings.relayBaseUrl}",
-                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
-                )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -294,67 +226,6 @@ fun SettingsScreen(
                         modifier = Modifier.weight(1f)
                     ) {
                         ButtonLabel("Import Identity")
-                    }
-                }
-            }
-        }
-
-        OutlinedCard(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Text("Theme", style = MaterialTheme.typography.titleSmall)
-                Text(text = modeDescription, style = MaterialTheme.typography.bodyMedium)
-                ColorPreviewChip(color = activeAccentColor)
-                OutlinedTextField(
-                    value = inputHex,
-                    onValueChange = {
-                        inputHex = it.trim().removePrefix("#")
-                        validationError = null
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text(text = "Custom accent hex") },
-                    placeholder = { Text(text = "00FF66", fontFamily = FontFamily.Monospace) },
-                    singleLine = true,
-                    prefix = { Text("#") },
-                    isError = validationError != null,
-                    supportingText = { Text(text = validationError ?: "Use a 6-digit RGB hex value.") },
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Ascii,
-                        imeAction = ImeAction.Done
-                    )
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = {
-                            val normalized = normalizeAccentHex(inputHex)
-                            if (normalized == null) {
-                                validationError = "Invalid color value. Use 6 hex digits."
-                            } else {
-                                onCustomAccentSaved(normalized)
-                                inputHex = normalized
-                                validationError = null
-                            }
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        ButtonLabel("Apply Override")
-                    }
-                    OutlinedButton(
-                        onClick = {
-                            onCustomAccentSaved(null)
-                            inputHex = ""
-                            validationError = null
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        ButtonLabel("Use Automatic")
                     }
                 }
             }
@@ -442,6 +313,7 @@ fun SettingsScreen(
         val action = backupAction ?: return
         AlertDialog(
             modifier = Modifier.fillMaxWidth(SETTINGS_DIALOG_WIDTH_FRACTION),
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
             onDismissRequest = {
                 backupAction = null
                 backupPassphrase = ""
@@ -515,26 +387,6 @@ fun SettingsScreen(
     }
 }
 
-@Composable
-private fun ColorPreviewChip(color: Color) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .size(28.dp)
-                .background(color = color, shape = CircleShape)
-                .border(width = 1.dp, color = MaterialTheme.colorScheme.outline, shape = CircleShape)
-        )
-        Text(
-            text = "Active accent preview",
-            style = MaterialTheme.typography.bodyMedium
-        )
-    }
-}
-
 private enum class SharingConfigEditor {
     Username,
     RelayUrl,
@@ -575,6 +427,8 @@ private fun SettingsEditorDialog(
     }
 
     AlertDialog(
+        modifier = Modifier.fillMaxWidth(SETTINGS_DIALOG_WIDTH_FRACTION),
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
@@ -584,6 +438,7 @@ private fun SettingsEditorDialog(
                     onValueChange = onInputChange,
                     label = { Text(label) },
                     keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+                    modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
                 if (!error.isNullOrBlank()) {

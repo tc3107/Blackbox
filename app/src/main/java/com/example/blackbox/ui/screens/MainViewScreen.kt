@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -30,6 +31,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -320,10 +322,10 @@ fun MainViewScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     ActionWidget(
-                        title = "Add Contacts",
-                        iconRes = android.R.drawable.ic_menu_add,
+                        title = "My Zones",
+                        iconRes = android.R.drawable.ic_menu_mapmode,
                         modifier = Modifier.weight(1f),
-                        onClick = { addContactsDialogVisible = true }
+                        onClick = { zonesDialogVisible = true }
                     )
                     ActionWidget(
                         title = "View Contacts",
@@ -344,17 +346,12 @@ fun MainViewScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     ActionWidget(
-                        title = "My Zones",
-                        iconRes = android.R.drawable.ic_menu_mapmode,
-                        modifier = Modifier.weight(1f),
-                        onClick = { zonesDialogVisible = true }
-                    )
-                    ActionWidget(
                         title = "Settings",
                         iconRes = android.R.drawable.ic_menu_preferences,
                         modifier = Modifier.weight(1f),
                         onClick = onOpenSettings
                     )
+                    Spacer(modifier = Modifier.weight(1f))
                 }
             }
         }
@@ -363,29 +360,35 @@ fun MainViewScreen(
     if (addContactsDialogVisible) {
         MainOverlayDialog(
             onDismissRequest = { addContactsDialogVisible = false },
-            title = "Add Contacts",
-            actions = {
-                TextButton(onClick = { addContactsDialogVisible = false }) { Text("Close") }
-            }
+            useContainer = false
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = { showQrDialogVisible = true },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(MAIN_QR_BUTTON_HEIGHT)
-                ) {
-                    ButtonLabel("Show QR Code")
-                }
-                OutlinedButton(
-                    onClick = {
-                        scanQrLauncher.launch(Intent(context, com.example.blackbox.sharing.QrScannerActivity::class.java))
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(MAIN_QR_BUTTON_HEIGHT)
-                ) {
-                    ButtonLabel("Scan QR Code")
+                OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { showQrDialogVisible = true },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(MAIN_QR_BUTTON_HEIGHT)
+                        ) {
+                            ButtonLabel("Show QR Code")
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                scanQrLauncher.launch(Intent(context, com.example.blackbox.sharing.QrScannerActivity::class.java))
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(MAIN_QR_BUTTON_HEIGHT)
+                        ) {
+                            ButtonLabel("Scan QR Code")
+                        }
+                    }
                 }
                 if (!scanError.isNullOrBlank()) {
                     Text(
@@ -401,34 +404,41 @@ fun MainViewScreen(
     if (showQrDialogVisible) {
         MainOverlayDialog(
             onDismissRequest = { showQrDialogVisible = false },
-            title = "My Location QR",
-            actions = {
-                TextButton(onClick = { showQrDialogVisible = false }) { Text("Done") }
-            }
+            useContainer = false
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                val image = qrImage
-                if (image != null) {
-                    Image(
-                        bitmap = image,
-                        contentDescription = "My location QR",
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(1f)
-                    )
-                } else {
-                    Text(
-                        text = "Location code not available yet.",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-                OutlinedButton(
-                    onClick = {
-                        myCode?.let { copyToClipboard(context, "blackbox_location_code", it) }
-                    },
-                    modifier = Modifier.fillMaxWidth()
+            OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    ButtonLabel("Copy Code")
+                    val image = qrImage
+                    if (image != null) {
+                        Image(
+                            bitmap = image,
+                            contentDescription = "My location QR",
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(1f)
+                        )
+                    } else {
+                        Text(
+                            text = "Location code not available yet.",
+                            style = MaterialTheme.typography.bodySmall,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            myCode?.let { copyToClipboard(context, "blackbox_location_code", it) }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        ButtonLabel("Copy Code")
+                    }
                 }
             }
         }
@@ -437,10 +447,7 @@ fun MainViewScreen(
     if (viewContactsDialogVisible) {
         MainOverlayDialog(
             onDismissRequest = { viewContactsDialogVisible = false },
-            title = "Contacts",
-            actions = {
-                TextButton(onClick = { viewContactsDialogVisible = false }) { Text("Close") }
-            }
+            useContainer = false
         ) {
             ContactsSection(
                 state = sharingState,
@@ -468,10 +475,7 @@ fun MainViewScreen(
     if (zonesDialogVisible) {
         MainOverlayDialog(
             onDismissRequest = { zonesDialogVisible = false },
-            title = "My Zones",
-            actions = {
-                TextButton(onClick = { zonesDialogVisible = false }) { Text("Close") }
-            }
+            useContainer = false
         ) {
             ZonesSection(
                 zones = sharingState.zones,
@@ -554,13 +558,17 @@ fun MainViewScreen(
 @Composable
 private fun MainOverlayDialog(
     onDismissRequest: () -> Unit,
-    title: String,
-    actions: @Composable () -> Unit,
+    title: String? = null,
+    actions: (@Composable () -> Unit)? = null,
+    useContainer: Boolean = true,
     content: @Composable () -> Unit
 ) {
     Dialog(
         onDismissRequest = onDismissRequest,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnClickOutside = true
+        )
     ) {
         Box(
             modifier = Modifier
@@ -573,50 +581,65 @@ private fun MainOverlayDialog(
                     .background(Color.Black.copy(alpha = 0.55f))
                     .blur(10.dp)
             )
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth(MAIN_DIALOG_WIDTH_FRACTION)
-                    .fillMaxHeight(0.9f)
-                    .align(Alignment.Center)
-                    .border(
+            val baseContentModifier = Modifier
+                .fillMaxWidth(MAIN_DIALOG_WIDTH_FRACTION)
+                .align(Alignment.Center)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {}
+                )
+            if (useContainer) {
+                val contentModifier = baseContentModifier.fillMaxHeight(0.9f)
+                Card(
+                    modifier = contentModifier.border(
                         width = 1.5.dp,
                         color = MaterialTheme.colorScheme.outlineVariant,
                         shape = RoundedCornerShape(20.dp)
-                    )
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = {}
                     ),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                )
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.titleMedium
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface
                     )
+                ) {
                     Column(
-                        modifier = Modifier.weight(1f, fill = true),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        content()
-                    }
-                    Row(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 6.dp, bottom = 2.dp),
-                        horizontalArrangement = Arrangement.End
+                            .fillMaxSize()
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
-                        actions()
+                        if (!title.isNullOrBlank()) {
+                            Text(
+                                text = title,
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                        }
+                        Column(
+                            modifier = Modifier.weight(1f, fill = true),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            content()
+                        }
+                        if (actions != null) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 6.dp, bottom = 2.dp),
+                                horizontalArrangement = Arrangement.End
+                            ) {
+                                actions()
+                            }
+                        }
                     }
+                }
+            } else {
+                val contentModifier = baseContentModifier
+                    .wrapContentHeight(unbounded = true)
+                Column(
+                    modifier = contentModifier.padding(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    content()
                 }
             }
         }

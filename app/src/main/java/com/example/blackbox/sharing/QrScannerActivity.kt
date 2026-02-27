@@ -7,7 +7,6 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
 import android.util.Size
-import android.widget.Button
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
@@ -57,10 +56,6 @@ class QrScannerActivity : ComponentActivity() {
 
         previewView = findViewById(R.id.qrScannerPreview)
         statusText = findViewById(R.id.qrScannerStatus)
-        findViewById<Button>(R.id.qrScannerCancelButton).setOnClickListener {
-            setResult(Activity.RESULT_CANCELED)
-            finish()
-        }
 
         cameraExecutor = Executors.newSingleThreadExecutor()
 

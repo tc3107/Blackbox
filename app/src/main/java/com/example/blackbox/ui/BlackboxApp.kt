@@ -222,20 +222,6 @@ fun BlackboxApp(
                                         modifier = Modifier.padding(start = 12.dp)
                                     )
                                 }
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(8.dp)
-                                        .background(
-                                            brush = Brush.verticalGradient(
-                                                colors = listOf(
-                                                    Color.White.copy(alpha = 0.14f),
-                                                    Color.White.copy(alpha = 0.05f),
-                                                    Color.Transparent
-                                                )
-                                            )
-                                        )
-                                )
                             }
                         }
                     },
@@ -324,6 +310,24 @@ fun BlackboxApp(
                         }
                     }
                 }
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .windowInsetsPadding(WindowInsets.statusBars)
+                        .padding(top = 56.dp)
+                        .fillMaxWidth()
+                        .height(18.dp)
+                        .background(
+                            brush = Brush.verticalGradient(
+                                colors = listOf(
+                                    titleBarColor,
+                                    titleBarColor.copy(alpha = 0.65f),
+                                    titleBarColor.copy(alpha = 0.22f),
+                                    Color.Transparent
+                                )
+                            )
+                        )
+                )
                 UiPerformanceOverlay(
                     monitor = uiPerfMonitor,
                     visible = uiPerfOverlayVisible
@@ -391,7 +395,6 @@ private enum class AppDestination(
 
     companion object {
         fun fromRoute(route: String): AppDestination {
-            if (route == "theme") return SETTINGS
             return entries.firstOrNull { it.route == route } ?: entries.first()
         }
     }

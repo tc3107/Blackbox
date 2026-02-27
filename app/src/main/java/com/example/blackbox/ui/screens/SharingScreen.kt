@@ -6,10 +6,9 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
+import android.view.HapticFeedbackConstants
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.animateFloatAsState
@@ -69,6 +68,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
@@ -98,12 +98,14 @@ import com.example.blackbox.sharing.QrScannerActivity
 import com.example.blackbox.sharing.SHARING_DEBUG_TAG
 import com.example.blackbox.sharing.hasSharingNetworkPermissions
 import com.example.blackbox.ui.components.ButtonLabel
+import com.example.blackbox.ui.theme.neomorphicShadow
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.pow
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -114,8 +116,18 @@ private const val BAR_TAP_BOOST_DURATION_MS = 420L
 private const val EXPANDED_CONTACT_POLL_INTERVAL_MS = 20_000L
 private const val ACTIVE_LOCATION_EVENT_INTERVAL_MS = 1_000L
 private const val LOW_POWER_LOCATION_EVENT_INTERVAL_MS = 3 * 60_000L
-private const val ROW_EXPAND_ANIM_MS = 220
+private const val ROW_EXPAND_ANIM_MS = 180
 private val SHARING_QR_BUTTON_HEIGHT = 56.dp
+
+private fun emitToggleRowHaptic(view: android.view.View, scope: CoroutineScope) {
+    if (!view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)) {
+        view.performHapticFeedback(HapticFeedbackConstants.TEXT_HANDLE_MOVE)
+    }
+    scope.launch {
+        delay(ROW_EXPAND_ANIM_MS.toLong())
+        view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+    }
+}
 
 @Composable
 fun SharingScreen(modifier: Modifier = Modifier) {
@@ -976,6 +988,8 @@ fun ContactsSection(
     onRemoveContact: (String) -> Unit
 ) {
     val context = LocalContext.current
+    val view = LocalView.current
+    val scope = rememberCoroutineScope()
     val nowMs by produceState(initialValue = System.currentTimeMillis()) {
         while (true) {
             delay(1_000L)
@@ -1013,7 +1027,6 @@ fun ContactsSection(
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text("Contacts", style = MaterialTheme.typography.titleSmall)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -1056,10 +1069,13 @@ fun ContactsSection(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(cardShape)
-                        .border(
-                            width = 1.5.dp,
-                            color = MaterialTheme.colorScheme.outlineVariant,
-                            shape = cardShape
+                        .background(MaterialTheme.colorScheme.surface)
+                        .neomorphicShadow(
+                            shape = cardShape,
+                            pressed = isExpanded,
+                            addBorder = false,
+                            depth = 2.dp,
+                            blurRadius = 3.dp
                         )
                 ) {
                     Row(
@@ -1068,7 +1084,10 @@ fun ContactsSection(
                             .clickable(
                                 interactionSource = rowInteractionSource,
                                 indication = null
-                            ) { expandedSenderId = if (isExpanded) null else contact.senderId }
+                            ) {
+                                emitToggleRowHaptic(view = view, scope = scope)
+                                expandedSenderId = if (isExpanded) null else contact.senderId
+                            }
                             .padding(horizontal = 12.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -1100,10 +1119,10 @@ fun ContactsSection(
                         visible = isExpanded,
                         enter = expandVertically(
                             animationSpec = tween(durationMillis = ROW_EXPAND_ANIM_MS, easing = FastOutSlowInEasing)
-                        ) + fadeIn(animationSpec = tween(durationMillis = ROW_EXPAND_ANIM_MS)),
+                        ),
                         exit = shrinkVertically(
                             animationSpec = tween(durationMillis = ROW_EXPAND_ANIM_MS, easing = FastOutSlowInEasing)
-                        ) + fadeOut(animationSpec = tween(durationMillis = ROW_EXPAND_ANIM_MS))
+                        )
                     ) {
                         Column(
                             modifier = Modifier
@@ -1463,9 +1482,12 @@ fun ZonesSection(
     onRenameZone: (String, String) -> Unit,
     onDeleteZone: (String) -> Unit
 ) {
+    val view = LocalView.current
+    val scope = rememberCoroutineScope()
     var expandedZoneId by rememberSaveable { mutableStateOf<String?>(null) }
     var renameTargetZoneId by rememberSaveable { mutableStateOf<String?>(null) }
     var renameZoneInput by rememberSaveable { mutableStateOf("") }
+    var deleteTargetZoneId by rememberSaveable { mutableStateOf<String?>(null) }
 
     OutlinedCard(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -1474,7 +1496,6 @@ fun ZonesSection(
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text("Zones", style = MaterialTheme.typography.titleSmall)
             Text(
                 text = "Attach contextual tags to updates when you are near saved areas.",
                 style = MaterialTheme.typography.bodySmall,
@@ -1505,10 +1526,13 @@ fun ZonesSection(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(rowShape)
-                        .border(
-                            width = 1.5.dp,
-                            color = MaterialTheme.colorScheme.outlineVariant,
-                            shape = rowShape
+                        .background(MaterialTheme.colorScheme.surface)
+                        .neomorphicShadow(
+                            shape = rowShape,
+                            pressed = isExpanded,
+                            addBorder = false,
+                            depth = 2.dp,
+                            blurRadius = 3.dp
                         )
                 ) {
                     Row(
@@ -1517,7 +1541,10 @@ fun ZonesSection(
                             .clickable(
                                 interactionSource = rowInteractionSource,
                                 indication = null
-                            ) { expandedZoneId = if (isExpanded) null else zone.id }
+                            ) {
+                                emitToggleRowHaptic(view = view, scope = scope)
+                                expandedZoneId = if (isExpanded) null else zone.id
+                            }
                             .padding(horizontal = 12.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -1547,10 +1574,10 @@ fun ZonesSection(
                         visible = isExpanded,
                         enter = expandVertically(
                             animationSpec = tween(durationMillis = ROW_EXPAND_ANIM_MS, easing = FastOutSlowInEasing)
-                        ) + fadeIn(animationSpec = tween(durationMillis = ROW_EXPAND_ANIM_MS)),
+                        ),
                         exit = shrinkVertically(
                             animationSpec = tween(durationMillis = ROW_EXPAND_ANIM_MS, easing = FastOutSlowInEasing)
-                        ) + fadeOut(animationSpec = tween(durationMillis = ROW_EXPAND_ANIM_MS))
+                        )
                     ) {
                         Column(
                             modifier = Modifier
@@ -1596,7 +1623,7 @@ fun ZonesSection(
                                     ButtonLabel("Rename")
                                 }
                                 OutlinedButton(
-                                    onClick = { onDeleteZone(zone.id) },
+                                    onClick = { deleteTargetZoneId = zone.id },
                                     modifier = Modifier.weight(1f)
                                 ) {
                                     ButtonLabel("Delete")
@@ -1647,6 +1674,36 @@ fun ZonesSection(
                         renameZoneInput = ""
                     }
                 ) { Text("Cancel") }
+            }
+        )
+    }
+
+    val deleteZoneTarget = zones.firstOrNull { it.id == deleteTargetZoneId }
+    if (deleteZoneTarget != null) {
+        AlertDialog(
+            modifier = Modifier.fillMaxWidth(DIALOG_WIDTH_FRACTION),
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+            onDismissRequest = { deleteTargetZoneId = null },
+            title = { Text("Delete ${deleteZoneTarget.name}?") },
+            text = {
+                Text(
+                    text = "This permanently removes the zone.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDeleteZone(deleteZoneTarget.id)
+                        if (expandedZoneId == deleteZoneTarget.id) {
+                            expandedZoneId = null
+                        }
+                        deleteTargetZoneId = null
+                    }
+                ) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteTargetZoneId = null }) { Text("Cancel") }
             }
         )
     }

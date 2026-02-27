@@ -19,7 +19,7 @@ fun BlackboxTheme(
     content: @Composable () -> Unit
 ) {
     MaterialTheme(
-        colorScheme = blackboxColorScheme(customAccentHex = customAccentHex),
+        colorScheme = blackboxColorScheme(),
         typography = Typography,
         content = content
     )
@@ -43,7 +43,7 @@ fun accentColorFromHex(hex: String): Color {
 }
 
 @Composable
-private fun blackboxColorScheme(customAccentHex: String?): ColorScheme {
+private fun blackboxColorScheme(): ColorScheme {
     val context = LocalContext.current
     val dynamicColorAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
 
@@ -51,26 +51,25 @@ private fun blackboxColorScheme(customAccentHex: String?): ColorScheme {
         dynamicDarkColorScheme(context)
     } else {
         darkColorScheme(
-            primary = TerminalGreen,
-            secondary = TerminalGreen.copy(alpha = 0.84f),
-            tertiary = TerminalGreen.copy(alpha = 0.68f)
+            primary = FallbackAccentGrayWhite,
+            secondary = FallbackAccentGrayWhite.copy(alpha = 0.84f),
+            tertiary = FallbackAccentGrayWhite.copy(alpha = 0.68f)
         )
     }
 
-    val customAccentColor = customAccentHex
-        ?.let(::normalizeAccentHex)
-        ?.let(::accentColorFromHex)
-
-    val accentColor = customAccentColor
-        ?: if (dynamicColorAvailable) baseScheme.primary else TerminalGreen
+    val accentColor = if (dynamicColorAvailable) {
+        baseScheme.primary
+    } else {
+        FallbackAccentGrayWhite
+    }
 
     return baseScheme.copy(
         primary = accentColor,
         onPrimary = colorForForeground(accentColor),
         primaryContainer = lerp(NeoSurface, accentColor, 0.22f),
         onPrimaryContainer = Color.White,
-        secondary = customAccentColor?.let { accentColor.copy(alpha = 0.84f) } ?: baseScheme.secondary,
-        tertiary = customAccentColor?.let { accentColor.copy(alpha = 0.68f) } ?: baseScheme.tertiary,
+        secondary = accentColor.copy(alpha = 0.84f),
+        tertiary = accentColor.copy(alpha = 0.68f),
         background = NeoBackground,
         onBackground = Color.White,
         surface = NeoSurface,
@@ -87,3 +86,4 @@ private fun colorForForeground(background: Color): Color {
 }
 
 private val AccentHexRegex = Regex("^[0-9A-Fa-f]{6}$")
+private val FallbackAccentGrayWhite = Color(0xFFE3E3E3)

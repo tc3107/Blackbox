@@ -55,8 +55,8 @@ import androidx.compose.material3.TextField as M3TextField
 import androidx.compose.material3.TextButton as M3TextButton
 
 private val NeoShadowPadding = 3.dp
-private const val NeoTapHoldMs = 70L
-private const val NeoSecondStageHapticDelayMs = 110L
+private const val NeoTapHoldMs = 160L
+private const val NeoSecondStageHapticDelayMs = 45L
 
 enum class NeoButtonHapticMode {
     None,
@@ -115,22 +115,19 @@ fun NeoButton(
     val scope = rememberCoroutineScope()
     var tapLatched by remember { mutableStateOf(false) }
     var hapticToken by remember { mutableStateOf(0L) }
-    LaunchedEffect(tapLatched) {
-        if (tapLatched) {
-            delay(NeoTapHoldMs)
-            tapLatched = false
-        }
-    }
+    var latchToken by remember { mutableStateOf(0L) }
     LaunchedEffect(source, hapticMode, enabled) {
         if (!enabled || hapticMode == NeoButtonHapticMode.None) return@LaunchedEffect
         source.interactions.collect { interaction ->
             when (interaction) {
-                is PressInteraction.Press -> view.emitNeoLightHaptic()
-                is PressInteraction.Release -> {
-                    if (hapticMode == NeoButtonHapticMode.PressCycle) {
-                        view.emitNeoConfirmHaptic()
-                    }
+                is PressInteraction.Press -> {
+                    hapticToken += 1L
+                    view.emitNeoLightHaptic()
                 }
+                is PressInteraction.Release -> {
+                    Unit
+                }
+                is PressInteraction.Cancel -> hapticToken += 1L
                 else -> Unit
             }
         }
@@ -138,13 +135,24 @@ fun NeoButton(
     CompositionLocalProvider(LocalRippleConfiguration provides null) {
         M3Button(
             onClick = {
-                tapLatched = true
-                val token = hapticToken + 1L
-                hapticToken = token
+                if (hapticMode == NeoButtonHapticMode.PressCycle) {
+                    val token = latchToken + 1L
+                    latchToken = token
+                    tapLatched = true
+                    scope.launch {
+                        delay(NeoTapHoldMs)
+                        if (latchToken == token) {
+                            tapLatched = false
+                            view.emitNeoConfirmHaptic()
+                        }
+                    }
+                }
                 when (hapticMode) {
                     NeoButtonHapticMode.None -> Unit
                     NeoButtonHapticMode.PressCycle -> Unit
                     NeoButtonHapticMode.ToggleCycle -> {
+                        val token = hapticToken + 1L
+                        hapticToken = token
                         scope.launch {
                             delay(NeoSecondStageHapticDelayMs)
                             if (hapticToken != token) return@launch
@@ -205,22 +213,19 @@ fun NeoOutlinedButton(
     val scope = rememberCoroutineScope()
     var tapLatched by remember { mutableStateOf(false) }
     var hapticToken by remember { mutableStateOf(0L) }
-    LaunchedEffect(tapLatched) {
-        if (tapLatched) {
-            delay(NeoTapHoldMs)
-            tapLatched = false
-        }
-    }
+    var latchToken by remember { mutableStateOf(0L) }
     LaunchedEffect(source, hapticMode, enabled) {
         if (!enabled || hapticMode == NeoButtonHapticMode.None) return@LaunchedEffect
         source.interactions.collect { interaction ->
             when (interaction) {
-                is PressInteraction.Press -> view.emitNeoLightHaptic()
-                is PressInteraction.Release -> {
-                    if (hapticMode == NeoButtonHapticMode.PressCycle) {
-                        view.emitNeoConfirmHaptic()
-                    }
+                is PressInteraction.Press -> {
+                    hapticToken += 1L
+                    view.emitNeoLightHaptic()
                 }
+                is PressInteraction.Release -> {
+                    Unit
+                }
+                is PressInteraction.Cancel -> hapticToken += 1L
                 else -> Unit
             }
         }
@@ -228,13 +233,24 @@ fun NeoOutlinedButton(
     CompositionLocalProvider(LocalRippleConfiguration provides null) {
         M3OutlinedButton(
             onClick = {
-                tapLatched = true
-                val token = hapticToken + 1L
-                hapticToken = token
+                if (hapticMode == NeoButtonHapticMode.PressCycle) {
+                    val token = latchToken + 1L
+                    latchToken = token
+                    tapLatched = true
+                    scope.launch {
+                        delay(NeoTapHoldMs)
+                        if (latchToken == token) {
+                            tapLatched = false
+                            view.emitNeoConfirmHaptic()
+                        }
+                    }
+                }
                 when (hapticMode) {
                     NeoButtonHapticMode.None -> Unit
                     NeoButtonHapticMode.PressCycle -> Unit
                     NeoButtonHapticMode.ToggleCycle -> {
+                        val token = hapticToken + 1L
+                        hapticToken = token
                         scope.launch {
                             delay(NeoSecondStageHapticDelayMs)
                             if (hapticToken != token) return@launch
@@ -293,22 +309,19 @@ fun NeoTextButton(
     val scope = rememberCoroutineScope()
     var tapLatched by remember { mutableStateOf(false) }
     var hapticToken by remember { mutableStateOf(0L) }
-    LaunchedEffect(tapLatched) {
-        if (tapLatched) {
-            delay(NeoTapHoldMs)
-            tapLatched = false
-        }
-    }
+    var latchToken by remember { mutableStateOf(0L) }
     LaunchedEffect(source, hapticMode, enabled) {
         if (!enabled || hapticMode == NeoButtonHapticMode.None) return@LaunchedEffect
         source.interactions.collect { interaction ->
             when (interaction) {
-                is PressInteraction.Press -> view.emitNeoLightHaptic()
-                is PressInteraction.Release -> {
-                    if (hapticMode == NeoButtonHapticMode.PressCycle) {
-                        view.emitNeoConfirmHaptic()
-                    }
+                is PressInteraction.Press -> {
+                    hapticToken += 1L
+                    view.emitNeoLightHaptic()
                 }
+                is PressInteraction.Release -> {
+                    Unit
+                }
+                is PressInteraction.Cancel -> hapticToken += 1L
                 else -> Unit
             }
         }
@@ -316,13 +329,24 @@ fun NeoTextButton(
     CompositionLocalProvider(LocalRippleConfiguration provides null) {
         M3TextButton(
             onClick = {
-                tapLatched = true
-                val token = hapticToken + 1L
-                hapticToken = token
+                if (hapticMode == NeoButtonHapticMode.PressCycle) {
+                    val token = latchToken + 1L
+                    latchToken = token
+                    tapLatched = true
+                    scope.launch {
+                        delay(NeoTapHoldMs)
+                        if (latchToken == token) {
+                            tapLatched = false
+                            view.emitNeoConfirmHaptic()
+                        }
+                    }
+                }
                 when (hapticMode) {
                     NeoButtonHapticMode.None -> Unit
                     NeoButtonHapticMode.PressCycle -> Unit
                     NeoButtonHapticMode.ToggleCycle -> {
+                        val token = hapticToken + 1L
+                        hapticToken = token
                         scope.launch {
                             delay(NeoSecondStageHapticDelayMs)
                             if (hapticToken != token) return@launch
@@ -482,6 +506,7 @@ fun NeoOutlinedTextField(
             .neomorphicShadow(
                 shape = shape,
                 enabled = enabled,
+                pressed = true,
                 addBorder = false,
                 depth = 1.dp,
                 blurRadius = 2.dp
