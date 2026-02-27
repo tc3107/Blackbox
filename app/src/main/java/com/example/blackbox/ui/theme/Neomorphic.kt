@@ -26,7 +26,7 @@ import androidx.compose.ui.unit.dp
 
 private const val ENABLE_NEOMORPHIC_EFFECTS = true
 private const val ENABLE_NEOMORPHIC_BLUR_SHADOWS = true
-private const val NEO_PRESS_ANIM_MS = 130
+private const val NEO_PRESS_ANIM_MS = 210
 
 @Immutable
 data class NeomorphicPalette(
@@ -73,12 +73,8 @@ fun Modifier.neomorphicShadow(
         val path = outline.toPath()
         val rimWidthPx = 1.dp.toPx()
 
-        val outerLight = palette.lightShadow.copy(alpha = 0.82f)
-        val outerDark = palette.darkShadow.copy(alpha = 0.62f)
-        val pressedLight = palette.lightShadow.copy(alpha = 0.72f)
-        val pressedDark = palette.darkShadow.copy(alpha = 0.70f)
-        val topLeftColor = lerp(outerLight, pressedDark, pressProgress)
-        val bottomRightColor = lerp(outerDark, pressedLight, pressProgress)
+        val topLeftColor = palette.lightShadow.copy(alpha = 0.82f)
+        val bottomRightColor = palette.darkShadow.copy(alpha = 0.62f)
 
         val rimBrush = Brush.linearGradient(
             colors = listOf(topLeftColor, bottomRightColor),
@@ -96,6 +92,14 @@ fun Modifier.neomorphicShadow(
 
         val blurPx = blurRadius.toPx()
         val offsetPx = depth.toPx()
+        val topLeftOffset = Offset(
+            x = -offsetPx + (2f * offsetPx * pressProgress),
+            y = -offsetPx + (2f * offsetPx * pressProgress)
+        )
+        val bottomRightOffset = Offset(
+            x = offsetPx - (2f * offsetPx * pressProgress),
+            y = offsetPx - (2f * offsetPx * pressProgress)
+        )
         val topLeftShadowPaint = Paint().apply {
             asFrameworkPaint().maskFilter = BlurMaskFilter(blurPx, BlurMaskFilter.Blur.NORMAL)
         }
@@ -107,16 +111,15 @@ fun Modifier.neomorphicShadow(
             topLeftShadowPaint.color = topLeftColor
             bottomRightShadowPaint.color = bottomRightColor
 
-            // Raised state: light top-left + dark bottom-right.
-            // Pressed state: same positions, swapped colors.
+            // Raised -> pressed transitions now animate both color and shadow position.
             drawIntoCanvas { canvas ->
                 canvas.save()
-                canvas.translate(-offsetPx, -offsetPx)
+                canvas.translate(topLeftOffset.x, topLeftOffset.y)
                 canvas.drawPath(path, topLeftShadowPaint)
                 canvas.restore()
 
                 canvas.save()
-                canvas.translate(offsetPx, offsetPx)
+                canvas.translate(bottomRightOffset.x, bottomRightOffset.y)
                 canvas.drawPath(path, bottomRightShadowPaint)
                 canvas.restore()
             }
