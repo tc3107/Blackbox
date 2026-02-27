@@ -51,6 +51,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.key
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -918,12 +919,8 @@ private fun ToggleRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
-    var localChecked by remember(title) { mutableStateOf(checked) }
     var lastToggleAtMs by remember(title) { mutableStateOf(0L) }
-
-    LaunchedEffect(checked) {
-        localChecked = checked
-    }
+    val toggleInteractionSource = remember(title, checked) { MutableInteractionSource() }
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -931,26 +928,27 @@ private fun ToggleRow(
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Text(title, style = MaterialTheme.typography.titleSmall)
-        Button(
-            onClick = {
-                val nowMs = System.currentTimeMillis()
-                if (nowMs - lastToggleAtMs < MAIN_TOGGLE_DEBOUNCE_MS) return@Button
-                lastToggleAtMs = nowMs
-                val next = !localChecked
-                localChecked = next
-                onCheckedChange(next)
-            },
-            latched = localChecked,
-            hapticMode = NeoButtonHapticMode.ToggleCycle,
-            toggleTargetState = localChecked,
-            shape = RoundedCornerShape(22.dp),
-            modifier = Modifier.size(width = 108.dp, height = 56.dp),
-            contentPadding = PaddingValues(0.dp)
-        ) {
-            ButtonLabel(
-                text = if (localChecked) "ON" else "OFF",
-                style = MaterialTheme.typography.labelLarge
-            )
+        key(title, checked) {
+            Button(
+                onClick = {
+                    val nowMs = System.currentTimeMillis()
+                    if (nowMs - lastToggleAtMs < MAIN_TOGGLE_DEBOUNCE_MS) return@Button
+                    lastToggleAtMs = nowMs
+                    onCheckedChange(!checked)
+                },
+                latched = checked,
+                hapticMode = NeoButtonHapticMode.ToggleCycle,
+                toggleTargetState = checked,
+                interactionSource = toggleInteractionSource,
+                shape = RoundedCornerShape(22.dp),
+                modifier = Modifier.size(width = 108.dp, height = 56.dp),
+                contentPadding = PaddingValues(0.dp)
+            ) {
+                ButtonLabel(
+                    text = if (checked) "ON" else "OFF",
+                    style = MaterialTheme.typography.labelLarge
+                )
+            }
         }
     }
 }

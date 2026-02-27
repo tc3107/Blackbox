@@ -1,5 +1,6 @@
 package com.example.blackbox.ui.components
 
+import android.view.HapticFeedbackConstants
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -31,10 +32,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.Dp
@@ -55,8 +55,7 @@ import androidx.compose.material3.TextButton as M3TextButton
 
 private val NeoShadowPadding = 3.dp
 private const val NeoTapHoldMs = 70L
-private const val NeoSecondStageHapticDelayMs = 130L
-private const val NeoLightHapticBoostDelayMs = 26L
+private const val NeoSecondStageHapticDelayMs = 110L
 
 enum class NeoButtonHapticMode {
     None,
@@ -94,7 +93,7 @@ fun NeoButton(
 ) {
     val source = interactionSource ?: remember { MutableInteractionSource() }
     val pressed = source.collectIsPressedAsState().value
-    val haptics = LocalHapticFeedback.current
+    val view = LocalView.current
     val scope = rememberCoroutineScope()
     var tapLatched by remember { mutableStateOf(false) }
     var hapticToken by remember { mutableStateOf(0L) }
@@ -104,13 +103,16 @@ fun NeoButton(
             tapLatched = false
         }
     }
-    fun emitLightHaptic(token: Long) {
-        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-        scope.launch {
-            delay(NeoLightHapticBoostDelayMs)
-            if (hapticToken != token) return@launch
-            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+    fun emitHaptic(code: Int, fallbackCode: Int) {
+        if (!view.performHapticFeedback(code)) {
+            view.performHapticFeedback(fallbackCode)
         }
+    }
+    fun emitLightHaptic() {
+        emitHaptic(
+            code = HapticFeedbackConstants.KEYBOARD_TAP,
+            fallbackCode = HapticFeedbackConstants.TEXT_HANDLE_MOVE
+        )
     }
     CompositionLocalProvider(LocalRippleConfiguration provides null) {
         M3Button(
@@ -121,27 +123,22 @@ fun NeoButton(
                 when (hapticMode) {
                     NeoButtonHapticMode.None -> Unit
                     NeoButtonHapticMode.PressCycle -> {
-                        emitLightHaptic(token)
-                        scope.launch {
-                            delay(NeoSecondStageHapticDelayMs)
-                            if (hapticToken != token) return@launch
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        }
+                        emitLightHaptic()
                     }
                     NeoButtonHapticMode.ToggleCycle -> {
                         val targetOn = toggleTargetState?.not() ?: !latched
                         if (targetOn) {
-                            emitLightHaptic(token)
+                            emitLightHaptic()
                         } else {
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            emitHaptic(code = HapticFeedbackConstants.LONG_PRESS, fallbackCode = HapticFeedbackConstants.LONG_PRESS)
                         }
                         scope.launch {
                             delay(NeoSecondStageHapticDelayMs)
                             if (hapticToken != token) return@launch
                             if (targetOn) {
-                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                emitHaptic(code = HapticFeedbackConstants.LONG_PRESS, fallbackCode = HapticFeedbackConstants.LONG_PRESS)
                             } else {
-                                emitLightHaptic(token)
+                                emitLightHaptic()
                             }
                         }
                     }
@@ -195,7 +192,7 @@ fun NeoOutlinedButton(
 ) {
     val source = interactionSource ?: remember { MutableInteractionSource() }
     val pressed = source.collectIsPressedAsState().value
-    val haptics = LocalHapticFeedback.current
+    val view = LocalView.current
     val scope = rememberCoroutineScope()
     var tapLatched by remember { mutableStateOf(false) }
     var hapticToken by remember { mutableStateOf(0L) }
@@ -205,13 +202,16 @@ fun NeoOutlinedButton(
             tapLatched = false
         }
     }
-    fun emitLightHaptic(token: Long) {
-        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-        scope.launch {
-            delay(NeoLightHapticBoostDelayMs)
-            if (hapticToken != token) return@launch
-            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+    fun emitHaptic(code: Int, fallbackCode: Int) {
+        if (!view.performHapticFeedback(code)) {
+            view.performHapticFeedback(fallbackCode)
         }
+    }
+    fun emitLightHaptic() {
+        emitHaptic(
+            code = HapticFeedbackConstants.KEYBOARD_TAP,
+            fallbackCode = HapticFeedbackConstants.TEXT_HANDLE_MOVE
+        )
     }
     CompositionLocalProvider(LocalRippleConfiguration provides null) {
         M3OutlinedButton(
@@ -222,27 +222,22 @@ fun NeoOutlinedButton(
                 when (hapticMode) {
                     NeoButtonHapticMode.None -> Unit
                     NeoButtonHapticMode.PressCycle -> {
-                        emitLightHaptic(token)
-                        scope.launch {
-                            delay(NeoSecondStageHapticDelayMs)
-                            if (hapticToken != token) return@launch
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        }
+                        emitLightHaptic()
                     }
                     NeoButtonHapticMode.ToggleCycle -> {
                         val targetOn = toggleTargetState?.not() ?: !latched
                         if (targetOn) {
-                            emitLightHaptic(token)
+                            emitLightHaptic()
                         } else {
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            emitHaptic(code = HapticFeedbackConstants.LONG_PRESS, fallbackCode = HapticFeedbackConstants.LONG_PRESS)
                         }
                         scope.launch {
                             delay(NeoSecondStageHapticDelayMs)
                             if (hapticToken != token) return@launch
                             if (targetOn) {
-                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                emitHaptic(code = HapticFeedbackConstants.LONG_PRESS, fallbackCode = HapticFeedbackConstants.LONG_PRESS)
                             } else {
-                                emitLightHaptic(token)
+                                emitLightHaptic()
                             }
                         }
                     }
@@ -294,7 +289,7 @@ fun NeoTextButton(
 ) {
     val source = interactionSource ?: remember { MutableInteractionSource() }
     val pressed = source.collectIsPressedAsState().value
-    val haptics = LocalHapticFeedback.current
+    val view = LocalView.current
     val scope = rememberCoroutineScope()
     var tapLatched by remember { mutableStateOf(false) }
     var hapticToken by remember { mutableStateOf(0L) }
@@ -304,13 +299,16 @@ fun NeoTextButton(
             tapLatched = false
         }
     }
-    fun emitLightHaptic(token: Long) {
-        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-        scope.launch {
-            delay(NeoLightHapticBoostDelayMs)
-            if (hapticToken != token) return@launch
-            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+    fun emitHaptic(code: Int, fallbackCode: Int) {
+        if (!view.performHapticFeedback(code)) {
+            view.performHapticFeedback(fallbackCode)
         }
+    }
+    fun emitLightHaptic() {
+        emitHaptic(
+            code = HapticFeedbackConstants.KEYBOARD_TAP,
+            fallbackCode = HapticFeedbackConstants.TEXT_HANDLE_MOVE
+        )
     }
     CompositionLocalProvider(LocalRippleConfiguration provides null) {
         M3TextButton(
@@ -321,27 +319,22 @@ fun NeoTextButton(
                 when (hapticMode) {
                     NeoButtonHapticMode.None -> Unit
                     NeoButtonHapticMode.PressCycle -> {
-                        emitLightHaptic(token)
-                        scope.launch {
-                            delay(NeoSecondStageHapticDelayMs)
-                            if (hapticToken != token) return@launch
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        }
+                        emitLightHaptic()
                     }
                     NeoButtonHapticMode.ToggleCycle -> {
                         val targetOn = toggleTargetState?.not() ?: !latched
                         if (targetOn) {
-                            emitLightHaptic(token)
+                            emitLightHaptic()
                         } else {
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            emitHaptic(code = HapticFeedbackConstants.LONG_PRESS, fallbackCode = HapticFeedbackConstants.LONG_PRESS)
                         }
                         scope.launch {
                             delay(NeoSecondStageHapticDelayMs)
                             if (hapticToken != token) return@launch
                             if (targetOn) {
-                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                emitHaptic(code = HapticFeedbackConstants.LONG_PRESS, fallbackCode = HapticFeedbackConstants.LONG_PRESS)
                             } else {
-                                emitLightHaptic(token)
+                                emitLightHaptic()
                             }
                         }
                     }
