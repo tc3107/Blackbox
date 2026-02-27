@@ -19,6 +19,26 @@ class RelayHttpException(
     val responseBody: String
 ) : IllegalStateException("Relay request failed ($statusCode): $responseBody")
 
+open class RelayNetworkException(
+    message: String,
+    cause: Throwable
+) : IllegalStateException(message, cause)
+
+class RelayDnsException(cause: Throwable) : RelayNetworkException(
+    message = "Cannot resolve relay host. Check internet, DNS/Private DNS, or relay URL.",
+    cause = cause
+)
+
+class RelayTimeoutException(cause: Throwable) : RelayNetworkException(
+    message = "Relay request timed out. Check connection quality and retry.",
+    cause = cause
+)
+
+class RelayTlsException(cause: Throwable) : RelayNetworkException(
+    message = "Secure relay connection failed. Check device date/time and TLS interception settings.",
+    cause = cause
+)
+
 class OkHttpRelayApi(
     private val baseUrlProvider: () -> String,
     private val client: OkHttpClient = OkHttpClient.Builder().build()
@@ -146,6 +166,12 @@ class OkHttpRelayApi(
                                 Log.e(SHARING_DEBUG_TAG, levelMessage, mapped)
                             }
                         }
+                        is RelayNetworkException -> {
+                            Log.w(
+                                SHARING_DEBUG_TAG,
+                                "Relay transport transient path=$path error=${mapped.message}"
+                            )
+                        }
                         else -> {
                             Log.e(
                                 SHARING_DEBUG_TAG,
@@ -163,18 +189,9 @@ class OkHttpRelayApi(
     private fun mapRelayThrowable(throwable: Throwable): Throwable {
         return when (throwable) {
             is RelayHttpException -> throwable
-            is UnknownHostException -> IllegalStateException(
-                "Cannot resolve relay host. Check internet, DNS/Private DNS, or relay URL.",
-                throwable
-            )
-            is SocketTimeoutException -> IllegalStateException(
-                "Relay request timed out. Check connection quality and retry.",
-                throwable
-            )
-            is SSLException -> IllegalStateException(
-                "Secure relay connection failed. Check device date/time and TLS interception settings.",
-                throwable
-            )
+            is UnknownHostException -> RelayDnsException(throwable)
+            is SocketTimeoutException -> RelayTimeoutException(throwable)
+            is SSLException -> RelayTlsException(throwable)
             else -> throwable
         }
     }

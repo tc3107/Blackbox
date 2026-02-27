@@ -47,6 +47,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+private val DATABASE_TOP_BAR_SCROLL_CLEARANCE = 16.dp
+private val DATABASE_BOTTOM_BAR_SCROLL_CLEARANCE = 104.dp
+
 @Composable
 fun DatabaseScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
@@ -140,7 +143,12 @@ fun DatabaseScreen(modifier: Modifier = Modifier) {
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
+        contentPadding = PaddingValues(
+            start = 20.dp,
+            top = DATABASE_TOP_BAR_SCROLL_CLEARANCE,
+            end = 20.dp,
+            bottom = DATABASE_BOTTOM_BAR_SCROLL_CLEARANCE
+        ),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item { SectionTitle("Database Controls") }

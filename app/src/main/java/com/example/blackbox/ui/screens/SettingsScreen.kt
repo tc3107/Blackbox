@@ -62,6 +62,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private const val SETTINGS_DIALOG_WIDTH_FRACTION = 0.96f
+private val SETTINGS_TOP_BAR_SCROLL_CLEARANCE = 16.dp
+private val SETTINGS_BOTTOM_BAR_SCROLL_CLEARANCE = 104.dp
 
 @Composable
 fun SettingsScreen(
@@ -170,7 +172,12 @@ fun SettingsScreen(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 16.dp),
+            .padding(
+                start = 20.dp,
+                top = SETTINGS_TOP_BAR_SCROLL_CLEARANCE,
+                end = 20.dp,
+                bottom = SETTINGS_BOTTOM_BAR_SCROLL_CLEARANCE
+            ),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Text(

@@ -1,5 +1,7 @@
 package com.example.blackbox.ui.components
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -15,13 +17,19 @@ fun ButtonLabel(
     modifier: Modifier = Modifier,
     style: TextStyle = MaterialTheme.typography.labelLarge
 ) {
-    Text(
-        text = text,
-        modifier = modifier.fillMaxWidth(),
-        maxLines = 1,
-        softWrap = false,
-        overflow = TextOverflow.Ellipsis,
-        textAlign = TextAlign.Center,
-        style = style
-    )
+    Crossfade(
+        targetState = text,
+        animationSpec = tween(durationMillis = 140),
+        label = "buttonLabelCrossfade"
+    ) { label ->
+        Text(
+            text = label,
+            modifier = modifier.fillMaxWidth(),
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            style = style
+        )
+    }
 }

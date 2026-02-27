@@ -53,6 +53,8 @@ object LocationSharingController {
     private var retryJob: Job? = null
     private val loopJobLock = Any()
     private val relayStatusStopGraceMs = 1_200L
+    private val relayStatusTimeoutRetryDelayMs = 1_500L
+    private val relayStatusTimeoutUnreachableThreshold = 2
 
     private var currentSettings: SharingSettings = SharingSettings()
     private var snapshot: SharingStateSnapshot = SharingStateSnapshot()
@@ -190,24 +192,38 @@ object LocationSharingController {
     fun setSharingEnabled(enabled: Boolean) {
         if (enabled && !isValidUsername(normalizeUsername(currentSettings.username))) {
             Log.w(SHARING_DEBUG_TAG, "Rejected enabling sharing: username missing or invalid.")
+            currentSettings = currentSettings.copy(sharingEnabled = false)
             setError("Set a valid username before enabling Share My Location.")
             settingsStore?.setSharingEnabled(false)
             return
         }
         Log.d(SHARING_DEBUG_TAG, "setSharingEnabled enabled=$enabled")
+        currentSettings = currentSettings.copy(sharingEnabled = enabled)
+        publishState()
         settingsStore?.setSharingEnabled(enabled)
     }
 
     fun setUsername(username: String) {
+        currentSettings = currentSettings.copy(username = normalizeUsername(username))
+        publishState()
         settingsStore?.setUsername(username)
     }
 
     fun setRelayBaseUrl(baseUrl: String) {
         Log.d(SHARING_DEBUG_TAG, "setRelayBaseUrl requested=$baseUrl")
+        currentSettings = currentSettings.copy(
+            relayBaseUrl = baseUrl.trim().trimEnd('/').ifBlank { DEFAULT_RELAY_BASE_URL }
+        )
+        publishState()
         settingsStore?.setRelayBaseUrl(baseUrl)
     }
 
     fun setIntervals(normalMs: Long, fastMs: Long) {
+        currentSettings = currentSettings.copy(
+            normalIntervalMs = normalMs.coerceIn(MIN_NORMAL_INTERVAL_MS, MAX_NORMAL_INTERVAL_MS),
+            fastIntervalMs = fastMs.coerceIn(MIN_FAST_INTERVAL_MS, MAX_FAST_INTERVAL_MS)
+        )
+        publishState()
         settingsStore?.setIntervals(normalMs = normalMs, fastMs = fastMs)
     }
 
@@ -588,8 +604,23 @@ object LocationSharingController {
             )
         }
 
-        val request = RelayStatusRequest(clientTimestampMs = now)
-        localRelay.relayStatus(request)
+        val firstRequest = RelayStatusRequest(clientTimestampMs = now)
+        val firstResult = localRelay.relayStatus(firstRequest)
+        val timedOut = firstResult.exceptionOrNull() is RelayTimeoutException
+        val result = if (timedOut) {
+            Log.w(
+                SHARING_DEBUG_TAG,
+                "Relay status timeout trigger=$trigger retrying_in_ms=$relayStatusTimeoutRetryDelayMs"
+            )
+            delay(relayStatusTimeoutRetryDelayMs)
+            localRelay.relayStatus(
+                RelayStatusRequest(clientTimestampMs = System.currentTimeMillis())
+            )
+        } else {
+            firstResult
+        }
+
+        result
             .onSuccess { response ->
                 val successAt = System.currentTimeMillis()
                 Log.d(
@@ -609,19 +640,35 @@ object LocationSharingController {
             }
             .onFailure { throwable ->
                 val failedAt = System.currentTimeMillis()
+                val timeoutFailure = throwable is RelayTimeoutException
                 val error = throwable.message ?: "Relay status failed."
-                Log.w(
-                    SHARING_DEBUG_TAG,
-                    "Relay status failed trigger=$trigger error=$error",
-                    throwable
-                )
+                if (timeoutFailure) {
+                    Log.w(
+                        SHARING_DEBUG_TAG,
+                        "Relay status timeout persisted trigger=$trigger error=$error"
+                    )
+                } else {
+                    Log.w(
+                        SHARING_DEBUG_TAG,
+                        "Relay status failed trigger=$trigger error=$error",
+                        throwable
+                    )
+                }
                 mutateSyncOnly {
+                    val nextFailureStreak = it.relayCheckFailureStreak + 1
+                    val reachableAfterFailure = if (
+                        timeoutFailure && nextFailureStreak < relayStatusTimeoutUnreachableThreshold
+                    ) {
+                        it.relayReachable
+                    } else {
+                        false
+                    }
                     it.copy(
                         relayStatusChecking = false,
-                        relayReachable = false,
+                        relayReachable = reachableAfterFailure,
                         lastRelayStatusError = error,
                         lastRelayStatusErrorAtMs = failedAt,
-                        relayCheckFailureStreak = it.relayCheckFailureStreak + 1
+                        relayCheckFailureStreak = nextFailureStreak
                     )
                 }
             }

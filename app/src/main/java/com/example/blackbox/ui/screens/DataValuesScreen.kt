@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import com.example.blackbox.ui.components.NeoButton as Button
 import com.example.blackbox.ui.components.NeoOutlinedCard as OutlinedCard
 import com.example.blackbox.ui.components.NeoSwitch as Switch
 import androidx.compose.material3.Text
@@ -47,6 +48,7 @@ import com.example.blackbox.location.LocationEngineState
 import com.example.blackbox.location.hasAnyLocationPermission
 import com.example.blackbox.location.hasNotificationPermission
 import com.example.blackbox.sharing.LocationSharingController
+import com.example.blackbox.ui.components.ButtonLabel
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -59,9 +61,15 @@ import kotlinx.coroutines.withContext
 private const val BATTERY_API_SOURCE = "Intent.ACTION_BATTERY_CHANGED"
 private const val TIME_API_SOURCE = "System clock + kotlinx.coroutines.delay"
 private const val DATA_VALUES_LOCATION_CONSUMER_ID = "ui:data_values_location_category"
+private val DATA_VALUES_TOP_BAR_SCROLL_CLEARANCE = 16.dp
+private val DATA_VALUES_BOTTOM_BAR_SCROLL_CLEARANCE = 104.dp
 
 @Composable
-fun DataValuesScreen(modifier: Modifier = Modifier) {
+fun DataValuesScreen(
+    modifier: Modifier = Modifier,
+    perfOverlayVisible: Boolean = false,
+    onTogglePerfOverlay: () -> Unit = {}
+) {
     val context = LocalContext.current
     val timestamp by rememberLiveTimestamp()
     val battery by rememberBatteryPercentage()
@@ -367,7 +375,12 @@ fun DataValuesScreen(modifier: Modifier = Modifier) {
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
+        contentPadding = PaddingValues(
+            start = 20.dp,
+            top = DATA_VALUES_TOP_BAR_SCROLL_CLEARANCE,
+            end = 20.dp,
+            bottom = DATA_VALUES_BOTTOM_BAR_SCROLL_CLEARANCE
+        ),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item { SectionTitle(title = "Debug") }
@@ -385,6 +398,18 @@ fun DataValuesScreen(modifier: Modifier = Modifier) {
                         style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.onSurface
                     )
+                    Button(
+                        onClick = onTogglePerfOverlay,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        ButtonLabel(
+                            if (perfOverlayVisible) {
+                                "Performance Overlay: ON (Tap to Hide)"
+                            } else {
+                                "Performance Overlay: OFF (Tap to Show)"
+                            }
+                        )
+                    }
                     HighDemandToggleRow(
                         title = "Keepalive (FGS)",
                         subtitle = "Default is on. Toggle to enable or disable foreground keepalive.",

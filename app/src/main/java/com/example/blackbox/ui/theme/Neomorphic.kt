@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 
 private const val ENABLE_NEOMORPHIC_EFFECTS = true
 private const val ENABLE_NEOMORPHIC_BLUR_SHADOWS = true
+private const val NEO_PRESS_ANIM_MS = 130
 
 @Immutable
 data class NeomorphicPalette(
@@ -64,7 +65,7 @@ fun Modifier.neomorphicShadow(
     val palette = neomorphicPalette()
     val pressProgress by animateFloatAsState(
         targetValue = if (pressed) 1f else 0f,
-        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
+        animationSpec = tween(durationMillis = NEO_PRESS_ANIM_MS, easing = FastOutSlowInEasing),
         label = "neoPressProgress"
     )
     this.drawWithCache {

@@ -29,9 +29,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.Dp
@@ -40,6 +43,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.example.blackbox.ui.theme.neomorphicPalette
 import com.example.blackbox.ui.theme.neomorphicShadow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.material3.AlertDialog as M3AlertDialog
 import androidx.compose.material3.Button as M3Button
 import androidx.compose.material3.Card as M3Card
@@ -50,7 +54,15 @@ import androidx.compose.material3.TextField as M3TextField
 import androidx.compose.material3.TextButton as M3TextButton
 
 private val NeoShadowPadding = 3.dp
-private const val NeoTapHoldMs = 120L
+private const val NeoTapHoldMs = 70L
+private const val NeoSecondStageHapticDelayMs = 130L
+private const val NeoLightHapticBoostDelayMs = 26L
+
+enum class NeoButtonHapticMode {
+    None,
+    PressCycle,
+    ToggleCycle
+}
 
 @Composable
 private fun defaultNeoButtonColors(): ButtonColors {
@@ -76,21 +88,64 @@ fun NeoButton(
     border: BorderStroke? = null,
     contentPadding: PaddingValues = ButtonDefaults.ContentPadding,
     interactionSource: MutableInteractionSource? = null,
+    hapticMode: NeoButtonHapticMode = NeoButtonHapticMode.PressCycle,
+    toggleTargetState: Boolean? = null,
     content: @Composable RowScope.() -> Unit
 ) {
     val source = interactionSource ?: remember { MutableInteractionSource() }
     val pressed = source.collectIsPressedAsState().value
+    val haptics = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
     var tapLatched by remember { mutableStateOf(false) }
+    var hapticToken by remember { mutableStateOf(0L) }
     LaunchedEffect(tapLatched) {
         if (tapLatched) {
             delay(NeoTapHoldMs)
             tapLatched = false
         }
     }
+    fun emitLightHaptic(token: Long) {
+        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        scope.launch {
+            delay(NeoLightHapticBoostDelayMs)
+            if (hapticToken != token) return@launch
+            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        }
+    }
     CompositionLocalProvider(LocalRippleConfiguration provides null) {
         M3Button(
             onClick = {
                 tapLatched = true
+                val token = hapticToken + 1L
+                hapticToken = token
+                when (hapticMode) {
+                    NeoButtonHapticMode.None -> Unit
+                    NeoButtonHapticMode.PressCycle -> {
+                        emitLightHaptic(token)
+                        scope.launch {
+                            delay(NeoSecondStageHapticDelayMs)
+                            if (hapticToken != token) return@launch
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        }
+                    }
+                    NeoButtonHapticMode.ToggleCycle -> {
+                        val targetOn = toggleTargetState?.not() ?: !latched
+                        if (targetOn) {
+                            emitLightHaptic(token)
+                        } else {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        }
+                        scope.launch {
+                            delay(NeoSecondStageHapticDelayMs)
+                            if (hapticToken != token) return@launch
+                            if (targetOn) {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            } else {
+                                emitLightHaptic(token)
+                            }
+                        }
+                    }
+                }
                 onClick()
             },
             modifier = modifier
@@ -134,21 +189,64 @@ fun NeoOutlinedButton(
     border: BorderStroke? = null,
     contentPadding: PaddingValues = ButtonDefaults.ContentPadding,
     interactionSource: MutableInteractionSource? = null,
+    hapticMode: NeoButtonHapticMode = NeoButtonHapticMode.PressCycle,
+    toggleTargetState: Boolean? = null,
     content: @Composable RowScope.() -> Unit
 ) {
     val source = interactionSource ?: remember { MutableInteractionSource() }
     val pressed = source.collectIsPressedAsState().value
+    val haptics = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
     var tapLatched by remember { mutableStateOf(false) }
+    var hapticToken by remember { mutableStateOf(0L) }
     LaunchedEffect(tapLatched) {
         if (tapLatched) {
             delay(NeoTapHoldMs)
             tapLatched = false
         }
     }
+    fun emitLightHaptic(token: Long) {
+        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        scope.launch {
+            delay(NeoLightHapticBoostDelayMs)
+            if (hapticToken != token) return@launch
+            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        }
+    }
     CompositionLocalProvider(LocalRippleConfiguration provides null) {
         M3OutlinedButton(
             onClick = {
                 tapLatched = true
+                val token = hapticToken + 1L
+                hapticToken = token
+                when (hapticMode) {
+                    NeoButtonHapticMode.None -> Unit
+                    NeoButtonHapticMode.PressCycle -> {
+                        emitLightHaptic(token)
+                        scope.launch {
+                            delay(NeoSecondStageHapticDelayMs)
+                            if (hapticToken != token) return@launch
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        }
+                    }
+                    NeoButtonHapticMode.ToggleCycle -> {
+                        val targetOn = toggleTargetState?.not() ?: !latched
+                        if (targetOn) {
+                            emitLightHaptic(token)
+                        } else {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        }
+                        scope.launch {
+                            delay(NeoSecondStageHapticDelayMs)
+                            if (hapticToken != token) return@launch
+                            if (targetOn) {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            } else {
+                                emitLightHaptic(token)
+                            }
+                        }
+                    }
+                }
                 onClick()
             },
             modifier = modifier
@@ -190,21 +288,64 @@ fun NeoTextButton(
     colors: ButtonColors? = null,
     contentPadding: PaddingValues = ButtonDefaults.TextButtonContentPadding,
     interactionSource: MutableInteractionSource? = null,
+    hapticMode: NeoButtonHapticMode = NeoButtonHapticMode.PressCycle,
+    toggleTargetState: Boolean? = null,
     content: @Composable RowScope.() -> Unit
 ) {
     val source = interactionSource ?: remember { MutableInteractionSource() }
     val pressed = source.collectIsPressedAsState().value
+    val haptics = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
     var tapLatched by remember { mutableStateOf(false) }
+    var hapticToken by remember { mutableStateOf(0L) }
     LaunchedEffect(tapLatched) {
         if (tapLatched) {
             delay(NeoTapHoldMs)
             tapLatched = false
         }
     }
+    fun emitLightHaptic(token: Long) {
+        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        scope.launch {
+            delay(NeoLightHapticBoostDelayMs)
+            if (hapticToken != token) return@launch
+            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        }
+    }
     CompositionLocalProvider(LocalRippleConfiguration provides null) {
         M3TextButton(
             onClick = {
                 tapLatched = true
+                val token = hapticToken + 1L
+                hapticToken = token
+                when (hapticMode) {
+                    NeoButtonHapticMode.None -> Unit
+                    NeoButtonHapticMode.PressCycle -> {
+                        emitLightHaptic(token)
+                        scope.launch {
+                            delay(NeoSecondStageHapticDelayMs)
+                            if (hapticToken != token) return@launch
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        }
+                    }
+                    NeoButtonHapticMode.ToggleCycle -> {
+                        val targetOn = toggleTargetState?.not() ?: !latched
+                        if (targetOn) {
+                            emitLightHaptic(token)
+                        } else {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        }
+                        scope.launch {
+                            delay(NeoSecondStageHapticDelayMs)
+                            if (hapticToken != token) return@launch
+                            if (targetOn) {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            } else {
+                                emitLightHaptic(token)
+                            }
+                        }
+                    }
+                }
                 onClick()
             },
             modifier = modifier

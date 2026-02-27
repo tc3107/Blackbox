@@ -83,6 +83,7 @@ import com.example.blackbox.sharing.ZONE_RADIUS_MIN_METERS
 import com.example.blackbox.sharing.isValidUsername
 import com.example.blackbox.sharing.normalizeUsername
 import com.example.blackbox.ui.components.ButtonLabel
+import com.example.blackbox.ui.components.NeoButtonHapticMode
 import com.example.blackbox.ui.perf.UiPerfSection
 import com.example.blackbox.ui.perf.uiPerfDraw
 import kotlinx.coroutines.Dispatchers
@@ -98,6 +99,9 @@ private const val MAIN_BAR_TAP_BOOST_DURATION_MS = 420L
 private const val MAIN_ACTIVE_LOCATION_EVENT_INTERVAL_MS = 1_000L
 private const val MAIN_LOW_POWER_LOCATION_EVENT_INTERVAL_MS = 3 * 60_000L
 private const val MAIN_PROGRESS_SMOOTH_ANIM_MS = 900
+private const val MAIN_TOGGLE_DEBOUNCE_MS = 120L
+private val MAIN_TOP_BAR_SCROLL_CLEARANCE = 16.dp
+private val MAIN_BOTTOM_BAR_SCROLL_CLEARANCE = 120.dp
 
 private data class MainViewLocationState(
     val bestPositionFix: PositionFix?,
@@ -220,7 +224,12 @@ fun MainViewScreen(
         modifier = modifier
             .fillMaxSize()
             .uiPerfDraw("Main Lazy Column"),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
+        contentPadding = PaddingValues(
+            start = 20.dp,
+            top = MAIN_TOP_BAR_SCROLL_CLEARANCE,
+            end = 20.dp,
+            bottom = MAIN_BOTTOM_BAR_SCROLL_CLEARANCE
+        ),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
@@ -909,6 +918,13 @@ private fun ToggleRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
+    var localChecked by remember(title) { mutableStateOf(checked) }
+    var lastToggleAtMs by remember(title) { mutableStateOf(0L) }
+
+    LaunchedEffect(checked) {
+        localChecked = checked
+    }
+
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -916,14 +932,23 @@ private fun ToggleRow(
     ) {
         Text(title, style = MaterialTheme.typography.titleSmall)
         Button(
-            onClick = { onCheckedChange(!checked) },
-            latched = checked,
+            onClick = {
+                val nowMs = System.currentTimeMillis()
+                if (nowMs - lastToggleAtMs < MAIN_TOGGLE_DEBOUNCE_MS) return@Button
+                lastToggleAtMs = nowMs
+                val next = !localChecked
+                localChecked = next
+                onCheckedChange(next)
+            },
+            latched = localChecked,
+            hapticMode = NeoButtonHapticMode.ToggleCycle,
+            toggleTargetState = localChecked,
             shape = RoundedCornerShape(22.dp),
             modifier = Modifier.size(width = 108.dp, height = 56.dp),
             contentPadding = PaddingValues(0.dp)
         ) {
-            Text(
-                text = if (checked) "ON" else "OFF",
+            ButtonLabel(
+                text = if (localChecked) "ON" else "OFF",
                 style = MaterialTheme.typography.labelLarge
             )
         }

@@ -6,9 +6,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -38,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
@@ -51,7 +55,6 @@ import com.example.blackbox.debug.MainThreadBlockTracker
 import com.example.blackbox.data.settings.UiSettings
 import com.example.blackbox.sharing.LocationSharingController
 import com.example.blackbox.ui.components.NeoButton
-import com.example.blackbox.ui.screens.BackgroundProbeScreen
 import com.example.blackbox.ui.screens.DatabaseScreen
 import com.example.blackbox.ui.screens.DataValuesScreen
 import com.example.blackbox.ui.screens.MainViewScreen
@@ -79,7 +82,6 @@ fun BlackboxApp(
     var navStateRestored by rememberSaveable { mutableStateOf(false) }
     var currentRoute by rememberSaveable { mutableStateOf(AppDestination.entries.first().route) }
     val currentDestination = AppDestination.fromRoute(currentRoute)
-    val appBarShape = RoundedCornerShape(22.dp)
     val navShape = RoundedCornerShape(26.dp)
     val uiPerfMonitor = remember { UiPerformanceMonitor() }
     var uiPerfOverlayVisible by rememberSaveable { mutableStateOf(false) }
@@ -183,34 +185,51 @@ fun BlackboxApp(
                     containerColor = MaterialTheme.colorScheme.background,
                     topBar = {
                         UiPerfSection("Top Menu Bar") {
-                            Box(
+                            Column(
                                 modifier = Modifier
-                                    .windowInsetsPadding(WindowInsets.statusBars)
-                                    .padding(horizontal = 14.dp, vertical = 10.dp)
+                                    .fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.94f))
                                     .uiPerfDraw("Top Menu Bar")
                             ) {
-                                NeoButton(
-                                    onClick = { toggleUiPerformanceOverlay() },
-                                    latched = true,
-                                    shape = appBarShape,
+                                Row(
                                     modifier = Modifier
-                                        .fillMaxWidth(),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = MaterialTheme.colorScheme.surface,
-                                        contentColor = MaterialTheme.colorScheme.onSurface
-                                    ),
-                                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
+                                        .fillMaxWidth()
+                                        .windowInsetsPadding(WindowInsets.statusBars)
+                                        .height(56.dp)
+                                        .padding(horizontal = 16.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
                                         text = stringResource(currentDestination.titleRes),
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.fillMaxWidth(),
-                                        style = MaterialTheme.typography.titleMedium.copy(
-                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                                        )
+                                        modifier = Modifier.weight(1f),
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.96f)
+                                    )
+                                    Text(
+                                        text = "BLACKBOX",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontFamily = FontFamily.Monospace
+                                        ),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(start = 12.dp)
                                     )
                                 }
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(8.dp)
+                                        .background(
+                                            brush = Brush.verticalGradient(
+                                                colors = listOf(
+                                                    Color.White.copy(alpha = 0.14f),
+                                                    Color.White.copy(alpha = 0.05f),
+                                                    Color.Transparent
+                                                )
+                                            )
+                                        )
+                                )
                             }
                         }
                     },
@@ -219,12 +238,12 @@ fun BlackboxApp(
                             Box(
                                 modifier = Modifier
                                     .windowInsetsPadding(WindowInsets.navigationBars)
-                                    .padding(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 8.dp)
+                                    .padding(start = 10.dp, end = 10.dp, top = 4.dp, bottom = 8.dp)
                             ) {
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .height(64.dp)
+                                        .height(70.dp)
                                         .clip(navShape)
                                         .neomorphicShadow(
                                             shape = navShape,
@@ -246,7 +265,7 @@ fun BlackboxApp(
                                             shape = CircleShape,
                                             modifier = Modifier
                                                 .weight(1f)
-                                                .fillMaxHeight(),
+                                                .fillMaxHeight(0.9f),
                                             contentPadding = PaddingValues(0.dp),
                                             colors = ButtonDefaults.buttonColors(
                                                 containerColor = MaterialTheme.colorScheme.surface,
@@ -271,7 +290,7 @@ fun BlackboxApp(
                 ) { innerPadding ->
                     val contentModifier = Modifier
                         .fillMaxSize()
-                        .padding(innerPadding)
+                        .padding(top = innerPadding.calculateTopPadding())
 
                     when (currentDestination) {
                         AppDestination.MAIN_VIEW -> UiPerfSection("Screen Main View") {
@@ -291,10 +310,11 @@ fun BlackboxApp(
                             )
                         }
                         AppDestination.DATA_VALUES -> UiPerfSection("Screen Data Values") {
-                            DataValuesScreen(modifier = contentModifier.uiPerfDraw("Screen Data Values"))
-                        }
-                        AppDestination.BACKGROUND_PROBE -> UiPerfSection("Screen Background Probe") {
-                            BackgroundProbeScreen(modifier = contentModifier.uiPerfDraw("Screen Background Probe"))
+                            DataValuesScreen(
+                                modifier = contentModifier.uiPerfDraw("Screen Data Values"),
+                                perfOverlayVisible = uiPerfOverlayVisible,
+                                onTogglePerfOverlay = { toggleUiPerformanceOverlay() }
+                            )
                         }
                     }
                 }
@@ -361,12 +381,6 @@ private enum class AppDestination(
         titleRes = R.string.nav_data_values,
         shortTitleRes = R.string.nav_short_dbg,
         iconRes = android.R.drawable.ic_menu_info_details
-    ),
-    BACKGROUND_PROBE(
-        route = "background_probe",
-        titleRes = R.string.nav_background_probe,
-        shortTitleRes = R.string.nav_short_probe,
-        iconRes = android.R.drawable.ic_menu_compass
     );
 
     companion object {
