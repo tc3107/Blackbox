@@ -115,6 +115,7 @@ private const val EXPANDED_CONTACT_POLL_INTERVAL_MS = 20_000L
 private const val ACTIVE_LOCATION_EVENT_INTERVAL_MS = 1_000L
 private const val LOW_POWER_LOCATION_EVENT_INTERVAL_MS = 3 * 60_000L
 private const val ROW_EXPAND_ANIM_MS = 220
+private val SHARING_QR_BUTTON_HEIGHT = 56.dp
 
 @Composable
 fun SharingScreen(modifier: Modifier = Modifier) {
@@ -873,7 +874,12 @@ private fun ScanLocationCodeDialog(
         title = { Text("Scan Location Code") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onScanCamera, modifier = Modifier.fillMaxWidth()) {
+                Button(
+                    onClick = onScanCamera,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(SHARING_QR_BUTTON_HEIGHT)
+                ) {
                     ButtonLabel("Scan QR Code")
                 }
                 OutlinedTextField(
@@ -1014,13 +1020,17 @@ fun ContactsSection(
             ) {
                 OutlinedButton(
                     onClick = onShowQr,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(SHARING_QR_BUTTON_HEIGHT)
                 ) {
                     ButtonLabel("Show QR")
                 }
                 OutlinedButton(
                     onClick = onScanQr,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(SHARING_QR_BUTTON_HEIGHT)
                 ) {
                     ButtonLabel("Scan QR")
                 }

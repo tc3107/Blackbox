@@ -103,6 +103,7 @@ private const val MAIN_PROGRESS_SMOOTH_ANIM_MS = 900
 private const val MAIN_TOGGLE_DEBOUNCE_MS = 120L
 private val MAIN_TOP_BAR_SCROLL_CLEARANCE = 16.dp
 private val MAIN_BOTTOM_BAR_SCROLL_CLEARANCE = 120.dp
+private val MAIN_QR_BUTTON_HEIGHT = 56.dp
 
 private data class MainViewLocationState(
     val bestPositionFix: PositionFix?,
@@ -370,7 +371,9 @@ fun MainViewScreen(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = { showQrDialogVisible = true },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(MAIN_QR_BUTTON_HEIGHT)
                 ) {
                     ButtonLabel("Show QR Code")
                 }
@@ -378,7 +381,9 @@ fun MainViewScreen(
                     onClick = {
                         scanQrLauncher.launch(Intent(context, com.example.blackbox.sharing.QrScannerActivity::class.java))
                     },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(MAIN_QR_BUTTON_HEIGHT)
                 ) {
                     ButtonLabel("Scan QR Code")
                 }
@@ -960,15 +965,16 @@ private fun ActionWidget(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
-    OutlinedCard(
+    Button(
+        onClick = onClick,
         modifier = modifier
-            .aspectRatio(2.2f)
-            .clickable(onClick = onClick)
+            .aspectRatio(2.2f),
+        shape = RoundedCornerShape(16.dp),
+        contentPadding = PaddingValues(10.dp)
     ) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(10.dp)
         ) {
             Icon(
                 painter = painterResource(iconRes),

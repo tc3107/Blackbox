@@ -2,6 +2,7 @@ package com.example.blackbox.ui.components
 
 import android.view.HapticFeedbackConstants
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.ColumnScope
@@ -63,6 +64,23 @@ enum class NeoButtonHapticMode {
     ToggleCycle
 }
 
+private fun android.view.View.emitNeoHaptic(code: Int, fallbackCode: Int = code) {
+    if (!performHapticFeedback(code)) {
+        performHapticFeedback(fallbackCode)
+    }
+}
+
+private fun android.view.View.emitNeoLightHaptic() {
+    emitNeoHaptic(
+        code = HapticFeedbackConstants.KEYBOARD_TAP,
+        fallbackCode = HapticFeedbackConstants.TEXT_HANDLE_MOVE
+    )
+}
+
+private fun android.view.View.emitNeoConfirmHaptic() {
+    emitNeoHaptic(code = HapticFeedbackConstants.LONG_PRESS, fallbackCode = HapticFeedbackConstants.LONG_PRESS)
+}
+
 @Composable
 private fun defaultNeoButtonColors(): ButtonColors {
     val palette = neomorphicPalette()
@@ -103,16 +121,19 @@ fun NeoButton(
             tapLatched = false
         }
     }
-    fun emitHaptic(code: Int, fallbackCode: Int) {
-        if (!view.performHapticFeedback(code)) {
-            view.performHapticFeedback(fallbackCode)
+    LaunchedEffect(source, hapticMode, enabled) {
+        if (!enabled || hapticMode == NeoButtonHapticMode.None) return@LaunchedEffect
+        source.interactions.collect { interaction ->
+            when (interaction) {
+                is PressInteraction.Press -> view.emitNeoLightHaptic()
+                is PressInteraction.Release -> {
+                    if (hapticMode == NeoButtonHapticMode.PressCycle) {
+                        view.emitNeoConfirmHaptic()
+                    }
+                }
+                else -> Unit
+            }
         }
-    }
-    fun emitLightHaptic() {
-        emitHaptic(
-            code = HapticFeedbackConstants.KEYBOARD_TAP,
-            fallbackCode = HapticFeedbackConstants.TEXT_HANDLE_MOVE
-        )
     }
     CompositionLocalProvider(LocalRippleConfiguration provides null) {
         M3Button(
@@ -122,24 +143,12 @@ fun NeoButton(
                 hapticToken = token
                 when (hapticMode) {
                     NeoButtonHapticMode.None -> Unit
-                    NeoButtonHapticMode.PressCycle -> {
-                        emitLightHaptic()
-                    }
+                    NeoButtonHapticMode.PressCycle -> Unit
                     NeoButtonHapticMode.ToggleCycle -> {
-                        val targetOn = toggleTargetState?.not() ?: !latched
-                        if (targetOn) {
-                            emitLightHaptic()
-                        } else {
-                            emitHaptic(code = HapticFeedbackConstants.LONG_PRESS, fallbackCode = HapticFeedbackConstants.LONG_PRESS)
-                        }
                         scope.launch {
                             delay(NeoSecondStageHapticDelayMs)
                             if (hapticToken != token) return@launch
-                            if (targetOn) {
-                                emitHaptic(code = HapticFeedbackConstants.LONG_PRESS, fallbackCode = HapticFeedbackConstants.LONG_PRESS)
-                            } else {
-                                emitLightHaptic()
-                            }
+                            view.emitNeoConfirmHaptic()
                         }
                     }
                 }
@@ -202,16 +211,19 @@ fun NeoOutlinedButton(
             tapLatched = false
         }
     }
-    fun emitHaptic(code: Int, fallbackCode: Int) {
-        if (!view.performHapticFeedback(code)) {
-            view.performHapticFeedback(fallbackCode)
+    LaunchedEffect(source, hapticMode, enabled) {
+        if (!enabled || hapticMode == NeoButtonHapticMode.None) return@LaunchedEffect
+        source.interactions.collect { interaction ->
+            when (interaction) {
+                is PressInteraction.Press -> view.emitNeoLightHaptic()
+                is PressInteraction.Release -> {
+                    if (hapticMode == NeoButtonHapticMode.PressCycle) {
+                        view.emitNeoConfirmHaptic()
+                    }
+                }
+                else -> Unit
+            }
         }
-    }
-    fun emitLightHaptic() {
-        emitHaptic(
-            code = HapticFeedbackConstants.KEYBOARD_TAP,
-            fallbackCode = HapticFeedbackConstants.TEXT_HANDLE_MOVE
-        )
     }
     CompositionLocalProvider(LocalRippleConfiguration provides null) {
         M3OutlinedButton(
@@ -221,24 +233,12 @@ fun NeoOutlinedButton(
                 hapticToken = token
                 when (hapticMode) {
                     NeoButtonHapticMode.None -> Unit
-                    NeoButtonHapticMode.PressCycle -> {
-                        emitLightHaptic()
-                    }
+                    NeoButtonHapticMode.PressCycle -> Unit
                     NeoButtonHapticMode.ToggleCycle -> {
-                        val targetOn = toggleTargetState?.not() ?: !latched
-                        if (targetOn) {
-                            emitLightHaptic()
-                        } else {
-                            emitHaptic(code = HapticFeedbackConstants.LONG_PRESS, fallbackCode = HapticFeedbackConstants.LONG_PRESS)
-                        }
                         scope.launch {
                             delay(NeoSecondStageHapticDelayMs)
                             if (hapticToken != token) return@launch
-                            if (targetOn) {
-                                emitHaptic(code = HapticFeedbackConstants.LONG_PRESS, fallbackCode = HapticFeedbackConstants.LONG_PRESS)
-                            } else {
-                                emitLightHaptic()
-                            }
+                            view.emitNeoConfirmHaptic()
                         }
                     }
                 }
@@ -299,16 +299,19 @@ fun NeoTextButton(
             tapLatched = false
         }
     }
-    fun emitHaptic(code: Int, fallbackCode: Int) {
-        if (!view.performHapticFeedback(code)) {
-            view.performHapticFeedback(fallbackCode)
+    LaunchedEffect(source, hapticMode, enabled) {
+        if (!enabled || hapticMode == NeoButtonHapticMode.None) return@LaunchedEffect
+        source.interactions.collect { interaction ->
+            when (interaction) {
+                is PressInteraction.Press -> view.emitNeoLightHaptic()
+                is PressInteraction.Release -> {
+                    if (hapticMode == NeoButtonHapticMode.PressCycle) {
+                        view.emitNeoConfirmHaptic()
+                    }
+                }
+                else -> Unit
+            }
         }
-    }
-    fun emitLightHaptic() {
-        emitHaptic(
-            code = HapticFeedbackConstants.KEYBOARD_TAP,
-            fallbackCode = HapticFeedbackConstants.TEXT_HANDLE_MOVE
-        )
     }
     CompositionLocalProvider(LocalRippleConfiguration provides null) {
         M3TextButton(
@@ -318,24 +321,12 @@ fun NeoTextButton(
                 hapticToken = token
                 when (hapticMode) {
                     NeoButtonHapticMode.None -> Unit
-                    NeoButtonHapticMode.PressCycle -> {
-                        emitLightHaptic()
-                    }
+                    NeoButtonHapticMode.PressCycle -> Unit
                     NeoButtonHapticMode.ToggleCycle -> {
-                        val targetOn = toggleTargetState?.not() ?: !latched
-                        if (targetOn) {
-                            emitLightHaptic()
-                        } else {
-                            emitHaptic(code = HapticFeedbackConstants.LONG_PRESS, fallbackCode = HapticFeedbackConstants.LONG_PRESS)
-                        }
                         scope.launch {
                             delay(NeoSecondStageHapticDelayMs)
                             if (hapticToken != token) return@launch
-                            if (targetOn) {
-                                emitHaptic(code = HapticFeedbackConstants.LONG_PRESS, fallbackCode = HapticFeedbackConstants.LONG_PRESS)
-                            } else {
-                                emitLightHaptic()
-                            }
+                            view.emitNeoConfirmHaptic()
                         }
                     }
                 }

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -83,6 +84,11 @@ fun BlackboxApp(
     var currentRoute by rememberSaveable { mutableStateOf(AppDestination.entries.first().route) }
     val currentDestination = AppDestination.fromRoute(currentRoute)
     val navShape = RoundedCornerShape(26.dp)
+    val titleBarColor = lerp(
+        MaterialTheme.colorScheme.background,
+        Color.Black,
+        0.12f
+    )
     val uiPerfMonitor = remember { UiPerformanceMonitor() }
     var uiPerfOverlayVisible by rememberSaveable { mutableStateOf(false) }
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -188,7 +194,7 @@ fun BlackboxApp(
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.94f))
+                                    .background(titleBarColor)
                                     .uiPerfDraw("Top Menu Bar")
                             ) {
                                 Row(
