@@ -2,4 +2,13 @@
 <resources>
 
     <style name="Theme.Blackbox" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <style name="Theme.Blackbox.QrScanner" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="android:windowBackground">#101318</item>
+        <item name="colorSurface">#1B2028</item>
+        <item name="colorSurfaceContainerHigh">#202633</item>
+        <item name="colorOutlineVariant">#465062</item>
+        <item name="colorPrimary">#9CCAFF</item>
+        <item name="colorOnPrimary">#0C1B2E</item>
+    </style>
 </resources>

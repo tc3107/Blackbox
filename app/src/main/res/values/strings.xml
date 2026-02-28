@@ -5,4 +5,15 @@
     <string name="location_notification_channel_description">Keeps location service active for logging and live features.</string>
     <string name="qr_scanner_status_opening">Opening camera…</string>
     <string name="qr_scanner_status_point_camera">Point camera at a Blackbox location QR code</string>
+    <string name="qr_scanner_top_instruction">Scan a Blackbox QR code or enter the location code manually.</string>
+    <string name="qr_scanner_manual_button">Enter code manually</string>
+    <string name="qr_scanner_manual_title">Enter location code</string>
+    <string name="qr_scanner_manual_message">Paste or type the Blackbox location code, then validate it.</string>
+    <string name="qr_scanner_manual_hint">blackbox:v1:…</string>
+    <string name="qr_scanner_manual_use_code">Validate and use code</string>
+    <string name="qr_scanner_error_validator_init">Could not initialize location code validation.</string>
+    <string name="qr_scanner_error_validator_unavailable">Location code validation is unavailable.</string>
+    <string name="qr_scanner_error_empty_code">Location code cannot be empty.</string>
+    <string name="qr_scanner_error_invalid_code">Invalid location code.</string>
+    <string name="qr_scanner_status_invalid_reason">Invalid code: %1$s</string>
 </resources>

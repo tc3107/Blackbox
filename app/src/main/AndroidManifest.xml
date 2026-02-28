@@ -43,7 +43,7 @@
             android:name=".sharing.QrScannerActivity"
             android:exported="false"
             android:stateNotNeeded="true"
-            android:theme="@style/Theme.Blackbox" />
+            android:theme="@style/Theme.Blackbox.QrScanner" />
     </application>
 
 </manifest>
