@@ -720,7 +720,7 @@ private fun RefreshDelaysCard(
         totalMs = pollTotal
     )
     val hasFollowTargets = sharingState.followingCount > 0
-    val pollDisplayRemaining = pollRemaining
+    val pollDisplayRemaining = if (hasFollowTargets) pollRemaining else pollTotal
     val sendAnchor = sharingState.sync.lastPushSuccessAtMs ?: sharingState.sync.lastPushAttemptAtMs
     val sendRemaining = remainingDelayMs(
         nowMs = nowMs,
@@ -738,7 +738,9 @@ private fun RefreshDelaysCard(
     }
     val waitingForLocationEvent = sendWaiting && sendRemaining == 0L && locationEventIntervalMs > 0L
     val sendDisplayTotal = if (waitingForLocationEvent) locationEventIntervalMs else sendTotal
-    val sendDisplayRemaining = if (waitingForLocationEvent) {
+    val sendDisplayRemaining = if (!sendWaiting) {
+        sendDisplayTotal
+    } else if (waitingForLocationEvent) {
         remainingDelayMs(
             nowMs = nowMs,
             lastAtMs = locationState.bestPositionFix?.receivedAtMillis,
