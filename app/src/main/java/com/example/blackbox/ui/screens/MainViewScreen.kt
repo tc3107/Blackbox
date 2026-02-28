@@ -111,6 +111,7 @@ import com.example.blackbox.location.LocationEngineForegroundController
 import com.example.blackbox.location.MotionFix
 import com.example.blackbox.location.PositionFix
 import com.example.blackbox.location.hasAnyLocationPermission
+import com.example.blackbox.location.hasNotificationPermission
 import com.example.blackbox.sharing.LocationSharingController
 import com.example.blackbox.sharing.SharingLogic
 import com.example.blackbox.sharing.ShareZone
@@ -271,6 +272,8 @@ fun MainViewScreen(
 
     var permissionGranted by rememberSaveable { mutableStateOf(context.hasAnyLocationPermission()) }
     var permissionRequestInFlight by rememberSaveable { mutableStateOf(false) }
+    var notificationPermissionGranted by rememberSaveable { mutableStateOf(context.hasNotificationPermission()) }
+    var notificationPermissionRequestInFlight by rememberSaveable { mutableStateOf(false) }
     var addContactsDialogVisible by rememberSaveable { mutableStateOf(false) }
     var showQrDialogVisible by rememberSaveable { mutableStateOf(false) }
     var viewContactsDialogVisible by rememberSaveable { mutableStateOf(false) }
@@ -345,6 +348,13 @@ fun MainViewScreen(
         permissionRequestInFlight = false
     }
 
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) {
+        notificationPermissionGranted = context.hasNotificationPermission()
+        notificationPermissionRequestInFlight = false
+    }
+
     LaunchedEffect(context) {
         withContext(Dispatchers.IO) {
             val appContext = context.applicationContext
@@ -353,6 +363,7 @@ fun MainViewScreen(
             LocationPersistenceController.initialize(appContext)
         }
         permissionGranted = context.hasAnyLocationPermission()
+        notificationPermissionGranted = context.hasNotificationPermission()
     }
 
     LaunchedEffect(locationState.bestPositionFix) {
@@ -385,6 +396,13 @@ fun MainViewScreen(
                     Manifest.permission.ACCESS_COARSE_LOCATION
                 )
             )
+        }
+    }
+
+    LaunchedEffect(notificationPermissionGranted) {
+        if (!notificationPermissionGranted && !notificationPermissionRequestInFlight) {
+            notificationPermissionRequestInFlight = true
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 
