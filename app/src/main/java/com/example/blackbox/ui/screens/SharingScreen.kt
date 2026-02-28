@@ -78,6 +78,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
@@ -161,6 +162,9 @@ private const val FULLSCREEN_MAP_EXTRA_ZOOM_OUT_FACTOR = 4.8
 private const val FULLSCREEN_MAP_EARTH_CIRCUMFERENCE_M = 40_075_016.686
 private const val FULLSCREEN_MAP_TILE_SIZE_PX = 512.0
 private const val FULLSCREEN_MAP_MAX_ZOOM = 22.0
+private val FULLSCREEN_MAP_INNER_CORNER_RADIUS = 20.dp
+private val FULLSCREEN_MAP_CONTENT_INSET = 2.dp
+private val FULLSCREEN_MAP_RENDER_CORNER_RADIUS = 18.dp
 private const val MAP_USER_FIX_RECENT_WINDOW_MS = 20 * 60_000L
 private const val FsTargetAreaSourceId = "bbx_fs_target_area_source"
 private const val FsTargetCenterSourceId = "bbx_fs_target_center_source"
@@ -538,6 +542,7 @@ fun SharingScreen(modifier: Modifier = Modifier) {
     }
 
     fullscreenMapRequest?.let { request ->
+        val liveIndicatorFix = locationState.bestPositionFix
         FullscreenInteractiveMapDialog(
             latitude = request.latitude,
             longitude = request.longitude,
@@ -546,6 +551,10 @@ fun SharingScreen(modifier: Modifier = Modifier) {
             userLatitude = request.userLatitude,
             userLongitude = request.userLongitude,
             userRadiusMeters = request.userRadiusMeters,
+            offscreenIndicatorLatitude = liveIndicatorFix?.location?.latitude ?: request.userLatitude,
+            offscreenIndicatorLongitude = liveIndicatorFix?.location?.longitude ?: request.userLongitude,
+            secondaryOffscreenIndicatorLatitude = request.latitude,
+            secondaryOffscreenIndicatorLongitude = request.longitude,
             onDismiss = { fullscreenMapRequest = null }
         )
     }
@@ -1892,6 +1901,8 @@ fun FullscreenInteractiveMapDialog(
     followHistorySelectedPoint: Boolean = false,
     offscreenIndicatorLatitude: Double? = null,
     offscreenIndicatorLongitude: Double? = null,
+    secondaryOffscreenIndicatorLatitude: Double? = null,
+    secondaryOffscreenIndicatorLongitude: Double? = null,
     onDismiss: () -> Unit,
     showDefaultBackButton: Boolean = true,
     topOverlay: (@Composable () -> Unit)? = null
@@ -1976,8 +1987,14 @@ fun FullscreenInteractiveMapDialog(
                 return null
             }
             val targetScreen = map.projection.toScreenLocation(LatLng(lat, lon))
-            val inView = targetScreen.x in 0f..width && targetScreen.y in 0f..height
-            if (inView) {
+            val centerAreaHalfWidth = width * 0.4f
+            val centerAreaHalfHeight = height * 0.4f
+            val centerX = width * 0.5f
+            val centerY = height * 0.5f
+            val inCenterArea =
+                targetScreen.x in (centerX - centerAreaHalfWidth)..(centerX + centerAreaHalfWidth) &&
+                    targetScreen.y in (centerY - centerAreaHalfHeight)..(centerY + centerAreaHalfHeight)
+            if (inCenterArea) {
                 return null
             }
             return computeEdgeIndicatorState(
@@ -1993,15 +2010,17 @@ fun FullscreenInteractiveMapDialog(
                 lon = offscreenIndicatorLongitude
             )
             selectedEdgeIndicatorState = computeIndicatorForLatLon(
-                lat = historySelectedPoint?.latitude,
-                lon = historySelectedPoint?.longitude
+                lat = historySelectedPoint?.latitude ?: secondaryOffscreenIndicatorLatitude,
+                lon = historySelectedPoint?.longitude ?: secondaryOffscreenIndicatorLongitude
             )
         }
         LaunchedEffect(
             mapLibreMap,
             offscreenIndicatorLatitude,
             offscreenIndicatorLongitude,
-            historySelectedPoint
+            historySelectedPoint,
+            secondaryOffscreenIndicatorLatitude,
+            secondaryOffscreenIndicatorLongitude
         ) {
             refreshEdgeIndicators()
         }
@@ -2009,7 +2028,9 @@ fun FullscreenInteractiveMapDialog(
             mapLibreMap,
             offscreenIndicatorLatitude,
             offscreenIndicatorLongitude,
-            historySelectedPoint
+            historySelectedPoint,
+            secondaryOffscreenIndicatorLatitude,
+            secondaryOffscreenIndicatorLongitude
         ) {
             val map = mapLibreMap
             if (map == null) {
@@ -2071,7 +2092,7 @@ fun FullscreenInteractiveMapDialog(
             )
         ) {
             val outerShape = RoundedCornerShape(24.dp)
-            val innerShape = RoundedCornerShape(20.dp)
+            val innerShape = RoundedCornerShape(FULLSCREEN_MAP_INNER_CORNER_RADIUS)
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -2099,7 +2120,7 @@ fun FullscreenInteractiveMapDialog(
                             depth = 5.dp,
                             blurRadius = 10.dp
                         )
-                        .padding(2.dp)
+                        .padding(FULLSCREEN_MAP_CONTENT_INSET)
                 ) {
                     AndroidView(
                         modifier = Modifier
@@ -2178,8 +2199,16 @@ fun FullscreenInteractiveMapDialog(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     RoundMapActionButton(
-                        iconRes = android.R.drawable.ic_menu_mylocation,
-                        contentDescription = "Recenter",
+                        iconRes = if (targetType == MapTargetType.USER) {
+                            android.R.drawable.ic_menu_mylocation
+                        } else {
+                            android.R.drawable.ic_menu_myplaces
+                        },
+                        contentDescription = if (targetType == MapTargetType.USER) {
+                            "Recenter"
+                        } else {
+                            "Center Target"
+                        },
                         onClick = {
                             onHistoryManualCenterAction?.invoke()
                             mapLibreMap?.let { map ->
@@ -2197,6 +2226,28 @@ fun FullscreenInteractiveMapDialog(
                             }
                         }
                     )
+                    if (hasUserLocation) {
+                        RoundMapActionButton(
+                            iconRes = android.R.drawable.ic_menu_compass,
+                            contentDescription = "Show My Location",
+                            onClick = {
+                                onHistoryManualCenterAction?.invoke()
+                                mapLibreMap?.let { map ->
+                                    val current = map.cameraPosition
+                                    map.animateCamera(
+                                        CameraUpdateFactory.newCameraPosition(
+                                            CameraPosition.Builder(current)
+                                                .target(LatLng(userLatitude!!, userLongitude!!))
+                                                .zoom(zoomLevel)
+                                                .bearing(0.0)
+                                                .tilt(0.0)
+                                                .build()
+                                        )
+                                    )
+                                }
+                            }
+                        )
+                    }
                     if (showHistorySelectedCenterButton && historySelectedPoint != null) {
                         RoundMapActionButton(
                             iconRes = android.R.drawable.ic_menu_myplaces,
@@ -2214,28 +2265,6 @@ fun FullscreenInteractiveMapDialog(
                                                         historySelectedPoint.longitude
                                                     )
                                                 )
-                                                .zoom(zoomLevel)
-                                                .bearing(0.0)
-                                                .tilt(0.0)
-                                                .build()
-                                        )
-                                    )
-                                }
-                            }
-                        )
-                    }
-                    if (hasUserLocation) {
-                        RoundMapActionButton(
-                            iconRes = android.R.drawable.ic_menu_compass,
-                            contentDescription = "Show My Location",
-                            onClick = {
-                                onHistoryManualCenterAction?.invoke()
-                                mapLibreMap?.let { map ->
-                                    val current = map.cameraPosition
-                                    map.animateCamera(
-                                        CameraUpdateFactory.newCameraPosition(
-                                            CameraPosition.Builder(current)
-                                                .target(LatLng(userLatitude!!, userLongitude!!))
                                                 .zoom(zoomLevel)
                                                 .bearing(0.0)
                                                 .tilt(0.0)
@@ -2272,7 +2301,8 @@ fun FullscreenInteractiveMapDialog(
                         coreColor = Color(0xFFB7D6FF),
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(14.dp)
+                            .padding(FULLSCREEN_MAP_CONTENT_INSET)
+                            .clip(RoundedCornerShape(FULLSCREEN_MAP_RENDER_CORNER_RADIUS))
                     )
                 }
                 selectedEdgeIndicatorState?.let { indicator ->
@@ -2282,7 +2312,8 @@ fun FullscreenInteractiveMapDialog(
                         coreColor = Color(0xFFB7FFCF),
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(14.dp)
+                            .padding(FULLSCREEN_MAP_CONTENT_INSET)
+                            .clip(RoundedCornerShape(FULLSCREEN_MAP_RENDER_CORNER_RADIUS))
                     )
                 }
             }
@@ -2302,29 +2333,78 @@ private fun OffscreenLocationEdgeGlow(
         val glowStroke = 9.dp.toPx()
         val coreStroke = 2.2.dp.toPx()
         val halfLen = lineLength * 0.5f
+        val cornerRadius = FULLSCREEN_MAP_RENDER_CORNER_RADIUS.toPx()
         val center = state.center
-        val (start, end) = when (state.side) {
-            EdgeIndicatorSide.TOP, EdgeIndicatorSide.BOTTOM -> {
-                Offset(center.x - halfLen, center.y) to Offset(center.x + halfLen, center.y)
+        val nearLeft = center.x <= cornerRadius
+        val nearRight = center.x >= (size.width - cornerRadius)
+        val nearTop = center.y <= cornerRadius
+        val nearBottom = center.y >= (size.height - cornerRadius)
+        val inCorner = (nearLeft || nearRight) && (nearTop || nearBottom)
+
+        if (inCorner) {
+            val cornerCx = when {
+                nearLeft -> cornerRadius
+                else -> size.width - cornerRadius
             }
-            EdgeIndicatorSide.LEFT, EdgeIndicatorSide.RIGHT -> {
-                Offset(center.x, center.y - halfLen) to Offset(center.x, center.y + halfLen)
+            val cornerCy = when {
+                nearTop -> cornerRadius
+                else -> size.height - cornerRadius
             }
+            val angleRad = kotlin.math.atan2(
+                (center.y - cornerCy).toDouble(),
+                (center.x - cornerCx).toDouble()
+            )
+            val angleDeg = Math.toDegrees(angleRad).toFloat()
+            val sweepFromLength = (lineLength / cornerRadius).coerceIn(0.35f, 1.4f)
+            val sweepDeg = Math.toDegrees(sweepFromLength.toDouble()).toFloat()
+            val startAngle = angleDeg - (sweepDeg * 0.5f)
+            val arcTopLeft = Offset(cornerCx - cornerRadius, cornerCy - cornerRadius)
+            val arcSize = Size(cornerRadius * 2f, cornerRadius * 2f)
+            drawArc(
+                color = glowColor.copy(alpha = 0.38f),
+                startAngle = startAngle,
+                sweepAngle = sweepDeg,
+                useCenter = false,
+                topLeft = arcTopLeft,
+                size = arcSize,
+                style = Stroke(width = glowStroke, cap = StrokeCap.Round)
+            )
+            drawArc(
+                color = coreColor,
+                startAngle = startAngle,
+                sweepAngle = sweepDeg,
+                useCenter = false,
+                topLeft = arcTopLeft,
+                size = arcSize,
+                style = Stroke(width = coreStroke, cap = StrokeCap.Round)
+            )
+        } else {
+            val (start, end) = when (state.side) {
+                EdgeIndicatorSide.TOP, EdgeIndicatorSide.BOTTOM -> {
+                    val clampedCenterX = center.x.coerceIn(cornerRadius, size.width - cornerRadius)
+                    Offset(clampedCenterX - halfLen, center.y) to Offset(clampedCenterX + halfLen, center.y)
+                }
+
+                EdgeIndicatorSide.LEFT, EdgeIndicatorSide.RIGHT -> {
+                    val clampedCenterY = center.y.coerceIn(cornerRadius, size.height - cornerRadius)
+                    Offset(center.x, clampedCenterY - halfLen) to Offset(center.x, clampedCenterY + halfLen)
+                }
+            }
+            drawLine(
+                color = glowColor.copy(alpha = 0.38f),
+                start = start,
+                end = end,
+                strokeWidth = glowStroke,
+                cap = StrokeCap.Round
+            )
+            drawLine(
+                color = coreColor,
+                start = start,
+                end = end,
+                strokeWidth = coreStroke,
+                cap = StrokeCap.Round
+            )
         }
-        drawLine(
-            color = glowColor.copy(alpha = 0.38f),
-            start = start,
-            end = end,
-            strokeWidth = glowStroke,
-            cap = StrokeCap.Round
-        )
-        drawLine(
-            color = coreColor,
-            start = start,
-            end = end,
-            strokeWidth = coreStroke,
-            cap = StrokeCap.Round
-        )
     }
 }
 

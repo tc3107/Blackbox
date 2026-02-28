@@ -151,6 +151,12 @@ private const val MAIN_HISTORY_SELECTORS_FADE_IN_MS = 460
 private const val MAIN_HISTORY_SELECTORS_REVEAL_DELAY_MS = 340L
 private const val MAIN_HISTORY_MAP_PATH_MAX_POINTS = 1_500
 private const val MAIN_HISTORY_PATH_MAX_ACCURACY_M = 100.0
+private const val MAIN_HISTORY_FILTER_MIN_SIGMA_M = 5.0
+private const val MAIN_HISTORY_FILTER_PROCESS_BASE_NOISE_M = 6.0
+private const val MAIN_HISTORY_FILTER_PROCESS_NOISE_MPS = 12.0
+private const val MAIN_HISTORY_FILTER_MAX_SPEED_MPS = 75.0
+private const val MAIN_HISTORY_FILTER_BASE_PLAUSIBLE_DISTANCE_M = 25.0
+private const val MAIN_HISTORY_FILTER_OUTLIER_PENALTY = 6.0
 private const val MAIN_HISTORY_PANEL_EXPAND_ANIM_MS = 180
 private val MAIN_TOP_BAR_SCROLL_CLEARANCE = 16.dp
 private val MAIN_BOTTOM_BAR_SCROLL_CLEARANCE = 120.dp
@@ -790,7 +796,17 @@ fun MainViewScreen(
             offscreenIndicatorLongitude = if (useLocationHistoryOverlay) {
                 (locationState.bestPositionFix ?: lastKnownMapFix)?.location?.longitude
             } else {
+                request.userLongitude
+            },
+            secondaryOffscreenIndicatorLatitude = if (useLocationHistoryOverlay) {
                 null
+            } else {
+                effectiveLatitude
+            },
+            secondaryOffscreenIndicatorLongitude = if (useLocationHistoryOverlay) {
+                null
+            } else {
+                effectiveLongitude
             },
             showDefaultBackButton = !useLocationHistoryOverlay,
             topOverlay = if (useLocationHistoryOverlay) {
@@ -1429,19 +1445,34 @@ private fun MainLocationHistoryOverlayPanel(
             fraction = preciseFraction
         )
     }
-    val selectedRangeSamples = remember(heatmapData, selectedRangeStartMs, selectedRangeEndMs) {
+    val qualityFilteredTimelineSamples = remember(heatmapData) {
+        heatmapData?.timelineSamples
+            .orEmpty()
+            .filter { it.accuracyRadiusMeters <= MAIN_HISTORY_PATH_MAX_ACCURACY_M }
+    }
+    val smoothedTimelineSamples by produceState(
+        initialValue = qualityFilteredTimelineSamples,
+        key1 = heatmapData
+    ) {
+        value = if (qualityFilteredTimelineSamples.size < 3) {
+            qualityFilteredTimelineSamples
+        } else {
+            withContext(Dispatchers.Default) {
+                smoothMainHistoryTimelineSamples(qualityFilteredTimelineSamples)
+            }
+        }
+    }
+    val selectedRangeSamples = remember(smoothedTimelineSamples, selectedRangeStartMs, selectedRangeEndMs) {
         val rangeStartMs = selectedRangeStartMs
         val rangeEndMs = selectedRangeEndMs
         if (rangeStartMs == null || rangeEndMs == null) {
             emptyList()
         } else {
             timelineSamplesInRange(
-                samples = heatmapData?.timelineSamples.orEmpty(),
+                samples = smoothedTimelineSamples,
                 rangeStartMs = minOf(rangeStartMs, rangeEndMs),
                 rangeEndMs = maxOf(rangeStartMs, rangeEndMs)
-            ).filter { sample ->
-                sample.accuracyRadiusMeters <= MAIN_HISTORY_PATH_MAX_ACCURACY_M
-            }
+            )
         }
     }
     val canPlayRange = selectorsVisible && selectedRangeSamples.size >= 2
@@ -2437,6 +2468,125 @@ private fun decimateHistoryPathPoints(
             longitude = sample.longitude
         )
         cursor += step
+    }
+    return output
+}
+
+private fun smoothMainHistoryTimelineSamples(
+    samples: List<MainHistoryTimelineSample>
+): List<MainHistoryTimelineSample> {
+    if (samples.size < 3) return samples
+    val ordered = if (samples.size < 2 || samples.first().timestampMs <= samples.last().timestampMs) {
+        samples
+    } else {
+        samples.sortedBy { it.timestampMs }
+    }
+    val pointCount = ordered.size
+    val referenceLat = ordered.first().latitude
+    val referenceLon = ordered.first().longitude
+    val metersPerDegreeLat = 111_132.0
+    val metersPerDegreeLon = (111_320.0 * kotlin.math.cos(Math.toRadians(referenceLat))).coerceAtLeast(1e-6)
+
+    val measuredX = DoubleArray(pointCount)
+    val measuredY = DoubleArray(pointCount)
+    val measuredSigma = DoubleArray(pointCount)
+    for (index in 0 until pointCount) {
+        val sample = ordered[index]
+        measuredX[index] = (sample.longitude - referenceLon) * metersPerDegreeLon
+        measuredY[index] = (sample.latitude - referenceLat) * metersPerDegreeLat
+        measuredSigma[index] = sample.accuracyRadiusMeters.coerceAtLeast(MAIN_HISTORY_FILTER_MIN_SIGMA_M)
+    }
+
+    val forwardX = DoubleArray(pointCount)
+    val forwardY = DoubleArray(pointCount)
+    val forwardSigma = DoubleArray(pointCount)
+    forwardX[0] = measuredX[0]
+    forwardY[0] = measuredY[0]
+    forwardSigma[0] = measuredSigma[0]
+
+    for (index in 1 until pointCount) {
+        val dtSeconds = ((ordered[index].timestampMs - ordered[index - 1].timestampMs).coerceAtLeast(0L) / 1_000.0)
+        val processSigma = MAIN_HISTORY_FILTER_PROCESS_BASE_NOISE_M +
+            (MAIN_HISTORY_FILTER_PROCESS_NOISE_MPS * dtSeconds)
+        val priorVariance = (forwardSigma[index - 1] * forwardSigma[index - 1]) + (processSigma * processSigma)
+
+        var measurementSigma = measuredSigma[index]
+        val innovationDx = measuredX[index] - forwardX[index - 1]
+        val innovationDy = measuredY[index] - forwardY[index - 1]
+        val innovationDistance = kotlin.math.hypot(innovationDx, innovationDy)
+        val plausibleDistance = MAIN_HISTORY_FILTER_BASE_PLAUSIBLE_DISTANCE_M +
+            (MAIN_HISTORY_FILTER_MAX_SPEED_MPS * dtSeconds) +
+            (2.0 * forwardSigma[index - 1]) +
+            (2.0 * measurementSigma)
+        if (innovationDistance > plausibleDistance) {
+            measurementSigma *= MAIN_HISTORY_FILTER_OUTLIER_PENALTY
+        }
+
+        val measurementVariance = measurementSigma * measurementSigma
+        val kalmanGain = priorVariance / (priorVariance + measurementVariance)
+        forwardX[index] = forwardX[index - 1] + (kalmanGain * innovationDx)
+        forwardY[index] = forwardY[index - 1] + (kalmanGain * innovationDy)
+        forwardSigma[index] = kotlin.math.sqrt((1.0 - kalmanGain) * priorVariance)
+            .coerceAtLeast(MAIN_HISTORY_FILTER_MIN_SIGMA_M * 0.35)
+    }
+
+    val backwardX = DoubleArray(pointCount)
+    val backwardY = DoubleArray(pointCount)
+    val backwardSigma = DoubleArray(pointCount)
+    val lastIndex = pointCount - 1
+    backwardX[lastIndex] = measuredX[lastIndex]
+    backwardY[lastIndex] = measuredY[lastIndex]
+    backwardSigma[lastIndex] = measuredSigma[lastIndex]
+
+    for (index in (lastIndex - 1) downTo 0) {
+        val dtSeconds = ((ordered[index + 1].timestampMs - ordered[index].timestampMs).coerceAtLeast(0L) / 1_000.0)
+        val processSigma = MAIN_HISTORY_FILTER_PROCESS_BASE_NOISE_M +
+            (MAIN_HISTORY_FILTER_PROCESS_NOISE_MPS * dtSeconds)
+        val priorVariance = (backwardSigma[index + 1] * backwardSigma[index + 1]) + (processSigma * processSigma)
+
+        var measurementSigma = measuredSigma[index]
+        val innovationDx = measuredX[index] - backwardX[index + 1]
+        val innovationDy = measuredY[index] - backwardY[index + 1]
+        val innovationDistance = kotlin.math.hypot(innovationDx, innovationDy)
+        val plausibleDistance = MAIN_HISTORY_FILTER_BASE_PLAUSIBLE_DISTANCE_M +
+            (MAIN_HISTORY_FILTER_MAX_SPEED_MPS * dtSeconds) +
+            (2.0 * backwardSigma[index + 1]) +
+            (2.0 * measurementSigma)
+        if (innovationDistance > plausibleDistance) {
+            measurementSigma *= MAIN_HISTORY_FILTER_OUTLIER_PENALTY
+        }
+
+        val measurementVariance = measurementSigma * measurementSigma
+        val kalmanGain = priorVariance / (priorVariance + measurementVariance)
+        backwardX[index] = backwardX[index + 1] + (kalmanGain * innovationDx)
+        backwardY[index] = backwardY[index + 1] + (kalmanGain * innovationDy)
+        backwardSigma[index] = kotlin.math.sqrt((1.0 - kalmanGain) * priorVariance)
+            .coerceAtLeast(MAIN_HISTORY_FILTER_MIN_SIGMA_M * 0.35)
+    }
+
+    val output = ArrayList<MainHistoryTimelineSample>(pointCount)
+    for (index in 0 until pointCount) {
+        val forwardVariance = (forwardSigma[index] * forwardSigma[index]).coerceAtLeast(1e-4)
+        val backwardVariance = (backwardSigma[index] * backwardSigma[index]).coerceAtLeast(1e-4)
+        val forwardWeight = 1.0 / forwardVariance
+        val backwardWeight = 1.0 / backwardVariance
+        val combinedWeight = (forwardWeight + backwardWeight).coerceAtLeast(1e-6)
+
+        val smoothedX = ((forwardX[index] * forwardWeight) + (backwardX[index] * backwardWeight)) / combinedWeight
+        val smoothedY = ((forwardY[index] * forwardWeight) + (backwardY[index] * backwardWeight)) / combinedWeight
+        val smoothedSigma = kotlin.math.sqrt(1.0 / combinedWeight)
+            .coerceIn(1.0, MAIN_HISTORY_PATH_MAX_ACCURACY_M)
+
+        val latitude = (referenceLat + (smoothedY / metersPerDegreeLat)).coerceIn(-90.0, 90.0)
+        val rawLongitude = referenceLon + (smoothedX / metersPerDegreeLon)
+        val longitude = ((rawLongitude + 540.0) % 360.0) - 180.0
+        val original = ordered[index]
+        output += MainHistoryTimelineSample(
+            timestampMs = original.timestampMs,
+            latitude = latitude,
+            longitude = longitude,
+            accuracyRadiusMeters = smoothedSigma
+        )
     }
     return output
 }
