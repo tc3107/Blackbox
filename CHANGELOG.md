@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## v1.2.0 - 2026-02-28
+- Added relay-side 24-hour location history retention per sender, with automatic pruning and latest-entry preservation.
+- Added authenticated relay endpoint for per-sender history pulls (`/v1/location/pull-history`).
+- Kept contacts list retrieval behavior unchanged: still fetches and shows only each contact's latest location.
+- Added contact-map on-demand history loading in the app: fetches/decrypts/verifies the last 24h of available remote samples.
+- Added main-map-style history timeline/heatmap/selection/playback overlay for contact maps.
+- Updated contact history header UI to `Last 24h` with non-pressable latched range pills showing the loaded data time range.
+
 ## v1.1.2 - 2026-02-28
 - Fixed `Retrieve Locations` timer UI to stay at the full interval when retrieve is inactive, instead of counting down while muted.
 - Fixed `Sending Location` timer UI to reset to the full interval when sending is inactive, instead of remaining at `0s`.

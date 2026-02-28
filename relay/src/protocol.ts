@@ -44,11 +44,33 @@ export interface PullBatchRequest {
   receiverSignPublicKeySpkiB64Url: string;
 }
 
+export interface PullHistoryRequest {
+  senderId: string;
+  receiverId: string;
+  timestampMs: number;
+  nonceB64Url: string;
+  signatureB64Url: string;
+  receiverSignPublicKeySpkiB64Url: string;
+}
+
 export interface PullRecord {
   senderId: string;
   storedAtMs?: number;
   envelope?: PushEnvelopeSigned;
   status: "ok" | "unauthorized" | "no_data" | "error";
+  message?: string;
+}
+
+export interface PullHistoryEnvelopeRecord {
+  storedAtMs: number;
+  envelope: PushEnvelopeSigned;
+}
+
+export interface PullHistoryResponse {
+  ok: boolean;
+  senderId: string;
+  status: "ok" | "unauthorized" | "no_data" | "error";
+  records: PullHistoryEnvelopeRecord[];
   message?: string;
 }
 
@@ -88,6 +110,7 @@ export interface SenderStateDocument {
   receiverIds: string[];
   latestEnvelope?: PushEnvelopeSigned;
   latestStoredAtMs?: number;
+  historyEnvelopes: PullHistoryEnvelopeRecord[];
   noncesByActor: Record<string, number>;
 }
 

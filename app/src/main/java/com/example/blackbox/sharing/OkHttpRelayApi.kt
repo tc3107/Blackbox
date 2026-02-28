@@ -85,6 +85,15 @@ class OkHttpRelayApi(
         )
     }
 
+    override suspend fun pullHistory(request: PullHistoryRequest): Result<PullHistoryResponse> {
+        return postJson(
+            path = apiPath("/location/pull-history"),
+            request = request,
+            requestSerializer = PullHistoryRequest.serializer(),
+            responseSerializer = PullHistoryResponse.serializer()
+        )
+    }
+
     override suspend fun selfStatus(request: SelfStatusRequest): Result<SelfStatusResponse> {
         return postJson(
             path = apiPath("/location/self-status"),

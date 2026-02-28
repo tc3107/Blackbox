@@ -7,6 +7,7 @@ interface RelayApi {
     suspend fun upsertAcl(request: UpsertAclRequest): Result<UpsertAclResponse>
     suspend fun pushLocation(request: PushLocationRequest): Result<PushLocationResponse>
     suspend fun pullBatch(request: PullBatchRequest): Result<PullBatchResponse>
+    suspend fun pullHistory(request: PullHistoryRequest): Result<PullHistoryResponse>
     suspend fun selfStatus(request: SelfStatusRequest): Result<SelfStatusResponse>
     suspend fun clearLocation(request: ClearLocationRequest): Result<ClearLocationResponse>
 }
@@ -77,6 +78,31 @@ data class PullBatchResponse(
     val ok: Boolean,
     val serverTimestampMs: Long,
     val records: List<PullRecord>,
+    val message: String? = null
+)
+
+@Serializable
+data class PullHistoryRequest(
+    val senderId: String,
+    val receiverId: String,
+    val timestampMs: Long,
+    val nonceB64Url: String,
+    val signatureB64Url: String,
+    val receiverSignPublicKeySpkiB64Url: String
+)
+
+@Serializable
+data class PullHistoryEnvelopeRecord(
+    val storedAtMs: Long,
+    val envelope: PushEnvelopeSigned
+)
+
+@Serializable
+data class PullHistoryResponse(
+    val ok: Boolean,
+    val senderId: String,
+    val status: String,
+    val records: List<PullHistoryEnvelopeRecord>,
     val message: String? = null
 )
 

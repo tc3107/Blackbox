@@ -750,7 +750,7 @@ fun MainViewScreen(
                 onRemoveContact = { senderId ->
                     LocationSharingController.removeContact(senderId)
                 },
-                onOpenMap = { lat, lon, radiusMeters ->
+                onOpenMap = { _, _, lat, lon, radiusMeters ->
                     val myFix = locationState.bestPositionFix
                     val hasRecentMyFix = myFix != null &&
                         (System.currentTimeMillis() - myFix.receivedAtMillis) <= MAIN_MAP_USER_FIX_RECENT_WINDOW_MS

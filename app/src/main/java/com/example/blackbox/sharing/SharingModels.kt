@@ -185,6 +185,22 @@ data class ReceivedCardView(
     val pollStatus: SenderPollStatus?
 )
 
+data class ContactHistorySample(
+    val senderId: String,
+    val seq: Long,
+    val timestampMs: Long,
+    val latitude: Double,
+    val longitude: Double,
+    val accuracyMeters: Double
+)
+
+data class ContactHistoryRange(
+    val senderId: String,
+    val windowStartMs: Long,
+    val windowEndMs: Long,
+    val samples: List<ContactHistorySample>
+)
+
 data class LocationSharingState(
     val initialized: Boolean = false,
     val settings: SharingSettings = SharingSettings(),
@@ -214,6 +230,7 @@ const val DEFAULT_FAST_PUSH_INTERVAL_MS = 60_000L
 const val DEFAULT_FAST_SPEED_THRESHOLD_MPS = 8.0f
 const val POLL_INTERVAL_MS = 2 * 60_000L
 const val RELAY_STATUS_INTERVAL_MS = 20_000L
+const val CONTACT_HISTORY_WINDOW_MS = 24 * 60 * 60_000L
 
 fun normalizeUsername(raw: String): String {
     return raw.trim().take(USERNAME_MAX_LENGTH)

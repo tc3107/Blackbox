@@ -473,6 +473,89 @@ object LocationSharingController {
         }
     }
 
+    suspend fun fetchContactHistoryLast24h(senderId: String): Result<ContactHistoryRange> {
+        val localRelay = relayApi ?: return Result.failure(IllegalStateException("Relay unavailable."))
+        val localCrypto = crypto ?: return Result.failure(IllegalStateException("Crypto unavailable."))
+        val identity = snapshot.identity ?: return Result.failure(IllegalStateException("Identity unavailable."))
+        val contact = snapshot.contacts.firstOrNull { it.senderId == senderId }
+            ?: return Result.failure(IllegalArgumentException("Unknown contact."))
+        if (!contact.iFollow) {
+            return Result.failure(IllegalStateException("Contact is not followed."))
+        }
+        val networkError = networkPreflightError()
+        if (networkError != null) {
+            return Result.failure(IllegalStateException(networkError))
+        }
+
+        val now = System.currentTimeMillis()
+        val windowStartMs = (now - CONTACT_HISTORY_WINDOW_MS).coerceAtLeast(0L)
+        val nonce = randomNonceB64Url()
+        val payload = canonicalPullMessage(
+            receiverId = identity.senderId,
+            senderIds = listOf(senderId),
+            timestampMs = now,
+            nonceB64Url = nonce
+        )
+        val signature = localCrypto.sign(identity, payload).base64UrlEncode()
+        val request = PullHistoryRequest(
+            senderId = senderId,
+            receiverId = identity.senderId,
+            timestampMs = now,
+            nonceB64Url = nonce,
+            signatureB64Url = signature,
+            receiverSignPublicKeySpkiB64Url = identity.signPublicKeySpkiB64Url
+        )
+
+        return localRelay.pullHistory(request).mapCatching { response ->
+            when (response.status) {
+                "ok" -> Unit
+                "no_data" -> {
+                    return@mapCatching ContactHistoryRange(
+                        senderId = senderId,
+                        windowStartMs = windowStartMs,
+                        windowEndMs = now,
+                        samples = emptyList()
+                    )
+                }
+                "unauthorized" -> error(response.message ?: "Receiver is not authorized for this sender.")
+                else -> error(response.message ?: "History pull failed.")
+            }
+
+            val bySeq = linkedMapOf<Long, ContactHistorySample>()
+            response.records
+                .sortedBy { it.storedAtMs }
+                .forEach { record ->
+                    val claim = decodeAndValidatePulledClaim(
+                        recordSenderId = senderId,
+                        envelope = record.envelope,
+                        contact = contact,
+                        identity = identity,
+                        localCrypto = localCrypto
+                    ).getOrElse { throwable ->
+                        error(throwable.message ?: "Invalid history payload.")
+                    }
+                    if (claim.timestampMs !in windowStartMs..now) {
+                        return@forEach
+                    }
+                    bySeq[claim.seq] = ContactHistorySample(
+                        senderId = senderId,
+                        seq = claim.seq,
+                        timestampMs = claim.timestampMs,
+                        latitude = claim.lat,
+                        longitude = claim.lon,
+                        accuracyMeters = claim.accuracy?.toDouble()?.coerceAtLeast(1.0) ?: 25.0
+                    )
+                }
+
+            ContactHistoryRange(
+                senderId = senderId,
+                windowStartMs = windowStartMs,
+                windowEndMs = now,
+                samples = bySeq.values.sortedBy { it.timestampMs }
+            )
+        }
+    }
+
     suspend fun exportContactsBundle(passphrase: CharArray, target: Uri): Result<Uri> {
         val context = appContext ?: return Result.failure(IllegalStateException("Sharing not initialized."))
         val localCrypto = crypto ?: return Result.failure(IllegalStateException("Sharing not initialized."))
@@ -915,89 +998,22 @@ object LocationSharingController {
                     return@forEach
                 }
 
-                if (envelope.envelope.payloadVersion != SharingVersions.PAYLOAD_VERSION) {
-                    pollStatusBySender[record.senderId] = SenderPollStatus(
-                        senderId = record.senderId,
-                        lastErrorAtMs = now,
-                        lastError = "Unsupported payload version ${envelope.envelope.payloadVersion}."
-                    )
-                    return@forEach
-                }
-
-                val unsignedBytes = canonicalPushMessage(envelope.envelope)
-                val signatureValid = localCrypto.verify(
-                    signPublicKeySpkiB64Url = contact.signPublicKeySpkiB64Url,
-                    message = unsignedBytes,
-                    signature = envelope.signatureB64Url.base64UrlDecode()
+                val validatedClaim = decodeAndValidatePulledClaim(
+                    recordSenderId = record.senderId,
+                    envelope = envelope,
+                    contact = contact,
+                    identity = identity,
+                    localCrypto = localCrypto
                 )
-                if (!signatureValid) {
+                if (validatedClaim.isFailure) {
                     pollStatusBySender[record.senderId] = SenderPollStatus(
                         senderId = record.senderId,
                         lastErrorAtMs = now,
-                        lastError = "Sender signature verification failed."
+                        lastError = validatedClaim.exceptionOrNull()?.message ?: "Invalid claim payload."
                     )
                     return@forEach
                 }
-
-                val myCiphertext = envelope.envelope.recipientCiphertexts
-                    .firstOrNull { it.recipientId == identity.senderId }
-                    ?.ciphertextB64Url
-                    ?.base64UrlDecode()
-                if (myCiphertext == null) {
-                    pollStatusBySender[record.senderId] = SenderPollStatus(
-                        senderId = record.senderId,
-                        lastErrorAtMs = now,
-                        lastError = "No ciphertext for current identity."
-                    )
-                    return@forEach
-                }
-
-                val contextInfo = buildPushContext(
-                    senderId = envelope.envelope.senderId,
-                    recipientId = identity.senderId,
-                    seq = envelope.envelope.seq
-                )
-                val plaintext = runCatching {
-                    localCrypto.decryptForIdentity(identity, myCiphertext, contextInfo)
-                }.getOrNull()
-                if (plaintext == null) {
-                    pollStatusBySender[record.senderId] = SenderPollStatus(
-                        senderId = record.senderId,
-                        lastErrorAtMs = now,
-                        lastError = "Payload decryption failed."
-                    )
-                    return@forEach
-                }
-
-                val claim = runCatching {
-                    json.decodeFromString(LocationClaimV1.serializer(), plaintext.toString(Charsets.UTF_8))
-                }.getOrNull()
-                if (claim == null || !SharingLogic.isValidClaim(claim)) {
-                    pollStatusBySender[record.senderId] = SenderPollStatus(
-                        senderId = record.senderId,
-                        lastErrorAtMs = now,
-                        lastError = "Invalid claim payload."
-                    )
-                    return@forEach
-                }
-
-                if (claim.senderId != record.senderId || claim.seq != envelope.envelope.seq) {
-                    pollStatusBySender[record.senderId] = SenderPollStatus(
-                        senderId = record.senderId,
-                        lastErrorAtMs = now,
-                        lastError = "Sender/sequence mismatch."
-                    )
-                    return@forEach
-                }
-
-                if (claim.version != envelope.envelope.payloadVersion) {
-                    pollStatusBySender[record.senderId] = SenderPollStatus(
-                        senderId = record.senderId,
-                        lastErrorAtMs = now,
-                        lastError = "Payload version mismatch."
-                    )
-                    return@forEach
-                }
+                val claim = validatedClaim.getOrThrow()
 
                 val previousSeq = contact.lastSeenSeq ?: -1L
                 if (claim.seq <= previousSeq) {
@@ -1038,6 +1054,62 @@ object LocationSharingController {
                     pollFailureStreak = 0
                 )
             )
+        }
+    }
+
+    private fun decodeAndValidatePulledClaim(
+        recordSenderId: String,
+        envelope: PushEnvelopeSigned,
+        contact: PeerContactState,
+        identity: SharingIdentityState,
+        localCrypto: SharingCrypto
+    ): Result<LocationClaimV1> {
+        return runCatching {
+            if (envelope.envelope.payloadVersion != SharingVersions.PAYLOAD_VERSION) {
+                error("Unsupported payload version ${envelope.envelope.payloadVersion}.")
+            }
+
+            val unsignedBytes = canonicalPushMessage(envelope.envelope)
+            val signatureValid = localCrypto.verify(
+                signPublicKeySpkiB64Url = contact.signPublicKeySpkiB64Url,
+                message = unsignedBytes,
+                signature = envelope.signatureB64Url.base64UrlDecode()
+            )
+            if (!signatureValid) {
+                error("Sender signature verification failed.")
+            }
+
+            val myCiphertext = envelope.envelope.recipientCiphertexts
+                .firstOrNull { it.recipientId == identity.senderId }
+                ?.ciphertextB64Url
+                ?.base64UrlDecode()
+            if (myCiphertext == null) {
+                error("No ciphertext for current identity.")
+            }
+
+            val contextInfo = buildPushContext(
+                senderId = envelope.envelope.senderId,
+                recipientId = identity.senderId,
+                seq = envelope.envelope.seq
+            )
+            val plaintext = runCatching {
+                localCrypto.decryptForIdentity(identity, myCiphertext, contextInfo)
+            }.getOrNull() ?: error("Payload decryption failed.")
+
+            val claim = runCatching {
+                json.decodeFromString(LocationClaimV1.serializer(), plaintext.toString(Charsets.UTF_8))
+            }.getOrNull()
+            if (claim == null || !SharingLogic.isValidClaim(claim)) {
+                error("Invalid claim payload.")
+            }
+
+            if (claim.senderId != recordSenderId || claim.seq != envelope.envelope.seq) {
+                error("Sender/sequence mismatch.")
+            }
+            if (claim.version != envelope.envelope.payloadVersion) {
+                error("Payload version mismatch.")
+            }
+            claim
         }
     }
 

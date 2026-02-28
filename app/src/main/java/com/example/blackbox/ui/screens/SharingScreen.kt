@@ -15,11 +15,16 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.Image
@@ -62,15 +67,19 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -79,7 +88,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
@@ -188,6 +199,34 @@ private const val FsHistoryPointAreaFillLayerId = "bbx_fs_history_point_area_fil
 private const val FsHistoryPointAreaStrokeLayerId = "bbx_fs_history_point_area_stroke_layer"
 private const val FsHistoryPointCenterOuterLayerId = "bbx_fs_history_point_center_outer_layer"
 private const val FsHistoryPointCenterInnerLayerId = "bbx_fs_history_point_center_inner_layer"
+private const val CONTACT_HISTORY_HEATMAP_BIN_COUNT = 96
+private const val CONTACT_HISTORY_HEATMAP_PULSE_DURATION_MS = 1_050
+private const val CONTACT_HISTORY_HEATMAP_FADE_IN_MS = 540
+private const val CONTACT_HISTORY_SELECTORS_FADE_IN_MS = 460
+private const val CONTACT_HISTORY_SELECTORS_REVEAL_DELAY_MS = 340L
+private const val CONTACT_HISTORY_MAP_PATH_MAX_POINTS = 1_500
+private const val CONTACT_HISTORY_PATH_MAX_ACCURACY_M = 100.0
+private const val CONTACT_HISTORY_FILTER_MIN_SIGMA_M = 5.0
+private const val CONTACT_HISTORY_FILTER_PROCESS_BASE_NOISE_M = 6.0
+private const val CONTACT_HISTORY_FILTER_PROCESS_NOISE_MPS = 12.0
+private const val CONTACT_HISTORY_FILTER_MAX_SPEED_MPS = 75.0
+private const val CONTACT_HISTORY_FILTER_BASE_PLAUSIBLE_DISTANCE_M = 25.0
+private const val CONTACT_HISTORY_FILTER_OUTLIER_PENALTY = 6.0
+private const val CONTACT_HISTORY_PANEL_EXPAND_ANIM_MS = 180
+private val CONTACT_HISTORY_TIMELINE_HEIGHT = 82.dp
+private val CONTACT_HISTORY_TIMELINE_CORNER_RADIUS = 12.dp
+private val CONTACT_HISTORY_HANDLE_WIDTH = 14.dp
+private val CONTACT_HISTORY_HANDLE_HEIGHT = 56.dp
+private val CONTACT_HISTORY_PRECISE_LINE_WIDTH = 4.dp
+private val CONTACT_HISTORY_DRAG_TOUCH_RADIUS = 28.dp
+private val CONTACT_HISTORY_RANGE_DATE_FORMATTER: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US)
+private val CONTACT_HISTORY_RANGE_TIME_FORMATTER: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("HH:mm:ss", Locale.US)
+private val CONTACT_HISTORY_PRECISE_DATE_FORMATTER: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US)
+private val CONTACT_HISTORY_PRECISE_TIME_FORMATTER: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("HH:mm:ss", Locale.US)
 
 private data class FullscreenMapRequest(
     val latitude: Double,
@@ -196,7 +235,8 @@ private data class FullscreenMapRequest(
     val targetType: MapTargetType = MapTargetType.USER,
     val userLatitude: Double? = null,
     val userLongitude: Double? = null,
-    val userRadiusMeters: Double? = null
+    val userRadiusMeters: Double? = null,
+    val historySenderId: String? = null
 )
 
 data class FullscreenHistoryPathPoint(
@@ -208,6 +248,40 @@ data class FullscreenHistorySelectedPoint(
     val latitude: Double,
     val longitude: Double,
     val accuracyRadiusMeters: Double
+)
+
+private enum class ContactHistoryDragTarget {
+    START,
+    END,
+    PRECISE
+}
+
+private data class ContactHistoryHeatmapData(
+    val windowStartMs: Long,
+    val windowEndInclusiveMs: Long,
+    val bins: List<Int>,
+    val totalSamples: Int,
+    val maxBinCount: Int,
+    val timelineSamples: List<ContactHistoryTimelineSample>,
+    val availableRangeStartMs: Long?,
+    val availableRangeEndMs: Long?
+)
+
+private data class ContactHistoryTimelineSample(
+    val timestampMs: Long,
+    val latitude: Double,
+    val longitude: Double,
+    val accuracyRadiusMeters: Double
+)
+
+private data class ContactHistoryMapRenderData(
+    val pathPoints: List<FullscreenHistoryPathPoint>,
+    val selectedPoint: FullscreenHistorySelectedPoint?
+)
+
+private data class ContactHistoryPlaybackUiState(
+    val canPlay: Boolean,
+    val isPlaying: Boolean
 )
 
 private enum class EdgeIndicatorSide {
@@ -294,6 +368,14 @@ fun SharingScreen(modifier: Modifier = Modifier) {
     }
     var fullscreenMapRequest by remember {
         mutableStateOf<FullscreenMapRequest?>(null)
+    }
+    var contactHistoryMapRenderData by remember {
+        mutableStateOf<ContactHistoryMapRenderData?>(null)
+    }
+    var contactHistoryPlaybackToggleSignal by rememberSaveable { mutableStateOf(0) }
+    var contactHistoryPlaybackCancelSignal by rememberSaveable { mutableStateOf(0) }
+    var contactHistoryPlaybackUiState by remember {
+        mutableStateOf(ContactHistoryPlaybackUiState(canPlay = false, isPlaying = false))
     }
 
     fun importContactCodeAndHandle(
@@ -419,10 +501,12 @@ fun SharingScreen(modifier: Modifier = Modifier) {
                 onRemoveContact = { senderId ->
                     LocationSharingController.removeContact(senderId)
                 },
-                onOpenMap = { lat, lon, radiusMeters ->
+                onOpenMap = { senderId, _, lat, lon, radiusMeters ->
                     val myFix = locationState.bestPositionFix
                     val hasRecentMyFix = myFix != null &&
                         (System.currentTimeMillis() - myFix.receivedAtMillis) <= MAP_USER_FIX_RECENT_WINDOW_MS
+                    contactHistoryMapRenderData = null
+                    contactHistoryPlaybackUiState = ContactHistoryPlaybackUiState(canPlay = false, isPlaying = false)
                     fullscreenMapRequest = FullscreenMapRequest(
                         latitude = lat,
                         longitude = lon,
@@ -430,7 +514,8 @@ fun SharingScreen(modifier: Modifier = Modifier) {
                         targetType = MapTargetType.CONTACT,
                         userLatitude = if (hasRecentMyFix) myFix?.location?.latitude else null,
                         userLongitude = if (hasRecentMyFix) myFix?.location?.longitude else null,
-                        userRadiusMeters = if (hasRecentMyFix) myFix?.accuracyMeters?.toDouble() else null
+                        userRadiusMeters = if (hasRecentMyFix) myFix?.accuracyMeters?.toDouble() else null,
+                        historySenderId = senderId
                     )
                 }
             )
@@ -554,6 +639,7 @@ fun SharingScreen(modifier: Modifier = Modifier) {
 
     fullscreenMapRequest?.let { request ->
         val liveIndicatorFix = locationState.bestPositionFix
+        val useContactHistoryOverlay = request.targetType == MapTargetType.CONTACT && request.historySenderId != null
         FullscreenInteractiveMapDialog(
             latitude = request.latitude,
             longitude = request.longitude,
@@ -562,11 +648,69 @@ fun SharingScreen(modifier: Modifier = Modifier) {
             userLatitude = request.userLatitude,
             userLongitude = request.userLongitude,
             userRadiusMeters = request.userRadiusMeters,
+            historyPathPoints = if (useContactHistoryOverlay) {
+                contactHistoryMapRenderData?.pathPoints.orEmpty()
+            } else {
+                emptyList()
+            },
+            historySelectedPoint = if (useContactHistoryOverlay) {
+                contactHistoryMapRenderData?.selectedPoint
+            } else {
+                null
+            },
+            showHistorySelectedCenterButton = useContactHistoryOverlay,
+            showHistoryPlayButton = useContactHistoryOverlay && contactHistoryPlaybackUiState.canPlay,
+            historyPlayRunning = contactHistoryPlaybackUiState.isPlaying,
+            onHistoryPlayClick = if (useContactHistoryOverlay) {
+                { contactHistoryPlaybackToggleSignal += 1 }
+            } else {
+                null
+            },
+            onHistoryManualCenterAction = if (useContactHistoryOverlay) {
+                { contactHistoryPlaybackCancelSignal += 1 }
+            } else {
+                null
+            },
+            followHistorySelectedPoint = useContactHistoryOverlay,
             offscreenIndicatorLatitude = liveIndicatorFix?.location?.latitude ?: request.userLatitude,
             offscreenIndicatorLongitude = liveIndicatorFix?.location?.longitude ?: request.userLongitude,
-            secondaryOffscreenIndicatorLatitude = request.latitude,
-            secondaryOffscreenIndicatorLongitude = request.longitude,
-            onDismiss = { fullscreenMapRequest = null }
+            secondaryOffscreenIndicatorLatitude = if (useContactHistoryOverlay) {
+                contactHistoryMapRenderData?.selectedPoint?.latitude ?: request.latitude
+            } else {
+                request.latitude
+            },
+            secondaryOffscreenIndicatorLongitude = if (useContactHistoryOverlay) {
+                contactHistoryMapRenderData?.selectedPoint?.longitude ?: request.longitude
+            } else {
+                request.longitude
+            },
+            onDismiss = {
+                fullscreenMapRequest = null
+                contactHistoryMapRenderData = null
+                contactHistoryPlaybackUiState = ContactHistoryPlaybackUiState(canPlay = false, isPlaying = false)
+            },
+            showDefaultBackButton = !useContactHistoryOverlay,
+            topOverlay = if (useContactHistoryOverlay) {
+                {
+                    ContactLocationHistoryOverlayPanel(
+                        senderId = request.historySenderId.orEmpty(),
+                        onDismiss = {
+                            fullscreenMapRequest = null
+                            contactHistoryMapRenderData = null
+                            contactHistoryPlaybackUiState = ContactHistoryPlaybackUiState(
+                                canPlay = false,
+                                isPlaying = false
+                            )
+                        },
+                        playToggleSignal = contactHistoryPlaybackToggleSignal,
+                        playbackCancelSignal = contactHistoryPlaybackCancelSignal,
+                        onMapRenderDataChanged = { contactHistoryMapRenderData = it },
+                        onPlaybackUiStateChanged = { contactHistoryPlaybackUiState = it }
+                    )
+                }
+            } else {
+                null
+            }
         )
     }
 
@@ -622,6 +766,1295 @@ fun SharingScreen(modifier: Modifier = Modifier) {
             }
         )
     }
+}
+
+@Composable
+private fun ContactLocationHistoryOverlayPanel(
+    senderId: String,
+    onDismiss: () -> Unit,
+    playToggleSignal: Int,
+    playbackCancelSignal: Int,
+    onMapRenderDataChanged: (ContactHistoryMapRenderData?) -> Unit,
+    onPlaybackUiStateChanged: (ContactHistoryPlaybackUiState) -> Unit
+) {
+    var expanded by rememberSaveable(senderId) { mutableStateOf(true) }
+    var selectedStartFraction by rememberSaveable(senderId) { mutableStateOf(0f) }
+    var selectedEndFraction by rememberSaveable(senderId) { mutableStateOf(1f) }
+    var preciseFraction by rememberSaveable(senderId) { mutableStateOf(1f) }
+    var isPlaying by rememberSaveable(senderId) { mutableStateOf(false) }
+
+    val loadResult by produceState<Result<ContactHistoryHeatmapData>?>(initialValue = null, key1 = senderId) {
+        value = withContext(Dispatchers.IO) {
+            runCatching {
+                loadContactHistoryHeatmapData(senderId)
+            }.onFailure { throwable ->
+                if (throwable is kotlinx.coroutines.CancellationException) {
+                    throw throwable
+                }
+            }
+        }
+    }
+
+    val heatmapData = loadResult?.getOrNull()
+    val loadError = loadResult?.exceptionOrNull()?.message
+    val heatmapLoading = loadResult == null
+    val heatmapLoaded = !heatmapLoading && heatmapData != null
+    var heatmapVisible by remember(senderId) { mutableStateOf(false) }
+    var selectorsVisible by remember(senderId) { mutableStateOf(false) }
+
+    LaunchedEffect(heatmapLoaded, senderId) {
+        if (!heatmapLoaded) {
+            heatmapVisible = false
+            selectorsVisible = false
+            return@LaunchedEffect
+        }
+        heatmapVisible = false
+        selectorsVisible = false
+        delay(CONTACT_HISTORY_SELECTORS_REVEAL_DELAY_MS)
+        heatmapVisible = true
+        selectorsVisible = true
+    }
+
+    LaunchedEffect(selectedStartFraction, selectedEndFraction, preciseFraction) {
+        var normalizedStart = selectedStartFraction.coerceIn(0f, 1f)
+        var normalizedEnd = selectedEndFraction.coerceIn(0f, 1f)
+        if (normalizedEnd < normalizedStart) {
+            val swap = normalizedStart
+            normalizedStart = normalizedEnd
+            normalizedEnd = swap
+        }
+        if (normalizedStart != selectedStartFraction) {
+            selectedStartFraction = normalizedStart
+        }
+        if (normalizedEnd != selectedEndFraction) {
+            selectedEndFraction = normalizedEnd
+        }
+        val normalizedPrecise = preciseFraction.coerceIn(normalizedStart, normalizedEnd)
+        if (normalizedPrecise != preciseFraction) {
+            preciseFraction = normalizedPrecise
+        }
+    }
+
+    val selectedRangeStartMs = remember(heatmapData, selectedStartFraction) {
+        val data = heatmapData ?: return@remember null
+        contactHistoryMsForFraction(
+            windowStartMs = data.windowStartMs,
+            windowEndInclusiveMs = data.windowEndInclusiveMs,
+            fraction = selectedStartFraction
+        )
+    }
+    val selectedRangeEndMs = remember(heatmapData, selectedEndFraction) {
+        val data = heatmapData ?: return@remember null
+        contactHistoryMsForFraction(
+            windowStartMs = data.windowStartMs,
+            windowEndInclusiveMs = data.windowEndInclusiveMs,
+            fraction = selectedEndFraction
+        )
+    }
+    val preciseSelectedMs = remember(heatmapData, preciseFraction) {
+        val data = heatmapData ?: return@remember null
+        contactHistoryMsForFraction(
+            windowStartMs = data.windowStartMs,
+            windowEndInclusiveMs = data.windowEndInclusiveMs,
+            fraction = preciseFraction
+        )
+    }
+
+    val qualityFilteredTimelineSamples = remember(heatmapData) {
+        heatmapData?.timelineSamples
+            .orEmpty()
+            .filter { it.accuracyRadiusMeters <= CONTACT_HISTORY_PATH_MAX_ACCURACY_M }
+    }
+    val smoothedTimelineSamples by produceState(
+        initialValue = qualityFilteredTimelineSamples,
+        key1 = heatmapData
+    ) {
+        value = if (qualityFilteredTimelineSamples.size < 3) {
+            qualityFilteredTimelineSamples
+        } else {
+            withContext(Dispatchers.Default) {
+                smoothContactHistoryTimelineSamples(qualityFilteredTimelineSamples)
+            }
+        }
+    }
+    val selectedRangeSamples = remember(smoothedTimelineSamples, selectedRangeStartMs, selectedRangeEndMs) {
+        val rangeStartMs = selectedRangeStartMs
+        val rangeEndMs = selectedRangeEndMs
+        if (rangeStartMs == null || rangeEndMs == null) {
+            emptyList()
+        } else {
+            contactTimelineSamplesInRange(
+                samples = smoothedTimelineSamples,
+                rangeStartMs = minOf(rangeStartMs, rangeEndMs),
+                rangeEndMs = maxOf(rangeStartMs, rangeEndMs)
+            )
+        }
+    }
+    val canPlayRange = selectorsVisible && selectedRangeSamples.size >= 2
+    val preciseTimelineSample = remember(selectedRangeSamples, preciseSelectedMs) {
+        findNearestContactTimelineSample(
+            samples = selectedRangeSamples,
+            targetUtcMs = preciseSelectedMs
+        )
+    }
+    val preciseDateTimeParts = remember(preciseSelectedMs, preciseTimelineSample) {
+        formatContactHistoryPreciseDateTimeParts(
+            utcTimeMs = preciseSelectedMs,
+            sample = preciseTimelineSample
+        )
+    }
+    val decimatedPathPoints by produceState(
+        initialValue = emptyList<FullscreenHistoryPathPoint>(),
+        key1 = selectedRangeSamples
+    ) {
+        value = if (selectedRangeSamples.isEmpty()) {
+            emptyList()
+        } else {
+            withContext(Dispatchers.Default) {
+                decimateContactHistoryPathPoints(
+                    samples = selectedRangeSamples,
+                    maxPoints = CONTACT_HISTORY_MAP_PATH_MAX_POINTS
+                )
+            }
+        }
+    }
+    val selectedHistoryPoint = remember(preciseTimelineSample) {
+        preciseTimelineSample?.let { sample ->
+            FullscreenHistorySelectedPoint(
+                latitude = sample.latitude,
+                longitude = sample.longitude,
+                accuracyRadiusMeters = sample.accuracyRadiusMeters
+            )
+        }
+    }
+
+    LaunchedEffect(playToggleSignal) {
+        if (playToggleSignal <= 0) return@LaunchedEffect
+        if (!canPlayRange) {
+            isPlaying = false
+            return@LaunchedEffect
+        }
+        isPlaying = !isPlaying
+    }
+    LaunchedEffect(playbackCancelSignal) {
+        if (playbackCancelSignal <= 0) return@LaunchedEffect
+        isPlaying = false
+    }
+    LaunchedEffect(canPlayRange) {
+        if (!canPlayRange) {
+            isPlaying = false
+        }
+    }
+    LaunchedEffect(isPlaying, canPlayRange, selectedStartFraction, selectedEndFraction) {
+        if (!isPlaying || !canPlayRange) return@LaunchedEffect
+        val playStart = selectedStartFraction
+        val playEnd = selectedEndFraction
+        if (playEnd <= playStart) {
+            preciseFraction = playStart
+            isPlaying = false
+            return@LaunchedEffect
+        }
+        preciseFraction = playStart
+        val totalSpan = (playEnd - playStart).coerceAtLeast(0.00001f)
+        val remainingSpan = (playEnd - playStart).coerceAtLeast(0f)
+        if (remainingSpan <= 0f) {
+            preciseFraction = playEnd
+            isPlaying = false
+            return@LaunchedEffect
+        }
+        val totalDurationNs = 30_000_000_000L
+        val durationNs = (totalDurationNs.toDouble() * (remainingSpan / totalSpan).toDouble()).toLong()
+            .coerceAtLeast(50_000_000L)
+        val startPrecise = playStart
+        val startNs = withFrameNanos { it }
+        var lastFrameNs = startNs
+        while (isPlaying) {
+            val nowNs = withFrameNanos { it }
+            if (nowNs - lastFrameNs < 16_000_000L) continue
+            lastFrameNs = nowNs
+            val elapsedNs = (nowNs - startNs).coerceAtLeast(0L)
+            val progress = (elapsedNs.toDouble() / durationNs.toDouble()).coerceIn(0.0, 1.0)
+            preciseFraction = startPrecise + ((playEnd - startPrecise) * progress.toFloat())
+            if (preciseFraction >= (playEnd - 0.00001f)) {
+                preciseFraction = playEnd
+                isPlaying = false
+                break
+            }
+            if (progress >= 1.0) {
+                preciseFraction = playEnd
+                isPlaying = false
+                break
+            }
+        }
+    }
+
+    LaunchedEffect(selectorsVisible, decimatedPathPoints, selectedHistoryPoint) {
+        if (!selectorsVisible || (decimatedPathPoints.isEmpty() && selectedHistoryPoint == null)) {
+            onMapRenderDataChanged(null)
+            return@LaunchedEffect
+        }
+        onMapRenderDataChanged(
+            ContactHistoryMapRenderData(
+                pathPoints = decimatedPathPoints,
+                selectedPoint = selectedHistoryPoint
+            )
+        )
+    }
+    LaunchedEffect(canPlayRange, isPlaying) {
+        onPlaybackUiStateChanged(
+            ContactHistoryPlaybackUiState(
+                canPlay = canPlayRange,
+                isPlaying = isPlaying && canPlayRange
+            )
+        )
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            onMapRenderDataChanged(null)
+            onPlaybackUiStateChanged(ContactHistoryPlaybackUiState(canPlay = false, isPlaying = false))
+        }
+    }
+
+    val availableRangeStartText = remember(heatmapData) {
+        formatContactHistoryRangeEndpoint(heatmapData?.availableRangeStartMs)
+    }
+    val availableRangeEndText = remember(heatmapData) {
+        formatContactHistoryRangeEndpoint(heatmapData?.availableRangeEndMs)
+    }
+
+    OutlinedCard(
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Button(
+                    onClick = onDismiss,
+                    modifier = Modifier.size(40.dp),
+                    shape = CircleShape,
+                    contentPadding = PaddingValues(0.dp)
+                ) {
+                    Icon(
+                        painter = androidx.compose.ui.res.painterResource(android.R.drawable.ic_media_previous),
+                        contentDescription = "Back"
+                    )
+                }
+                Text(
+                    text = "Location History",
+                    style = MaterialTheme.typography.titleSmall,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                Button(
+                    onClick = { expanded = !expanded },
+                    modifier = Modifier.size(40.dp),
+                    shape = CircleShape,
+                    latched = expanded,
+                    toggleTargetState = expanded,
+                    contentPadding = PaddingValues(0.dp)
+                ) {
+                    val arrowRotation by animateFloatAsState(
+                        targetValue = if (expanded) 90f else -90f,
+                        animationSpec = tween(
+                            durationMillis = CONTACT_HISTORY_PANEL_EXPAND_ANIM_MS,
+                            easing = FastOutSlowInEasing
+                        ),
+                        label = "contact_history_expand_arrow_rotation"
+                    )
+                    Icon(
+                        painter = androidx.compose.ui.res.painterResource(id = android.R.drawable.ic_media_previous),
+                        contentDescription = if (expanded) "Collapse" else "Expand",
+                        modifier = Modifier.rotate(arrowRotation)
+                    )
+                }
+            }
+
+            AnimatedVisibility(
+                visible = expanded,
+                enter = androidx.compose.animation.fadeIn(
+                    animationSpec = tween(
+                        durationMillis = CONTACT_HISTORY_PANEL_EXPAND_ANIM_MS,
+                        easing = FastOutSlowInEasing
+                    )
+                ) + expandVertically(
+                    animationSpec = tween(
+                        durationMillis = CONTACT_HISTORY_PANEL_EXPAND_ANIM_MS,
+                        easing = FastOutSlowInEasing
+                    )
+                ),
+                exit = androidx.compose.animation.fadeOut(
+                    animationSpec = tween(
+                        durationMillis = CONTACT_HISTORY_PANEL_EXPAND_ANIM_MS,
+                        easing = FastOutSlowInEasing
+                    )
+                ) + shrinkVertically(
+                    animationSpec = tween(
+                        durationMillis = CONTACT_HISTORY_PANEL_EXPAND_ANIM_MS,
+                        easing = FastOutSlowInEasing
+                    )
+                )
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    ContactHistoryLast24hHeader(
+                        color = Color.White,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    AnimatedVisibility(visible = heatmapData != null) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            ContactHistoryRangePill(
+                                text = availableRangeStartText,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .height(28.dp)
+                                    .width(1.dp)
+                                    .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                            )
+                            ContactHistoryRangePill(
+                                text = availableRangeEndText,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+
+                    ContactHistoryHeatmapSlot(
+                        heatmapData = heatmapData,
+                        loading = heatmapLoading,
+                        heatmapVisible = heatmapVisible,
+                        selectorsVisible = selectorsVisible,
+                        selectionStartFraction = selectedStartFraction,
+                        selectionEndFraction = selectedEndFraction,
+                        preciseSelectionFraction = preciseFraction,
+                        onSelectionStartFractionChange = { selectedStartFraction = it },
+                        onSelectionEndFractionChange = { selectedEndFraction = it },
+                        onPreciseSelectionFractionChange = { preciseFraction = it },
+                        onManualPreciseSelection = { isPlaying = false },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (!loadError.isNullOrBlank()) {
+                        Text(
+                            text = loadError,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                    AnimatedVisibility(
+                        visible = selectorsVisible,
+                        enter = androidx.compose.animation.fadeIn(
+                            animationSpec = tween(
+                                durationMillis = CONTACT_HISTORY_SELECTORS_FADE_IN_MS,
+                                easing = FastOutSlowInEasing
+                            )
+                        ),
+                        exit = androidx.compose.animation.fadeOut(animationSpec = tween(durationMillis = 120))
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = preciseDateTimeParts.first,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.width(22.dp))
+                            Text(
+                                text = preciseDateTimeParts.second,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ContactHistoryLast24hHeader(
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    val density = LocalDensity.current
+    val labelHalfWidthPx = with(density) { 34.dp.toPx() }
+    val strokePx = with(density) { 1.dp.toPx() }
+    val tickHeightPx = with(density) { 8.dp.toPx() }
+    val buttonCenterStartFraction = 0.25f
+    val buttonCenterEndFraction = 0.75f
+
+    Box(
+        modifier = modifier.height(24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val centerX = size.width * 0.5f
+            val centerY = size.height * 0.45f
+            val leftAnchorX = size.width * buttonCenterStartFraction
+            val rightAnchorX = size.width * buttonCenterEndFraction
+            val leftLabelEdgeX = centerX - labelHalfWidthPx
+            val rightLabelEdgeX = centerX + labelHalfWidthPx
+
+            drawLine(
+                color = color,
+                start = Offset(leftLabelEdgeX, centerY),
+                end = Offset(leftAnchorX, centerY),
+                strokeWidth = strokePx,
+                cap = StrokeCap.Round
+            )
+            drawLine(
+                color = color,
+                start = Offset(rightLabelEdgeX, centerY),
+                end = Offset(rightAnchorX, centerY),
+                strokeWidth = strokePx,
+                cap = StrokeCap.Round
+            )
+            drawLine(
+                color = color,
+                start = Offset(leftAnchorX, centerY),
+                end = Offset(leftAnchorX, (centerY + tickHeightPx).coerceAtMost(size.height)),
+                strokeWidth = strokePx,
+                cap = StrokeCap.Round
+            )
+            drawLine(
+                color = color,
+                start = Offset(rightAnchorX, centerY),
+                end = Offset(rightAnchorX, (centerY + tickHeightPx).coerceAtMost(size.height)),
+                strokeWidth = strokePx,
+                cap = StrokeCap.Round
+            )
+        }
+        Text(
+            text = "Last 24h",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(horizontal = 8.dp)
+        )
+    }
+}
+
+@Composable
+private fun ContactHistoryRangePill(
+    text: String,
+    modifier: Modifier = Modifier
+) {
+    val colors = ButtonDefaults.buttonColors(
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        disabledContainerColor = MaterialTheme.colorScheme.surface,
+        disabledContentColor = MaterialTheme.colorScheme.onSurface
+    )
+    Button(
+        onClick = {},
+        enabled = false,
+        latched = true,
+        modifier = modifier
+            .height(44.dp)
+            .padding(horizontal = 8.dp),
+        shape = RoundedCornerShape(12.dp),
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+        colors = colors
+    ) {
+        Text(
+            text = text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+@Composable
+private fun ContactHistoryHeatmapSlot(
+    heatmapData: ContactHistoryHeatmapData?,
+    loading: Boolean,
+    heatmapVisible: Boolean,
+    selectorsVisible: Boolean,
+    selectionStartFraction: Float,
+    selectionEndFraction: Float,
+    preciseSelectionFraction: Float,
+    onSelectionStartFractionChange: (Float) -> Unit,
+    onSelectionEndFractionChange: (Float) -> Unit,
+    onPreciseSelectionFractionChange: (Float) -> Unit,
+    onManualPreciseSelection: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val slotShape = RoundedCornerShape(CONTACT_HISTORY_TIMELINE_CORNER_RADIUS)
+    val view = LocalView.current
+    val baseColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)
+    val lowColor = Color(0xFF1F334A)
+    val highColor = Color(0xFF4DA3FF)
+    val pulseColor = Color(0xFF4DA3FF)
+    val selectionShellColor = Color(0xFFDDEEFF).copy(alpha = 0.24f)
+    val selectionOutlineColor = Color.White.copy(alpha = 0.56f)
+    val handleGlyphColor = Color(0xFF1E3B57)
+    val preciseLineColor = Color.White.copy(alpha = 0.96f)
+    val density = LocalDensity.current
+    val slotCornerRadiusPx = with(density) { CONTACT_HISTORY_TIMELINE_CORNER_RADIUS.toPx() }
+    val handleWidthPx = with(density) { CONTACT_HISTORY_HANDLE_WIDTH.toPx() }
+    val handleHeightPx = with(density) { CONTACT_HISTORY_HANDLE_HEIGHT.toPx() }
+    val preciseLineWidthPx = with(density) { CONTACT_HISTORY_PRECISE_LINE_WIDTH.toPx() }
+    val dragTouchRadiusPx = with(density) { CONTACT_HISTORY_DRAG_TOUCH_RADIUS.toPx() }
+    val selectionStrokeWidthPx = with(density) { 1.5.dp.toPx() }
+    val halfPreciseLinePx = preciseLineWidthPx * 0.5f
+    val latestStartFraction by rememberUpdatedState(selectionStartFraction.coerceIn(0f, 1f))
+    val latestEndFraction by rememberUpdatedState(selectionEndFraction.coerceIn(0f, 1f))
+    val latestPreciseFraction by rememberUpdatedState(preciseSelectionFraction.coerceIn(0f, 1f))
+    val updateStartFraction by rememberUpdatedState(onSelectionStartFractionChange)
+    val updateEndFraction by rememberUpdatedState(onSelectionEndFractionChange)
+    val updatePreciseFraction by rememberUpdatedState(onPreciseSelectionFractionChange)
+    val notifyManualPreciseSelection by rememberUpdatedState(onManualPreciseSelection)
+    val pulseTransition = rememberInfiniteTransition(label = "contact_history_heatmap_pulse")
+    val pulseAlpha by pulseTransition.animateFloat(
+        initialValue = 0.08f,
+        targetValue = 0.24f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(
+                durationMillis = CONTACT_HISTORY_HEATMAP_PULSE_DURATION_MS,
+                easing = FastOutSlowInEasing
+            ),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "contact_history_heatmap_pulse_alpha"
+    )
+    val heatmapAlpha by animateFloatAsState(
+        targetValue = if (heatmapVisible) 1f else 0f,
+        animationSpec = tween(
+            durationMillis = CONTACT_HISTORY_HEATMAP_FADE_IN_MS,
+            easing = FastOutSlowInEasing
+        ),
+        label = "contact_history_heatmap_alpha"
+    )
+    val selectorsAlpha by animateFloatAsState(
+        targetValue = if (selectorsVisible) 1f else 0f,
+        animationSpec = tween(
+            durationMillis = CONTACT_HISTORY_SELECTORS_FADE_IN_MS,
+            easing = FastOutSlowInEasing
+        ),
+        label = "contact_history_selectors_alpha"
+    )
+
+    BoxWithConstraints(
+        modifier = modifier
+            .height(CONTACT_HISTORY_TIMELINE_HEIGHT)
+            .clip(slotShape)
+            .background(MaterialTheme.colorScheme.surface)
+            .neomorphicShadow(
+                shape = slotShape,
+                pressed = true,
+                addBorder = false,
+                depth = 4.dp,
+                blurRadius = 8.dp
+            )
+            .padding(3.dp)
+    ) {
+        val barWidthPx = with(density) { maxWidth.toPx().coerceAtLeast(1f) }
+        val minSelectionSpanFraction = remember(barWidthPx, handleWidthPx, preciseLineWidthPx) {
+            ((2f * handleWidthPx + preciseLineWidthPx + 1f) / barWidthPx).coerceIn(0f, 1f)
+        }
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(slotShape)
+                .background(baseColor)
+                .then(
+                    if (selectorsVisible) {
+                        Modifier.pointerInput(
+                            barWidthPx,
+                            minSelectionSpanFraction,
+                            handleWidthPx,
+                            preciseLineWidthPx,
+                            dragTouchRadiusPx
+                        ) {
+                            var activeTarget: ContactHistoryDragTarget? = null
+                            var workingStart = latestStartFraction
+                            var workingEnd = latestEndFraction
+                            var workingPrecise = latestPreciseFraction
+                            var hitStartBoundary = false
+                            var hitEndBoundary = false
+                            var hitPreciseMin = false
+                            var hitPreciseMax = false
+
+                            detectDragGestures(
+                                onDragStart = { touchOffset ->
+                                    workingStart = latestStartFraction
+                                    workingEnd = latestEndFraction
+                                    workingPrecise = latestPreciseFraction
+
+                                    if (workingEnd - workingStart < minSelectionSpanFraction) {
+                                        workingEnd = (workingStart + minSelectionSpanFraction).coerceAtMost(1f)
+                                        workingStart = (workingEnd - minSelectionSpanFraction).coerceAtLeast(0f)
+                                    }
+                                    val startOuterX = workingStart * barWidthPx
+                                    val endOuterX = workingEnd * barWidthPx
+                                    val startCenterX = startOuterX + (handleWidthPx * 0.5f)
+                                    val endCenterX = endOuterX - (handleWidthPx * 0.5f)
+                                    val preciseMinX = startOuterX + handleWidthPx + (preciseLineWidthPx * 0.5f)
+                                    val preciseMaxX = endOuterX - handleWidthPx - (preciseLineWidthPx * 0.5f)
+                                    val preciseX = (workingPrecise * barWidthPx).coerceIn(preciseMinX, preciseMaxX)
+                                    workingPrecise = preciseX / barWidthPx
+
+                                    updateStartFraction(workingStart)
+                                    updateEndFraction(workingEnd)
+                                    updatePreciseFraction(workingPrecise)
+
+                                    val touchX = touchOffset.x.coerceIn(0f, barWidthPx)
+                                    val startDistance = kotlin.math.abs(touchX - startCenterX)
+                                    val endDistance = kotlin.math.abs(touchX - endCenterX)
+                                    val preciseDistance = kotlin.math.abs(touchX - preciseX)
+                                    val nearest = listOf(
+                                        ContactHistoryDragTarget.START to startDistance,
+                                        ContactHistoryDragTarget.END to endDistance,
+                                        ContactHistoryDragTarget.PRECISE to preciseDistance
+                                    ).minByOrNull { it.second }
+                                    activeTarget = if (nearest != null && nearest.second <= dragTouchRadiusPx) {
+                                        nearest.first
+                                    } else {
+                                        ContactHistoryDragTarget.PRECISE
+                                    }
+                                    if (activeTarget == ContactHistoryDragTarget.PRECISE) {
+                                        notifyManualPreciseSelection()
+                                    }
+                                    view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                    hitStartBoundary = false
+                                    hitEndBoundary = false
+                                    hitPreciseMin = false
+                                    hitPreciseMax = false
+                                },
+                                onDragEnd = {
+                                    activeTarget = null
+                                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                },
+                                onDragCancel = {
+                                    activeTarget = null
+                                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                },
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    val target = activeTarget ?: return@detectDragGestures
+                                    val deltaFraction = dragAmount.x / barWidthPx
+                                    val fingerX = change.position.x.coerceIn(0f, barWidthPx)
+
+                                    when (target) {
+                                        ContactHistoryDragTarget.START -> {
+                                            val proposedStart = workingStart + deltaFraction
+                                            val maxStartWithoutPush = (workingEnd - minSelectionSpanFraction).coerceAtLeast(0f)
+                                            if (proposedStart <= maxStartWithoutPush) {
+                                                workingStart = proposedStart.coerceAtLeast(0f)
+                                            } else {
+                                                val overflow = proposedStart - maxStartWithoutPush
+                                                val pushedEnd = (workingEnd + overflow).coerceAtMost(1f)
+                                                workingEnd = pushedEnd
+                                                workingStart = (proposedStart).coerceAtMost(workingEnd - minSelectionSpanFraction)
+                                            }
+                                        }
+
+                                        ContactHistoryDragTarget.END -> {
+                                            val proposedEnd = workingEnd + deltaFraction
+                                            val minEndWithoutPush = (workingStart + minSelectionSpanFraction).coerceAtMost(1f)
+                                            if (proposedEnd >= minEndWithoutPush) {
+                                                workingEnd = proposedEnd.coerceAtMost(1f)
+                                            } else {
+                                                val overflow = minEndWithoutPush - proposedEnd
+                                                val pushedStart = (workingStart - overflow).coerceAtLeast(0f)
+                                                workingStart = pushedStart
+                                                workingEnd = (proposedEnd).coerceAtLeast(workingStart + minSelectionSpanFraction)
+                                            }
+                                        }
+
+                                        ContactHistoryDragTarget.PRECISE -> Unit
+                                    }
+
+                                    val preciseMinX = (workingStart * barWidthPx) + handleWidthPx + (preciseLineWidthPx * 0.5f)
+                                    val preciseMaxX = (workingEnd * barWidthPx) - handleWidthPx - (preciseLineWidthPx * 0.5f)
+                                    val nextPreciseX = if (target == ContactHistoryDragTarget.PRECISE) {
+                                        fingerX.coerceIn(preciseMinX, preciseMaxX)
+                                    } else {
+                                        (workingPrecise * barWidthPx).coerceIn(preciseMinX, preciseMaxX)
+                                    }
+                                    workingPrecise = nextPreciseX / barWidthPx
+
+                                    val startAtBoundary = workingStart <= 0f
+                                    val endAtBoundary = workingEnd >= 1f
+                                    val preciseAtMin = nextPreciseX <= preciseMinX
+                                    val preciseAtMax = nextPreciseX >= preciseMaxX
+                                    if (startAtBoundary && !hitStartBoundary) {
+                                        view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                    }
+                                    if (endAtBoundary && !hitEndBoundary) {
+                                        view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                    }
+                                    if (preciseAtMin && !hitPreciseMin) {
+                                        view.performHapticFeedback(textHandleMoveHapticCode())
+                                    }
+                                    if (preciseAtMax && !hitPreciseMax) {
+                                        view.performHapticFeedback(textHandleMoveHapticCode())
+                                    }
+                                    hitStartBoundary = startAtBoundary
+                                    hitEndBoundary = endAtBoundary
+                                    hitPreciseMin = preciseAtMin
+                                    hitPreciseMax = preciseAtMax
+
+                                    updateStartFraction(workingStart)
+                                    updateEndFraction(workingEnd)
+                                    updatePreciseFraction(workingPrecise)
+                                }
+                            )
+                        }
+                    } else {
+                        Modifier
+                    }
+                )
+        ) {
+            val bins = heatmapData?.bins.orEmpty()
+            val maxBinCount = heatmapData?.maxBinCount?.coerceAtLeast(1) ?: 1
+            var safeStartOuter = selectionStartFraction.coerceIn(0f, 1f)
+            var safeEndOuter = selectionEndFraction.coerceIn(0f, 1f)
+            if (safeEndOuter - safeStartOuter < minSelectionSpanFraction) {
+                safeEndOuter = (safeStartOuter + minSelectionSpanFraction).coerceAtMost(1f)
+                safeStartOuter = (safeEndOuter - minSelectionSpanFraction).coerceAtLeast(0f)
+            }
+            val startOuterX = safeStartOuter * size.width
+            val endOuterX = safeEndOuter * size.width
+            val startAtBoundary = startOuterX <= 0.5f
+            val endAtBoundary = endOuterX >= (size.width - 0.5f)
+            val boundaryInsetPx = selectionStrokeWidthPx * 0.5f
+            val startHandleX = if (startAtBoundary) {
+                startOuterX + boundaryInsetPx
+            } else {
+                startOuterX
+            }
+            val endHandleX = if (endAtBoundary) {
+                (endOuterX - handleWidthPx) + boundaryInsetPx
+            } else {
+                endOuterX - handleWidthPx
+            }
+            val handleDrawWidth = if (startAtBoundary || endAtBoundary) {
+                (handleWidthPx - boundaryInsetPx).coerceAtLeast(1f)
+            } else {
+                handleWidthPx
+            }
+            val startCenterX = startHandleX + (handleDrawWidth * 0.5f)
+            val endCenterX = endHandleX + (handleDrawWidth * 0.5f)
+            val preciseMinX = startOuterX + handleWidthPx + halfPreciseLinePx
+            val preciseMaxX = endOuterX - handleWidthPx - halfPreciseLinePx
+            val preciseX = (preciseSelectionFraction.coerceIn(0f, 1f) * size.width).coerceIn(preciseMinX, preciseMaxX)
+            val handleDrawHeight = size.height
+            val handleTop = 0f
+            val rangeBodyHeight = size.height
+            val rangeBodyTop = 0f
+            val handleCornerRadius = CornerRadius(
+                x = slotCornerRadiusPx,
+                y = slotCornerRadiusPx
+            )
+            val rangeCornerRadius = CornerRadius(
+                x = (handleWidthPx * 0.46f).coerceAtLeast(1f),
+                y = (handleWidthPx * 0.46f).coerceAtLeast(1f)
+            )
+
+            if (bins.isNotEmpty()) {
+                val binWidth = size.width / bins.size.toFloat()
+                bins.forEachIndexed { index, count ->
+                    val intensity = (count.toFloat() / maxBinCount.toFloat()).coerceIn(0f, 1f)
+                    val color = lerp(lowColor, highColor, intensity)
+                    drawRect(
+                        color = color.copy(alpha = (0.18f + (0.72f * intensity)) * heatmapAlpha),
+                        topLeft = Offset(x = index * binWidth, y = 0f),
+                        size = Size(width = binWidth + 0.75f, height = size.height)
+                    )
+                }
+            }
+            if (selectorsAlpha > 0.001f) {
+                val rangeWidth = (endOuterX - startOuterX).coerceAtLeast(1f)
+                drawRoundRect(
+                    color = selectionShellColor.copy(alpha = selectionShellColor.alpha * selectorsAlpha),
+                    topLeft = Offset(x = startOuterX, y = rangeBodyTop),
+                    size = Size(width = rangeWidth, height = rangeBodyHeight),
+                    cornerRadius = rangeCornerRadius
+                )
+                drawRoundRect(
+                    color = selectionOutlineColor.copy(alpha = selectionOutlineColor.alpha * selectorsAlpha),
+                    topLeft = Offset(x = startOuterX, y = rangeBodyTop),
+                    size = Size(width = rangeWidth, height = rangeBodyHeight),
+                    cornerRadius = rangeCornerRadius,
+                    style = Stroke(width = selectionStrokeWidthPx)
+                )
+            }
+            if (loading) {
+                drawRect(
+                    color = pulseColor.copy(alpha = pulseAlpha),
+                    topLeft = Offset.Zero,
+                    size = size
+                )
+            }
+
+            if (selectorsAlpha > 0.001f) {
+                drawRoundRect(
+                    color = selectionShellColor.copy(alpha = selectionShellColor.alpha * selectorsAlpha),
+                    topLeft = Offset(x = startHandleX, y = handleTop),
+                    size = Size(width = handleDrawWidth, height = handleDrawHeight),
+                    cornerRadius = handleCornerRadius
+                )
+                drawRoundRect(
+                    color = selectionOutlineColor.copy(alpha = selectionOutlineColor.alpha * selectorsAlpha),
+                    topLeft = Offset(x = startHandleX, y = handleTop),
+                    size = Size(width = handleDrawWidth, height = handleDrawHeight),
+                    cornerRadius = handleCornerRadius,
+                    style = Stroke(width = selectionStrokeWidthPx)
+                )
+                drawRoundRect(
+                    color = selectionShellColor.copy(alpha = selectionShellColor.alpha * selectorsAlpha),
+                    topLeft = Offset(x = endHandleX, y = handleTop),
+                    size = Size(width = handleDrawWidth, height = handleDrawHeight),
+                    cornerRadius = handleCornerRadius
+                )
+                drawRoundRect(
+                    color = selectionOutlineColor.copy(alpha = selectionOutlineColor.alpha * selectorsAlpha),
+                    topLeft = Offset(x = endHandleX, y = handleTop),
+                    size = Size(width = handleDrawWidth, height = handleDrawHeight),
+                    cornerRadius = handleCornerRadius,
+                    style = Stroke(width = selectionStrokeWidthPx)
+                )
+
+                drawContactHistoryHandleGlyph(
+                    centerX = startCenterX,
+                    centerY = size.height / 2f,
+                    handleWidthPx = handleDrawWidth,
+                    handleHeightPx = handleDrawHeight,
+                    outwardLeft = true,
+                    atBoundary = startAtBoundary,
+                    color = handleGlyphColor.copy(alpha = selectorsAlpha)
+                )
+                drawContactHistoryHandleGlyph(
+                    centerX = endCenterX,
+                    centerY = size.height / 2f,
+                    handleWidthPx = handleDrawWidth,
+                    handleHeightPx = handleDrawHeight,
+                    outwardLeft = false,
+                    atBoundary = endAtBoundary,
+                    color = handleGlyphColor.copy(alpha = selectorsAlpha)
+                )
+
+                drawRoundRect(
+                    color = preciseLineColor.copy(alpha = selectorsAlpha),
+                    topLeft = Offset(x = preciseX - halfPreciseLinePx, y = 4f),
+                    size = Size(width = preciseLineWidthPx, height = size.height - 8f),
+                    cornerRadius = CornerRadius(
+                        x = preciseLineWidthPx * 0.5f,
+                        y = preciseLineWidthPx * 0.5f
+                    )
+                )
+            }
+        }
+        if (!loading && heatmapVisible && (heatmapData?.totalSamples ?: 0) == 0) {
+            Text(
+                text = "No samples in selected range",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.align(Alignment.Center)
+            )
+        }
+    }
+}
+
+private fun DrawScope.drawContactHistoryHandleGlyph(
+    centerX: Float,
+    centerY: Float,
+    handleWidthPx: Float,
+    handleHeightPx: Float,
+    outwardLeft: Boolean,
+    atBoundary: Boolean,
+    color: Color
+) {
+    val ySpread = handleHeightPx * 0.22f
+    val stroke = (handleWidthPx * 0.18f).coerceAtLeast(1.2f)
+    if (atBoundary) {
+        drawLine(
+            color = color,
+            start = Offset(centerX, centerY - ySpread),
+            end = Offset(centerX, centerY + ySpread),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round
+        )
+        return
+    }
+
+    val arrowVertexX = if (outwardLeft) {
+        centerX - (handleWidthPx * 0.20f)
+    } else {
+        centerX + (handleWidthPx * 0.20f)
+    }
+    val arrowArmX = if (outwardLeft) {
+        centerX + (handleWidthPx * 0.20f)
+    } else {
+        centerX - (handleWidthPx * 0.20f)
+    }
+    drawLine(
+        color = color,
+        start = Offset(arrowArmX, centerY - ySpread),
+        end = Offset(arrowVertexX, centerY),
+        strokeWidth = stroke,
+        cap = StrokeCap.Round
+    )
+    drawLine(
+        color = color,
+        start = Offset(arrowArmX, centerY + ySpread),
+        end = Offset(arrowVertexX, centerY),
+        strokeWidth = stroke,
+        cap = StrokeCap.Round
+    )
+}
+
+private fun formatContactHistoryRangeEndpoint(timestampMs: Long?): String {
+    if (timestampMs == null) return "--"
+    val zoned = Instant.ofEpochMilli(timestampMs).atZone(ZoneId.systemDefault())
+    return "${zoned.format(CONTACT_HISTORY_RANGE_DATE_FORMATTER)} ${zoned.format(CONTACT_HISTORY_RANGE_TIME_FORMATTER)}"
+}
+
+private fun formatContactHistoryPreciseDateTimeParts(
+    utcTimeMs: Long?,
+    sample: ContactHistoryTimelineSample?
+): Pair<String, String> {
+    if (utcTimeMs == null) return "--" to "--"
+    val zoneOffset = sample?.let(::approximateZoneOffsetForContactSample) ?: java.time.ZoneOffset.UTC
+    val zoned = Instant.ofEpochMilli(utcTimeMs).atOffset(zoneOffset)
+    val datePart = zoned.format(CONTACT_HISTORY_PRECISE_DATE_FORMATTER)
+    val timePart = "${zoned.format(CONTACT_HISTORY_PRECISE_TIME_FORMATTER)}  ${zoneOffset.id}"
+    return datePart to timePart
+}
+
+private fun findNearestContactTimelineSample(
+    samples: List<ContactHistoryTimelineSample>,
+    targetUtcMs: Long?
+): ContactHistoryTimelineSample? {
+    if (samples.isEmpty() || targetUtcMs == null) return null
+    var low = 0
+    var high = samples.lastIndex
+    while (low <= high) {
+        val mid = (low + high) ushr 1
+        val value = samples[mid].timestampMs
+        when {
+            value < targetUtcMs -> low = mid + 1
+            value > targetUtcMs -> high = mid - 1
+            else -> return samples[mid]
+        }
+    }
+    val lower = samples.getOrNull(high)
+    val upper = samples.getOrNull(low)
+    return when {
+        lower == null -> upper
+        upper == null -> lower
+        kotlin.math.abs(lower.timestampMs - targetUtcMs) <= kotlin.math.abs(upper.timestampMs - targetUtcMs) -> lower
+        else -> upper
+    }
+}
+
+private fun contactTimelineSamplesInRange(
+    samples: List<ContactHistoryTimelineSample>,
+    rangeStartMs: Long,
+    rangeEndMs: Long
+): List<ContactHistoryTimelineSample> {
+    if (samples.isEmpty() || rangeEndMs < rangeStartMs) return emptyList()
+    val startIndex = lowerBoundContactTimelineIndex(samples, rangeStartMs)
+    val endExclusive = upperBoundContactTimelineIndex(samples, rangeEndMs)
+    if (startIndex >= endExclusive) return emptyList()
+    return samples.subList(startIndex, endExclusive)
+}
+
+private fun lowerBoundContactTimelineIndex(
+    samples: List<ContactHistoryTimelineSample>,
+    targetMs: Long
+): Int {
+    var low = 0
+    var high = samples.size
+    while (low < high) {
+        val mid = (low + high) ushr 1
+        if (samples[mid].timestampMs < targetMs) {
+            low = mid + 1
+        } else {
+            high = mid
+        }
+    }
+    return low.coerceIn(0, samples.size)
+}
+
+private fun upperBoundContactTimelineIndex(
+    samples: List<ContactHistoryTimelineSample>,
+    targetMs: Long
+): Int {
+    var low = 0
+    var high = samples.size
+    while (low < high) {
+        val mid = (low + high) ushr 1
+        if (samples[mid].timestampMs <= targetMs) {
+            low = mid + 1
+        } else {
+            high = mid
+        }
+    }
+    return low.coerceIn(0, samples.size)
+}
+
+private fun decimateContactHistoryPathPoints(
+    samples: List<ContactHistoryTimelineSample>,
+    maxPoints: Int
+): List<FullscreenHistoryPathPoint> {
+    if (samples.isEmpty()) return emptyList()
+    if (samples.size <= maxPoints) {
+        return samples.map { sample ->
+            FullscreenHistoryPathPoint(
+                latitude = sample.latitude,
+                longitude = sample.longitude
+            )
+        }
+    }
+    val pointLimit = maxPoints.coerceAtLeast(2)
+    val step = (samples.size - 1).toDouble() / (pointLimit - 1).toDouble()
+    val output = ArrayList<FullscreenHistoryPathPoint>(pointLimit)
+    var cursor = 0.0
+    repeat(pointLimit) { index ->
+        val sample = if (index == pointLimit - 1) {
+            samples.last()
+        } else {
+            samples[cursor.toInt().coerceIn(0, samples.lastIndex)]
+        }
+        output += FullscreenHistoryPathPoint(
+            latitude = sample.latitude,
+            longitude = sample.longitude
+        )
+        cursor += step
+    }
+    return output
+}
+
+private fun smoothContactHistoryTimelineSamples(
+    samples: List<ContactHistoryTimelineSample>
+): List<ContactHistoryTimelineSample> {
+    if (samples.size < 3) return samples
+    val ordered = if (samples.size < 2 || samples.first().timestampMs <= samples.last().timestampMs) {
+        samples
+    } else {
+        samples.sortedBy { it.timestampMs }
+    }
+    val pointCount = ordered.size
+    val referenceLat = ordered.first().latitude
+    val referenceLon = ordered.first().longitude
+    val metersPerDegreeLat = 111_132.0
+    val metersPerDegreeLon = (111_320.0 * kotlin.math.cos(Math.toRadians(referenceLat))).coerceAtLeast(1e-6)
+
+    val measuredX = DoubleArray(pointCount)
+    val measuredY = DoubleArray(pointCount)
+    val measuredSigma = DoubleArray(pointCount)
+    for (index in 0 until pointCount) {
+        val sample = ordered[index]
+        measuredX[index] = (sample.longitude - referenceLon) * metersPerDegreeLon
+        measuredY[index] = (sample.latitude - referenceLat) * metersPerDegreeLat
+        measuredSigma[index] = sample.accuracyRadiusMeters.coerceAtLeast(CONTACT_HISTORY_FILTER_MIN_SIGMA_M)
+    }
+
+    val forwardX = DoubleArray(pointCount)
+    val forwardY = DoubleArray(pointCount)
+    val forwardSigma = DoubleArray(pointCount)
+    forwardX[0] = measuredX[0]
+    forwardY[0] = measuredY[0]
+    forwardSigma[0] = measuredSigma[0]
+
+    for (index in 1 until pointCount) {
+        val dtSeconds = ((ordered[index].timestampMs - ordered[index - 1].timestampMs).coerceAtLeast(0L) / 1_000.0)
+        val processSigma = CONTACT_HISTORY_FILTER_PROCESS_BASE_NOISE_M +
+            (CONTACT_HISTORY_FILTER_PROCESS_NOISE_MPS * dtSeconds)
+        val priorVariance = (forwardSigma[index - 1] * forwardSigma[index - 1]) + (processSigma * processSigma)
+
+        var measurementSigma = measuredSigma[index]
+        val innovationDx = measuredX[index] - forwardX[index - 1]
+        val innovationDy = measuredY[index] - forwardY[index - 1]
+        val innovationDistance = kotlin.math.hypot(innovationDx, innovationDy)
+        val plausibleDistance = CONTACT_HISTORY_FILTER_BASE_PLAUSIBLE_DISTANCE_M +
+            (CONTACT_HISTORY_FILTER_MAX_SPEED_MPS * dtSeconds) +
+            (2.0 * forwardSigma[index - 1]) +
+            (2.0 * measurementSigma)
+        if (innovationDistance > plausibleDistance) {
+            measurementSigma *= CONTACT_HISTORY_FILTER_OUTLIER_PENALTY
+        }
+
+        val measurementVariance = measurementSigma * measurementSigma
+        val kalmanGain = priorVariance / (priorVariance + measurementVariance)
+        forwardX[index] = forwardX[index - 1] + (kalmanGain * innovationDx)
+        forwardY[index] = forwardY[index - 1] + (kalmanGain * innovationDy)
+        forwardSigma[index] = kotlin.math.sqrt((1.0 - kalmanGain) * priorVariance)
+            .coerceAtLeast(CONTACT_HISTORY_FILTER_MIN_SIGMA_M * 0.35)
+    }
+
+    val backwardX = DoubleArray(pointCount)
+    val backwardY = DoubleArray(pointCount)
+    val backwardSigma = DoubleArray(pointCount)
+    val lastIndex = pointCount - 1
+    backwardX[lastIndex] = measuredX[lastIndex]
+    backwardY[lastIndex] = measuredY[lastIndex]
+    backwardSigma[lastIndex] = measuredSigma[lastIndex]
+
+    for (index in (lastIndex - 1) downTo 0) {
+        val dtSeconds = ((ordered[index + 1].timestampMs - ordered[index].timestampMs).coerceAtLeast(0L) / 1_000.0)
+        val processSigma = CONTACT_HISTORY_FILTER_PROCESS_BASE_NOISE_M +
+            (CONTACT_HISTORY_FILTER_PROCESS_NOISE_MPS * dtSeconds)
+        val priorVariance = (backwardSigma[index + 1] * backwardSigma[index + 1]) + (processSigma * processSigma)
+
+        var measurementSigma = measuredSigma[index]
+        val innovationDx = measuredX[index] - backwardX[index + 1]
+        val innovationDy = measuredY[index] - backwardY[index + 1]
+        val innovationDistance = kotlin.math.hypot(innovationDx, innovationDy)
+        val plausibleDistance = CONTACT_HISTORY_FILTER_BASE_PLAUSIBLE_DISTANCE_M +
+            (CONTACT_HISTORY_FILTER_MAX_SPEED_MPS * dtSeconds) +
+            (2.0 * backwardSigma[index + 1]) +
+            (2.0 * measurementSigma)
+        if (innovationDistance > plausibleDistance) {
+            measurementSigma *= CONTACT_HISTORY_FILTER_OUTLIER_PENALTY
+        }
+
+        val measurementVariance = measurementSigma * measurementSigma
+        val kalmanGain = priorVariance / (priorVariance + measurementVariance)
+        backwardX[index] = backwardX[index + 1] + (kalmanGain * innovationDx)
+        backwardY[index] = backwardY[index + 1] + (kalmanGain * innovationDy)
+        backwardSigma[index] = kotlin.math.sqrt((1.0 - kalmanGain) * priorVariance)
+            .coerceAtLeast(CONTACT_HISTORY_FILTER_MIN_SIGMA_M * 0.35)
+    }
+
+    val output = ArrayList<ContactHistoryTimelineSample>(pointCount)
+    for (index in 0 until pointCount) {
+        val forwardVariance = (forwardSigma[index] * forwardSigma[index]).coerceAtLeast(1e-4)
+        val backwardVariance = (backwardSigma[index] * backwardSigma[index]).coerceAtLeast(1e-4)
+        val forwardWeight = 1.0 / forwardVariance
+        val backwardWeight = 1.0 / backwardVariance
+        val combinedWeight = (forwardWeight + backwardWeight).coerceAtLeast(1e-6)
+
+        val smoothedX = ((forwardX[index] * forwardWeight) + (backwardX[index] * backwardWeight)) / combinedWeight
+        val smoothedY = ((forwardY[index] * forwardWeight) + (backwardY[index] * backwardWeight)) / combinedWeight
+        val smoothedSigma = kotlin.math.sqrt(1.0 / combinedWeight)
+            .coerceIn(1.0, CONTACT_HISTORY_PATH_MAX_ACCURACY_M)
+
+        val latitude = (referenceLat + (smoothedY / metersPerDegreeLat)).coerceIn(-90.0, 90.0)
+        val rawLongitude = referenceLon + (smoothedX / metersPerDegreeLon)
+        val longitude = ((rawLongitude + 540.0) % 360.0) - 180.0
+        val original = ordered[index]
+        output += ContactHistoryTimelineSample(
+            timestampMs = original.timestampMs,
+            latitude = latitude,
+            longitude = longitude,
+            accuracyRadiusMeters = smoothedSigma
+        )
+    }
+    return output
+}
+
+private fun approximateZoneOffsetForContactSample(sample: ContactHistoryTimelineSample): java.time.ZoneOffset {
+    val estimatedHour = kotlin.math.round(sample.longitude / 15.0)
+        .toInt()
+        .coerceIn(-12, 14)
+    return java.time.ZoneOffset.ofHours(estimatedHour)
+}
+
+private fun contactHistoryMsForFraction(
+    windowStartMs: Long,
+    windowEndInclusiveMs: Long,
+    fraction: Float
+): Long {
+    if (windowEndInclusiveMs <= windowStartMs) {
+        return windowStartMs
+    }
+    val clampedFraction = fraction.coerceIn(0f, 1f)
+    val rangeMs = (windowEndInclusiveMs - windowStartMs).toDouble()
+    return windowStartMs + kotlin.math.round(rangeMs * clampedFraction).toLong()
+}
+
+private suspend fun loadContactHistoryHeatmapData(senderId: String): ContactHistoryHeatmapData {
+    val history = LocationSharingController.fetchContactHistoryLast24h(senderId)
+        .getOrElse { throwable ->
+            if (throwable is kotlinx.coroutines.CancellationException) throw throwable
+            throw throwable
+        }
+    val bins = IntArray(CONTACT_HISTORY_HEATMAP_BIN_COUNT)
+    val durationMs = (history.windowEndMs - history.windowStartMs).coerceAtLeast(1L)
+    val timelineSamples = buildContactHistoryTimelineSamples(history.samples)
+
+    timelineSamples.forEach { sample ->
+        val offsetMs = (sample.timestampMs - history.windowStartMs).coerceIn(0L, durationMs)
+        val index = ((offsetMs.toDouble() / durationMs.toDouble()) * bins.size.toDouble())
+            .toInt()
+            .coerceIn(0, bins.lastIndex)
+        bins[index] += 1
+    }
+
+    val availableStartMs = timelineSamples.minOfOrNull { it.timestampMs }
+    val availableEndMs = timelineSamples.maxOfOrNull { it.timestampMs }
+
+    return ContactHistoryHeatmapData(
+        windowStartMs = history.windowStartMs,
+        windowEndInclusiveMs = history.windowEndMs,
+        bins = bins.toList(),
+        totalSamples = bins.sum(),
+        maxBinCount = bins.maxOrNull() ?: 0,
+        timelineSamples = timelineSamples,
+        availableRangeStartMs = availableStartMs,
+        availableRangeEndMs = availableEndMs
+    )
+}
+
+private fun buildContactHistoryTimelineSamples(
+    samples: List<com.example.blackbox.sharing.ContactHistorySample>,
+    maxPoints: Int = 4_000
+): List<ContactHistoryTimelineSample> {
+    if (samples.isEmpty()) return emptyList()
+    val ordered = samples.sortedBy { it.timestampMs }
+    if (ordered.size <= maxPoints) {
+        return ordered.map {
+            ContactHistoryTimelineSample(
+                timestampMs = it.timestampMs,
+                latitude = it.latitude,
+                longitude = it.longitude,
+                accuracyRadiusMeters = it.accuracyMeters.coerceAtLeast(1.0)
+            )
+        }
+    }
+    val step = (ordered.size.toDouble() / maxPoints.toDouble()).coerceAtLeast(1.0)
+    val output = ArrayList<ContactHistoryTimelineSample>(maxPoints)
+    var idx = 0.0
+    while (idx < ordered.size) {
+        val sample = ordered[idx.toInt().coerceIn(0, ordered.lastIndex)]
+        output += ContactHistoryTimelineSample(
+            timestampMs = sample.timestampMs,
+            latitude = sample.latitude,
+            longitude = sample.longitude,
+            accuracyRadiusMeters = sample.accuracyMeters.coerceAtLeast(1.0)
+        )
+        idx += step
+    }
+    return output.sortedBy { it.timestampMs }
 }
 
 @Composable
@@ -1135,7 +2568,7 @@ fun ContactsSection(
     onToggleFollow: (String, Boolean) -> Unit,
     onAliasApply: (String, String?) -> Unit,
     onRemoveContact: (String) -> Unit,
-    onOpenMap: (Double, Double, Double) -> Unit = { _, _, _ -> }
+    onOpenMap: (String, String, Double, Double, Double) -> Unit = { _, _, _, _, _ -> }
 ) {
     val context = LocalContext.current
     val view = LocalView.current
@@ -1321,6 +2754,8 @@ fun ContactsSection(
                                             .clickable {
                                                 emitTapHaptic(view)
                                                 onOpenMap(
+                                                    contact.senderId,
+                                                    contact.displayName,
                                                     latestCard.claim.lat,
                                                     latestCard.claim.lon,
                                                     latestCard.claim.accuracy?.toDouble() ?: 25.0

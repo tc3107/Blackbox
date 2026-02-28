@@ -16,6 +16,9 @@ import {
   parseJson,
   RelayStatusRequest,
   RelayStatusResponse,
+  PullHistoryRequest,
+  PullHistoryResponse,
+  PullHistoryEnvelopeRecord,
   PullBatchRequest,
   PullRecord,
   PushLocationRequest,
@@ -32,6 +35,8 @@ const DOC_KEY = "doc";
 const MAX_REQUEST_SKEW_MS = 5 * 60_000;
 const NONCE_TTL_MS = 15 * 60_000;
 const MAX_REQUEST_BODY_BYTES = 300_000;
+const HISTORY_RETENTION_MS = 24 * 60 * 60_000;
+const HISTORY_MAX_ENTRIES = 6_000;
 
 export interface Env {
   SENDER_STATE: DurableObjectNamespace;
@@ -181,6 +186,8 @@ function routeToSenderObject(path: string): { path: string; internalPath: string
       return { path, internalPath: "/internal/location/self-status" };
     case "/v1/location/clear":
       return { path, internalPath: "/internal/location/clear" };
+    case "/v1/location/pull-history":
+      return { path, internalPath: "/internal/location/pull-history" };
     default:
       return null;
   }
@@ -197,6 +204,9 @@ function extractSenderId(path: string, rawBody: string): string | null {
       const push = parsed.push as Record<string, unknown> | undefined;
       const envelope = push?.envelope as Record<string, unknown> | undefined;
       return (envelope?.senderId as string) ?? null;
+    }
+    if (path === "/v1/location/pull-history") {
+      return (parsed.senderId as string) ?? null;
     }
     return (parsed.senderId as string) ?? null;
   } catch {
@@ -224,6 +234,8 @@ export class SenderStateDO {
         return this.handleClear(request);
       case "/internal/location/pull-one":
         return this.handlePullOne(request);
+      case "/internal/location/pull-history":
+        return this.handlePullHistory(request);
       default:
         return jsonResponse({ ok: false, message: "Unknown DO route." }, { status: 404 });
     }
@@ -348,19 +360,29 @@ export class SenderStateDO {
     }
 
     const storedAtMs = nowMs();
+    const nextLatestEnvelope = {
+      ...body.push,
+      envelope: {
+        ...envelope,
+        recipientCiphertexts: normalizedCiphertexts,
+      },
+    };
+    const nextHistory = [
+      ...(doc.historyEnvelopes ?? []),
+      {
+        storedAtMs,
+        envelope: nextLatestEnvelope,
+      },
+    ];
     const nextDoc: SenderStateDocument = {
       ...doc,
       senderSignPublicKeySpkiB64Url: body.senderSignPublicKeySpkiB64Url,
       senderEncPublicKeysetJson: body.senderEncPublicKeysetJson,
-      latestEnvelope: {
-        ...body.push,
-        envelope: {
-          ...envelope,
-          recipientCiphertexts: normalizedCiphertexts,
-        },
-      },
+      latestEnvelope: nextLatestEnvelope,
       latestStoredAtMs: storedAtMs,
+      historyEnvelopes: nextHistory,
     };
+    this.pruneHistory(nextDoc, storedAtMs);
     await this.writeDoc(nextDoc);
 
     return jsonResponse({
@@ -450,6 +472,7 @@ export class SenderStateDO {
 
     doc.latestEnvelope = undefined;
     doc.latestStoredAtMs = undefined;
+    doc.historyEnvelopes = [];
     await this.writeDoc(doc);
 
     return jsonResponse({ ok: true, cleared: true });
@@ -519,16 +542,97 @@ export class SenderStateDO {
     });
   }
 
+  private async handlePullHistory(request: Request): Promise<Response> {
+    const body = await parseJson<PullHistoryRequest>(request);
+    if (!validateSenderId(body.senderId)) {
+      return badRequest("Invalid senderId.");
+    }
+    if (!validateSenderId(body.receiverId)) {
+      return badRequest("Invalid receiverId.");
+    }
+    if (!ensureRequestFresh(body.timestampMs, MAX_REQUEST_SKEW_MS)) {
+      return badRequest("Request timestamp out of allowed window.");
+    }
+
+    const receiverIdFromKey = await senderIdFromSignPublicKey(body.receiverSignPublicKeySpkiB64Url);
+    if (!timingSafeEqual(body.receiverId, receiverIdFromKey)) {
+      return unauthorized("Pull-history receiverId does not match signing key.");
+    }
+
+    const signatureValid = await verifySignature(
+      body.receiverSignPublicKeySpkiB64Url,
+      canonicalPullMessage(body.receiverId, [body.senderId], body.timestampMs, body.nonceB64Url),
+      body.signatureB64Url,
+    );
+    if (!signatureValid) {
+      return unauthorized("Pull-history signature verification failed.");
+    }
+
+    const doc = await this.readDoc(body.senderId);
+    if (!this.trackNonce(doc, body.receiverId, body.nonceB64Url, body.timestampMs)) {
+      return unauthorized("Pull-history nonce rejected.");
+    }
+
+    if (!doc.receiverIds.includes(body.receiverId)) {
+      await this.writeDoc(doc);
+      const response: PullHistoryResponse = {
+        ok: true,
+        senderId: body.senderId,
+        status: "unauthorized",
+        records: [],
+        message: "Receiver not authorized.",
+      };
+      return jsonResponse(response);
+    }
+
+    const records = this.filteredHistoryForReceiver(doc, body.receiverId);
+    await this.writeDoc(doc);
+
+    if (records.length === 0) {
+      const response: PullHistoryResponse = {
+        ok: true,
+        senderId: body.senderId,
+        status: "no_data",
+        records: [],
+        message: "No history available.",
+      };
+      return jsonResponse(response);
+    }
+
+    const response: PullHistoryResponse = {
+      ok: true,
+      senderId: body.senderId,
+      status: "ok",
+      records,
+    };
+    return jsonResponse(response);
+  }
+
   private async readDoc(senderId: string): Promise<SenderStateDocument> {
     const existing = await this.state.storage.get<SenderStateDocument>(DOC_KEY);
     if (existing) {
-      return existing;
+      const normalized: SenderStateDocument = {
+        ...existing,
+        senderId: existing.senderId || senderId,
+        senderSignPublicKeySpkiB64Url: existing.senderSignPublicKeySpkiB64Url ?? "",
+        aclSeq: existing.aclSeq ?? 0,
+        receiverIds: Array.isArray(existing.receiverIds) ? existing.receiverIds : [],
+        noncesByActor: existing.noncesByActor ?? {},
+        historyEnvelopes: this.historyFromDoc(existing),
+      };
+      const changedByPrune = this.pruneHistory(normalized);
+      const missingHistoryOnStoredDoc = !Array.isArray((existing as Partial<SenderStateDocument>).historyEnvelopes);
+      if (changedByPrune || missingHistoryOnStoredDoc) {
+        await this.writeDoc(normalized);
+      }
+      return normalized;
     }
     const created: SenderStateDocument = {
       senderId,
       senderSignPublicKeySpkiB64Url: "",
       aclSeq: 0,
       receiverIds: [],
+      historyEnvelopes: [],
       noncesByActor: {},
     };
     await this.writeDoc(created);
@@ -537,6 +641,98 @@ export class SenderStateDO {
 
   private async writeDoc(doc: SenderStateDocument): Promise<void> {
     await this.state.storage.put(DOC_KEY, doc);
+  }
+
+  private historyFromDoc(doc: Partial<SenderStateDocument>): PullHistoryEnvelopeRecord[] {
+    const entries = Array.isArray(doc.historyEnvelopes)
+      ? doc.historyEnvelopes.filter((entry) => typeof entry.storedAtMs === "number" && !!entry.envelope)
+      : [];
+    if (entries.length > 0) {
+      return entries;
+    }
+    if (doc.latestEnvelope && typeof doc.latestStoredAtMs === "number") {
+      return [{
+        storedAtMs: doc.latestStoredAtMs,
+        envelope: doc.latestEnvelope,
+      }];
+    }
+    return [];
+  }
+
+  private pruneHistory(doc: SenderStateDocument, referenceNowMs = nowMs()): boolean {
+    const previousHistory = doc.historyEnvelopes;
+    const previousHistorySignature = previousHistory
+      .map((entry) => `${entry.storedAtMs}:${entry.envelope.envelope.seq}`)
+      .join(",");
+    const previousLatestSeq = doc.latestEnvelope?.envelope.seq;
+    const previousLatestStoredAtMs = doc.latestStoredAtMs;
+
+    const byKey = new Map<string, PullHistoryEnvelopeRecord>();
+    for (const entry of previousHistory) {
+      if (typeof entry.storedAtMs !== "number" || !entry.envelope) {
+        continue;
+      }
+      const key = `${entry.envelope.envelope.seq}|${entry.storedAtMs}`;
+      byKey.set(key, entry);
+    }
+
+    let sorted = Array.from(byKey.values()).sort((left, right) => {
+      if (left.storedAtMs !== right.storedAtMs) {
+        return left.storedAtMs - right.storedAtMs;
+      }
+      return left.envelope.envelope.seq - right.envelope.envelope.seq;
+    });
+    const latest = sorted.at(-1);
+    const cutoff = referenceNowMs - HISTORY_RETENTION_MS;
+    sorted = sorted.filter((entry) => entry.storedAtMs >= cutoff);
+    if (latest && !sorted.some((entry) => entry.storedAtMs === latest.storedAtMs && entry.envelope.envelope.seq === latest.envelope.envelope.seq)) {
+      sorted.push(latest);
+      sorted.sort((left, right) => {
+        if (left.storedAtMs !== right.storedAtMs) {
+          return left.storedAtMs - right.storedAtMs;
+        }
+        return left.envelope.envelope.seq - right.envelope.envelope.seq;
+      });
+    }
+    if (sorted.length > HISTORY_MAX_ENTRIES) {
+      sorted = sorted.slice(sorted.length - HISTORY_MAX_ENTRIES);
+    }
+
+    doc.historyEnvelopes = sorted;
+    const latestRetained = sorted.at(-1);
+    doc.latestEnvelope = latestRetained?.envelope;
+    doc.latestStoredAtMs = latestRetained?.storedAtMs;
+
+    const nextHistorySignature = doc.historyEnvelopes
+      .map((entry) => `${entry.storedAtMs}:${entry.envelope.envelope.seq}`)
+      .join(",");
+    const latestSeqChanged = previousLatestSeq !== doc.latestEnvelope?.envelope.seq;
+    const latestStoredChanged = previousLatestStoredAtMs !== doc.latestStoredAtMs;
+    const historyChanged = previousHistorySignature !== nextHistorySignature;
+    return latestSeqChanged || latestStoredChanged || historyChanged;
+  }
+
+  private filteredHistoryForReceiver(doc: SenderStateDocument, receiverId: string): PullHistoryEnvelopeRecord[] {
+    return doc.historyEnvelopes
+      .map((entry) => {
+        const filteredCiphertext = entry.envelope.envelope.recipientCiphertexts.find(
+          (item) => item.recipientId === receiverId,
+        );
+        if (!filteredCiphertext) {
+          return null;
+        }
+        return {
+          storedAtMs: entry.storedAtMs,
+          envelope: {
+            ...entry.envelope,
+            envelope: {
+              ...entry.envelope.envelope,
+              recipientCiphertexts: [filteredCiphertext],
+            },
+          },
+        };
+      })
+      .filter((entry): entry is PullHistoryEnvelopeRecord => entry !== null);
   }
 
   private trackNonce(doc: SenderStateDocument, actorId: string, nonce: string, timestampMs: number): boolean {
