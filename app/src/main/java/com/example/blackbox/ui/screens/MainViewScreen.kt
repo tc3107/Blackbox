@@ -800,7 +800,8 @@ fun MainViewScreen(
     if (databaseDialogVisible) {
         MainOverlayDialog(
             onDismissRequest = { databaseDialogVisible = false },
-            title = "Database"
+            title = "Database",
+            useContainer = false
         ) {
             DatabasePanel(
                 modifier = Modifier.fillMaxWidth()
@@ -814,7 +815,8 @@ fun MainViewScreen(
                 settingsDialogVisible = false
                 settingsDialogInitialEditor = null
             },
-            title = "Settings"
+            title = "Settings",
+            useContainer = false
         ) {
             SettingsScreen(
                 settings = settings,
@@ -1062,11 +1064,20 @@ private fun MainOverlayDialog(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     if (!title.isNullOrBlank()) {
-                        Text(
-                            text = title,
-                            style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier.padding(start = 6.dp, bottom = 2.dp)
-                        )
+                        OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = title,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
                     }
                     content()
                 }

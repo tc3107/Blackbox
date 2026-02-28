@@ -59,6 +59,7 @@ import kotlinx.coroutines.withContext
 private const val SETTINGS_DIALOG_WIDTH_FRACTION = 0.96f
 private val SETTINGS_TOP_BAR_SCROLL_CLEARANCE = 16.dp
 private val SETTINGS_BOTTOM_BAR_SCROLL_CLEARANCE = 104.dp
+private val SETTINGS_DIALOG_HORIZONTAL_PADDING = 6.dp
 
 @Composable
 @Suppress("UNUSED_PARAMETER")
@@ -204,9 +205,9 @@ fun SettingsScreen(
                 )
                 .verticalScroll(rememberScrollState())
                 .padding(
-                    start = 20.dp,
+                    start = if (embeddedInDialog) SETTINGS_DIALOG_HORIZONTAL_PADDING else 20.dp,
                     top = if (embeddedInDialog) 4.dp else SETTINGS_TOP_BAR_SCROLL_CLEARANCE,
-                    end = 20.dp,
+                    end = if (embeddedInDialog) SETTINGS_DIALOG_HORIZONTAL_PADDING else 20.dp,
                     bottom = if (embeddedInDialog) 12.dp else SETTINGS_BOTTOM_BAR_SCROLL_CLEARANCE
                 ),
             verticalArrangement = Arrangement.spacedBy(16.dp)
