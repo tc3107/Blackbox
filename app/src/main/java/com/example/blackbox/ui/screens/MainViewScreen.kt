@@ -5,6 +5,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.view.HapticFeedbackConstants
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -103,6 +104,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.core.content.ContextCompat
 import com.example.blackbox.data.locationdb.LocationPersistenceController
 import com.example.blackbox.data.settings.UiSettings
 import com.example.blackbox.location.LocationEngine
@@ -112,7 +114,10 @@ import com.example.blackbox.location.MotionFix
 import com.example.blackbox.location.PositionFix
 import com.example.blackbox.location.hasAnyLocationPermission
 import com.example.blackbox.location.hasNotificationPermission
+import com.example.blackbox.logging.AppLog as Log
 import com.example.blackbox.sharing.LocationSharingController
+import com.example.blackbox.sharing.QrScannerActivity
+import com.example.blackbox.sharing.SHARING_DEBUG_TAG
 import com.example.blackbox.sharing.SharingLogic
 import com.example.blackbox.sharing.ShareZone
 import com.example.blackbox.sharing.ZONE_NAME_MAX_LENGTH
@@ -328,10 +333,10 @@ fun MainViewScreen(
     val scanQrLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        val scanned = result.data?.getStringExtra(com.example.blackbox.sharing.QrScannerActivity.EXTRA_QR_TEXT)
+        val scanned = result.data?.getStringExtra(QrScannerActivity.EXTRA_QR_TEXT)
             ?.trim().orEmpty()
         if (scanned.isBlank()) {
-            scanError = result.data?.getStringExtra(com.example.blackbox.sharing.QrScannerActivity.EXTRA_ERROR)
+            scanError = result.data?.getStringExtra(QrScannerActivity.EXTRA_ERROR)
             return@rememberLauncherForActivityResult
         }
         scope.launch {
@@ -341,6 +346,34 @@ fun MainViewScreen(
                     addContactsDialogVisible = false
                 }
                 .onFailure { scanError = it.message ?: "Failed to import location code." }
+        }
+    }
+    val launchQrScanner = {
+        runCatching {
+            scanQrLauncher.launch(Intent(context, QrScannerActivity::class.java))
+        }.onFailure { throwable ->
+            Log.e(SHARING_DEBUG_TAG, "Failed to launch QR scanner activity from main screen", throwable)
+            scanError = "Could not open QR scanner."
+        }
+    }
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            launchQrScanner()
+        } else {
+            scanError = "Camera permission is required to scan QR codes."
+        }
+    }
+
+    fun requestCameraPermissionAndLaunch() {
+        val cameraGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+        if (cameraGranted) {
+            launchQrScanner()
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
         }
     }
 
@@ -662,7 +695,7 @@ fun MainViewScreen(
                         }
                         OutlinedButton(
                             onClick = {
-                                scanQrLauncher.launch(Intent(context, com.example.blackbox.sharing.QrScannerActivity::class.java))
+                                requestCameraPermissionAndLaunch()
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -736,7 +769,7 @@ fun MainViewScreen(
                 state = sharingState,
                 onShowQr = { showQrDialogVisible = true },
                 onScanQr = {
-                    scanQrLauncher.launch(Intent(context, com.example.blackbox.sharing.QrScannerActivity::class.java))
+                    requestCameraPermissionAndLaunch()
                 },
                 onPollNow = { LocationSharingController.manualPollNow() },
                 onToggleShareTo = { senderId, checked ->

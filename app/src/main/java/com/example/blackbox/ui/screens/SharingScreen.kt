@@ -1,9 +1,11 @@
 package com.example.blackbox.ui.screens
 
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import com.example.blackbox.logging.AppLog as Log
@@ -105,6 +107,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.core.graphics.toColorInt
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -424,6 +427,34 @@ fun SharingScreen(modifier: Modifier = Modifier) {
             }
         )
     }
+    val launchQrScanner = {
+        runCatching {
+            scanQrLauncher.launch(Intent(context, QrScannerActivity::class.java))
+        }.onFailure { throwable ->
+            Log.e(SHARING_DEBUG_TAG, "Failed to launch QR scanner activity from sharing screen", throwable)
+            scanManualCodeError = "Could not open QR scanner."
+        }
+    }
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            launchQrScanner()
+        } else {
+            scanManualCodeError = "Camera permission is required to scan QR codes."
+        }
+    }
+
+    fun requestCameraPermissionAndLaunch() {
+        val cameraGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+        if (cameraGranted) {
+            launchQrScanner()
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
 
     LaunchedEffect(context) {
         val permissionGranted = withContext(Dispatchers.IO) {
@@ -619,7 +650,7 @@ fun SharingScreen(modifier: Modifier = Modifier) {
                 scanManualCodeError = null
             },
             onScanCamera = {
-                scanQrLauncher.launch(Intent(context, QrScannerActivity::class.java))
+                requestCameraPermissionAndLaunch()
             },
             onVerifyPaste = {
                 importContactCodeAndHandle(

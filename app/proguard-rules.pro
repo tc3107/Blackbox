@@ -29,3 +29,17 @@
     public static int e(...);
     public static int wtf(...);
 }
+
+# ML Kit uses manifest metadata + reflection to instantiate registrars.
+# Keep these classes and their public no-arg constructors in minified builds.
+-keep class com.google.mlkit.common.internal.CommonComponentRegistrar {
+    public <init>();
+}
+
+-keep class com.google.mlkit.vision.common.internal.VisionCommonRegistrar {
+    public <init>();
+}
+
+-keep class com.google.mlkit.vision.barcode.internal.BarcodeRegistrar {
+    public <init>();
+}
