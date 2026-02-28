@@ -12,7 +12,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.AnimatedVisibility
@@ -127,6 +126,7 @@ import com.example.blackbox.sharing.QrScannerActivity
 import com.example.blackbox.sharing.SHARING_DEBUG_TAG
 import com.example.blackbox.sharing.hasSharingNetworkPermissions
 import com.example.blackbox.ui.components.ButtonLabel
+import com.example.blackbox.ui.components.CycleTimerProgressBar
 import com.example.blackbox.ui.components.MapTargetType
 import com.example.blackbox.ui.components.StaticRadiusMapPreview
 import com.example.blackbox.ui.theme.neomorphicShadow
@@ -145,7 +145,6 @@ import kotlinx.coroutines.withContext
 
 private const val DIALOG_WIDTH_FRACTION = 0.96f
 private const val RELAY_STATUS_UI_DEBOUNCE_MS = 800L
-private const val BAR_TAP_BOOST_DURATION_MS = 420L
 private const val EXPANDED_CONTACT_POLL_INTERVAL_MS = 20_000L
 private const val ACTIVE_LOCATION_EVENT_INTERVAL_MS = 1_000L
 private const val LOW_POWER_LOCATION_EVENT_INTERVAL_MS = 3 * 60_000L
@@ -666,11 +665,7 @@ private fun RefreshDelaysCard(
         totalMs = pollTotal
     )
     val hasFollowTargets = sharingState.followingCount > 0
-    val pollDisplayRemaining = if (hasFollowTargets && pollRemaining == 0L && pollTotal > 0L) {
-        1_000L
-    } else {
-        pollRemaining
-    }
+    val pollDisplayRemaining = pollRemaining
     val sendAnchor = sharingState.sync.lastPushSuccessAtMs ?: sharingState.sync.lastPushAttemptAtMs
     val sendRemaining = remainingDelayMs(
         nowMs = nowMs,
@@ -689,12 +684,11 @@ private fun RefreshDelaysCard(
     val waitingForLocationEvent = sendWaiting && sendRemaining == 0L && locationEventIntervalMs > 0L
     val sendDisplayTotal = if (waitingForLocationEvent) locationEventIntervalMs else sendTotal
     val sendDisplayRemaining = if (waitingForLocationEvent) {
-        val waitingRemaining = remainingDelayMs(
+        remainingDelayMs(
             nowMs = nowMs,
             lastAtMs = locationState.bestPositionFix?.receivedAtMillis,
             totalMs = locationEventIntervalMs
         )
-        if (waitingRemaining == 0L && locationEventIntervalMs > 0L) 1_000L else waitingRemaining
     } else {
         sendRemaining
     }
@@ -759,11 +753,6 @@ private fun DelayProgressRow(
     val visualActive = isActive || (
         allowTimerDrivenVisualActive && totalMs > 0L && remainingMs in 1L until totalMs
     )
-    val progress = if (totalMs <= 0L) {
-        1f
-    } else {
-        ((totalMs - remainingMs).toFloat() / totalMs.toFloat()).coerceIn(0f, 1f)
-    }
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -799,104 +788,24 @@ private fun DelayProgressRow(
                 color = valueColor
             )
         }
-        DelayProgressBar(progress = progress, nowMs = nowMs, isActive = visualActive)
+        DelayProgressBar(
+            totalMs = totalMs,
+            remainingMs = remainingMs,
+            nowMs = nowMs,
+            isActive = visualActive
+        )
     }
 }
 
 @Composable
-private fun DelayProgressBar(progress: Float, nowMs: Long, isActive: Boolean) {
-    val scope = rememberCoroutineScope()
-    var tapBoostActive by remember { mutableStateOf(false) }
-    val drawAsActive = isActive || tapBoostActive
-    val outlineColor = if (drawAsActive) {
-        MaterialTheme.colorScheme.outline.copy(alpha = 0.75f)
-    } else {
-        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.28f)
-    }
-    val trailColor = if (drawAsActive) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
-    }
-    val inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.60f)
-    var boostToken by remember { mutableStateOf(0L) }
-    val animatedProgress = remember { Animatable(progress.coerceIn(0f, 1f)) }
-    val targetProgress = if (tapBoostActive) 1f else progress.coerceIn(0f, 1f)
-    LaunchedEffect(targetProgress) {
-        if (targetProgress >= animatedProgress.value) {
-            animatedProgress.animateTo(
-                targetValue = targetProgress,
-                animationSpec = tween(
-                    durationMillis = BAR_TAP_BOOST_DURATION_MS.toInt(),
-                    easing = FastOutSlowInEasing
-                )
-            )
-        } else {
-            // Snap on decreases/resets to avoid visible reverse jitter.
-            animatedProgress.snapTo(targetProgress)
-        }
-    }
-    val displayedProgress = animatedProgress.value
-    val shape = RoundedCornerShape(7.dp)
-    BoxWithConstraints(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(12.dp)
-            .clip(shape)
-            .border(width = 1.5.dp, color = outlineColor, shape = shape)
-            .padding(1.dp)
-            .clickable {
-                val token = boostToken + 1L
-                boostToken = token
-                tapBoostActive = true
-                scope.launch {
-                    delay(BAR_TAP_BOOST_DURATION_MS)
-                    if (boostToken == token) {
-                        tapBoostActive = false
-                    }
-                }
-            }
-    ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val width = size.width
-            val height = size.height
-            if (!drawAsActive) {
-                drawRect(
-                    color = inactiveTrackColor,
-                    topLeft = Offset.Zero,
-                    size = Size(width, height)
-                )
-                return@Canvas
-            }
-            val headX = width * displayedProgress
-            val trailLength = width * 0.34f
-            val trailStart = (headX - trailLength).coerceAtLeast(0f)
-            val fillWidth = headX.coerceAtLeast(0f)
-
-            if (fillWidth > 0f) {
-                drawRect(
-                    color = trailColor.copy(alpha = 0.10f),
-                    topLeft = Offset(0f, 0f),
-                    size = Size(fillWidth, height)
-                )
-            }
-            if (headX > 0f) {
-                drawRect(
-                    brush = Brush.horizontalGradient(
-                        colors = listOf(
-                            Color.Transparent,
-                            trailColor.copy(alpha = 0.35f),
-                            trailColor.copy(alpha = 0.9f)
-                        ),
-                        startX = trailStart,
-                        endX = headX
-                    ),
-                    topLeft = Offset(trailStart, 0f),
-                    size = Size((headX - trailStart).coerceAtLeast(1f), height)
-                )
-            }
-        }
-    }
+private fun DelayProgressBar(totalMs: Long, remainingMs: Long, nowMs: Long, isActive: Boolean) {
+    CycleTimerProgressBar(
+        totalMs = totalMs,
+        remainingMs = remainingMs,
+        sampleNowMs = nowMs,
+        isActive = isActive,
+        onTap = null
+    )
 }
 
 private fun remainingDelayMs(nowMs: Long, lastAtMs: Long?, totalMs: Long): Long {
