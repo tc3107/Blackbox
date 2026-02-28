@@ -358,23 +358,17 @@ fun MainViewScreen(
         locationState.bestPositionFix?.let { lastKnownMapFix = it }
     }
 
-    val desiredEngineOn = sharingState.settings.sharingEnabled || persistenceState.loggingEnabled
-    LaunchedEffect(desiredEngineOn, permissionGranted) {
-        if (desiredEngineOn) {
-            if (permissionGranted) {
-                LocationEngine.setEngineEnabled(true)
-            } else if (!permissionRequestInFlight) {
-                permissionRequestInFlight = true
-                permissionLauncher.launch(
-                    arrayOf(
-                        Manifest.permission.ACCESS_FINE_LOCATION,
-                        Manifest.permission.ACCESS_COARSE_LOCATION
-                    )
+    LaunchedEffect(permissionGranted) {
+        if (permissionGranted) {
+            LocationEngine.setEngineEnabled(true)
+        } else if (!permissionRequestInFlight) {
+            permissionRequestInFlight = true
+            permissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
                 )
-            }
-        } else {
-            LocationEngine.setEngineEnabled(false)
-            LocationEngineForegroundController.stop(context.applicationContext)
+            )
         }
     }
 
