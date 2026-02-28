@@ -5,16 +5,31 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.view.HapticFeedbackConstants
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -26,6 +41,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -38,7 +54,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import com.example.blackbox.ui.components.NeoOutlinedButton as OutlinedButton
 import com.example.blackbox.ui.components.NeoOutlinedCard as OutlinedCard
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.SelectableDates
 import com.example.blackbox.ui.components.NeoTextButton as TextButton
 import com.example.blackbox.ui.components.StaticRadiusMapPreview
 import androidx.compose.runtime.Composable
@@ -50,6 +71,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.key
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -57,10 +79,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -87,7 +120,13 @@ import com.example.blackbox.ui.components.rememberTimerActivityPulseActive
 import com.example.blackbox.ui.perf.UiPerfSection
 import com.example.blackbox.ui.perf.uiPerfDraw
 import com.example.blackbox.ui.theme.neomorphicShadow
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -102,9 +141,31 @@ private const val MAIN_TOGGLE_DEBOUNCE_MS = 120L
 private const val MAIN_SEND_TIMER_TAP_HIGH_DEMAND_WINDOW_MS = 8_000L
 private const val MAIN_SEND_TIMER_TAP_CONSUMER_ID = "main_send_timer_tap"
 private const val MAIN_MAP_USER_FIX_RECENT_WINDOW_MS = 20 * 60_000L
+private const val MAIN_HISTORY_DAY_MS = 86_400_000L
+private const val MAIN_HISTORY_DEFAULT_RANGE_DAYS_MAX = 7L
+private const val MAIN_HISTORY_HEATMAP_BIN_COUNT = 96
+private const val MAIN_HISTORY_HEATMAP_PULSE_DURATION_MS = 1_050
+private const val MAIN_HISTORY_POST_PULSE_GAP_MS = 140L
+private const val MAIN_HISTORY_HEATMAP_FADE_IN_MS = 540
+private const val MAIN_HISTORY_SELECTORS_FADE_IN_MS = 460
+private const val MAIN_HISTORY_SELECTORS_REVEAL_DELAY_MS = 340L
+private const val MAIN_HISTORY_PANEL_EXPAND_ANIM_MS = 180
 private val MAIN_TOP_BAR_SCROLL_CLEARANCE = 16.dp
 private val MAIN_BOTTOM_BAR_SCROLL_CLEARANCE = 120.dp
 private val MAIN_QR_BUTTON_HEIGHT = 56.dp
+private val MAIN_HISTORY_HEATMAP_SLOT_HEIGHT = 56.dp
+private val MAIN_HISTORY_TIMELINE_HEIGHT = 82.dp
+private val MAIN_HISTORY_TIMELINE_CORNER_RADIUS = 12.dp
+private val MAIN_HISTORY_HANDLE_WIDTH = 14.dp
+private val MAIN_HISTORY_HANDLE_HEIGHT = 56.dp
+private val MAIN_HISTORY_PRECISE_LINE_WIDTH = 4.dp
+private val MAIN_HISTORY_DRAG_TOUCH_RADIUS = 28.dp
+private val MAIN_HISTORY_DATE_FORMATTER: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US)
+private val MAIN_HISTORY_PRECISE_DATE_FORMATTER: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US)
+private val MAIN_HISTORY_PRECISE_TIME_FORMATTER: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("HH:mm:ss", Locale.US)
 
 private data class MainFullscreenMapRequest(
     val latitude: Double,
@@ -121,6 +182,30 @@ private data class MainViewLocationState(
     val bestMotionFix: MotionFix?,
     val engineEnabled: Boolean,
     val engineMode: LocationEngineMode
+)
+
+private enum class MainHistoryDatePickerTarget {
+    START,
+    END
+}
+
+private enum class MainHistoryDragTarget {
+    START,
+    END,
+    PRECISE
+}
+
+private data class MainHistoryHeatmapData(
+    val bins: List<Int>,
+    val totalSamples: Int,
+    val maxBinCount: Int,
+    val timelineSamples: List<MainHistoryTimelineSample>
+)
+
+private data class MainHistoryTimelineSample(
+    val timestampMs: Long,
+    val latitude: Double,
+    val longitude: Double
 )
 
 @Composable
@@ -300,6 +385,19 @@ fun MainViewScreen(
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .clip(innerShape)
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .clip(innerShape)
+                                        .clickable {
+                                            fullscreenMapRequest = MainFullscreenMapRequest(
+                                                latitude = lastFix.location.latitude,
+                                                longitude = lastFix.location.longitude,
+                                                radiusMeters = lastFix.accuracyMeters.toDouble(),
+                                                targetType = MapTargetType.USER
+                                            )
+                                        }
                                 )
                             } else {
                                 Text(
@@ -617,15 +715,34 @@ fun MainViewScreen(
     }
 
     fullscreenMapRequest?.let { request ->
+        val liveUserFix = if (request.targetType == MapTargetType.USER) {
+            locationState.bestPositionFix ?: lastKnownMapFix
+        } else {
+            null
+        }
+        val effectiveLatitude = liveUserFix?.location?.latitude ?: request.latitude
+        val effectiveLongitude = liveUserFix?.location?.longitude ?: request.longitude
+        val effectiveRadiusMeters = liveUserFix?.accuracyMeters?.toDouble() ?: request.radiusMeters
+        val useLocationHistoryOverlay = request.targetType == MapTargetType.USER
         FullscreenInteractiveMapDialog(
-            latitude = request.latitude,
-            longitude = request.longitude,
-            radiusMeters = request.radiusMeters,
+            latitude = effectiveLatitude,
+            longitude = effectiveLongitude,
+            radiusMeters = effectiveRadiusMeters,
             targetType = request.targetType,
             userLatitude = request.userLatitude,
             userLongitude = request.userLongitude,
             userRadiusMeters = request.userRadiusMeters,
-            onDismiss = { fullscreenMapRequest = null }
+            onDismiss = { fullscreenMapRequest = null },
+            showDefaultBackButton = !useLocationHistoryOverlay,
+            topOverlay = if (useLocationHistoryOverlay) {
+                {
+                    MainLocationHistoryOverlayPanel(
+                        onDismiss = { fullscreenMapRequest = null }
+                    )
+                }
+            } else {
+                null
+            }
         )
     }
 }
@@ -1091,4 +1208,1062 @@ private fun isInsideZone(lat: Double?, lon: Double?, zone: ShareZone): Boolean {
     if (lat == null || lon == null) return false
     val distanceM = SharingLogic.haversineMeters(lat, lon, zone.centerLat, zone.centerLon)
     return distanceM <= zone.radiusM.toDouble()
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MainLocationHistoryOverlayPanel(
+    onDismiss: () -> Unit
+) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    var startDate by remember { mutableStateOf<LocalDate?>(null) }
+    var endDate by remember { mutableStateOf<LocalDate?>(null) }
+    var userEditedStartDate by remember { mutableStateOf(false) }
+    var datePickerTarget by remember { mutableStateOf<MainHistoryDatePickerTarget?>(null) }
+    var selectedStartFraction by rememberSaveable { mutableStateOf(0f) }
+    var selectedEndFraction by rememberSaveable { mutableStateOf(1f) }
+    var preciseFraction by rememberSaveable { mutableStateOf(0.5f) }
+
+    val todayUtc = remember { LocalDate.now(ZoneOffset.UTC) }
+    val earliestDate by produceState<LocalDate?>(initialValue = null) {
+        value = withContext(Dispatchers.IO) {
+            loadMainHistoryEarliestDateUtc()
+        }
+    }
+
+    LaunchedEffect(earliestDate, todayUtc) {
+        val defaultStartDate = defaultMainHistoryStartDate(
+            earliestDate = earliestDate,
+            todayUtc = todayUtc
+        )
+        if (startDate == null) {
+            startDate = defaultStartDate
+        }
+        if (endDate == null) {
+            endDate = todayUtc
+        }
+        if (!userEditedStartDate) {
+            startDate = defaultStartDate
+        }
+    }
+
+    val effectiveStartDate = remember(startDate, endDate) {
+        when {
+            startDate == null && endDate == null -> null
+            startDate == null -> endDate
+            endDate == null -> startDate
+            else -> minOf(startDate!!, endDate!!)
+        }
+    }
+    val effectiveEndDate = remember(startDate, endDate) {
+        when {
+            startDate == null && endDate == null -> null
+            startDate == null -> endDate
+            endDate == null -> startDate
+            else -> maxOf(startDate!!, endDate!!)
+        }
+    }
+    val heatmapData by produceState<MainHistoryHeatmapData?>(
+        initialValue = null,
+        key1 = effectiveStartDate,
+        key2 = effectiveEndDate
+    ) {
+        val start = effectiveStartDate
+        val end = effectiveEndDate
+        if (start == null || end == null) {
+            value = null
+            return@produceState
+        }
+        value = null
+        value = withContext(Dispatchers.IO) {
+            loadMainHistoryHeatmapData(
+                startDate = start,
+                endDate = end
+            )
+        }
+    }
+    val heatmapLoading = effectiveStartDate != null && effectiveEndDate != null && heatmapData == null
+    val heatmapLoaded = !heatmapLoading && heatmapData != null
+    var heatmapVisible by remember(effectiveStartDate, effectiveEndDate) { mutableStateOf(false) }
+    var selectorsVisible by remember(effectiveStartDate, effectiveEndDate) { mutableStateOf(false) }
+    val dividerColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.60f)
+
+    LaunchedEffect(heatmapLoaded, effectiveStartDate, effectiveEndDate) {
+        if (!heatmapLoaded) {
+            heatmapVisible = false
+            selectorsVisible = false
+            return@LaunchedEffect
+        }
+        heatmapVisible = false
+        selectorsVisible = false
+        // Wait for one full pulse cycle so loading ends on a soft fade-out.
+        delay(MAIN_HISTORY_HEATMAP_PULSE_DURATION_MS.toLong() * 2L)
+        delay(MAIN_HISTORY_POST_PULSE_GAP_MS)
+        heatmapVisible = true
+        delay(MAIN_HISTORY_SELECTORS_REVEAL_DELAY_MS)
+        selectorsVisible = true
+    }
+
+    LaunchedEffect(selectedStartFraction, selectedEndFraction, preciseFraction) {
+        val minGapFraction = 0.001f
+        var normalizedStart = selectedStartFraction.coerceIn(0f, 1f)
+        var normalizedEnd = selectedEndFraction.coerceIn(0f, 1f)
+        if (normalizedEnd - normalizedStart < minGapFraction) {
+            normalizedEnd = (normalizedStart + minGapFraction).coerceAtMost(1f)
+            normalizedStart = (normalizedEnd - minGapFraction).coerceAtLeast(0f)
+        }
+        val normalizedPrecise = preciseFraction.coerceIn(normalizedStart, normalizedEnd)
+        if (normalizedStart != selectedStartFraction) {
+            selectedStartFraction = normalizedStart
+        }
+        if (normalizedEnd != selectedEndFraction) {
+            selectedEndFraction = normalizedEnd
+        }
+        if (normalizedPrecise != preciseFraction) {
+            preciseFraction = normalizedPrecise
+        }
+    }
+
+    val preciseSelectedMs = remember(effectiveStartDate, effectiveEndDate, preciseFraction) {
+        val startDateValue = effectiveStartDate ?: return@remember null
+        val endDateValue = effectiveEndDate ?: return@remember null
+        val windowStartMs = localDateToUtcStartMillis(startDateValue)
+        val windowEndInclusiveMs = localDateToUtcStartMillis(endDateValue.plusDays(1)) - 1L
+        mainHistoryMsForFraction(
+            windowStartMs = windowStartMs,
+            windowEndInclusiveMs = windowEndInclusiveMs,
+            fraction = preciseFraction
+        )
+    }
+    val preciseTimelineSample = remember(heatmapData, preciseSelectedMs) {
+        findNearestTimelineSample(
+            samples = heatmapData?.timelineSamples.orEmpty(),
+            targetUtcMs = preciseSelectedMs
+        )
+    }
+    val preciseDateTimeParts = remember(preciseSelectedMs, preciseTimelineSample) {
+        formatMainHistoryPreciseDateTimeParts(
+            utcTimeMs = preciseSelectedMs,
+            sample = preciseTimelineSample
+        )
+    }
+
+    OutlinedCard(
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Button(
+                    onClick = onDismiss,
+                    modifier = Modifier.size(40.dp),
+                    shape = CircleShape,
+                    contentPadding = PaddingValues(0.dp)
+                ) {
+                    Icon(
+                        painter = painterResource(android.R.drawable.ic_media_previous),
+                        contentDescription = "Back"
+                    )
+                }
+                Text(
+                    text = "Location History",
+                    style = MaterialTheme.typography.titleSmall,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                Button(
+                    onClick = { expanded = !expanded },
+                    modifier = Modifier.size(40.dp),
+                    shape = CircleShape,
+                    latched = expanded,
+                    toggleTargetState = expanded,
+                    contentPadding = PaddingValues(0.dp)
+                ) {
+                    val arrowRotation by animateFloatAsState(
+                        targetValue = if (expanded) 90f else -90f,
+                        animationSpec = tween(
+                            durationMillis = MAIN_HISTORY_PANEL_EXPAND_ANIM_MS,
+                            easing = FastOutSlowInEasing
+                        ),
+                        label = "main_history_expand_arrow_rotation"
+                    )
+                    Icon(
+                        painter = painterResource(id = android.R.drawable.ic_media_previous),
+                        contentDescription = if (expanded) "Collapse" else "Expand",
+                        modifier = Modifier.rotate(arrowRotation)
+                    )
+                }
+            }
+
+            AnimatedVisibility(
+                visible = expanded,
+                enter = fadeIn(
+                    animationSpec = tween(
+                        durationMillis = MAIN_HISTORY_PANEL_EXPAND_ANIM_MS,
+                        easing = FastOutSlowInEasing
+                    )
+                ) + expandVertically(
+                    animationSpec = tween(
+                        durationMillis = MAIN_HISTORY_PANEL_EXPAND_ANIM_MS,
+                        easing = FastOutSlowInEasing
+                    )
+                ),
+                exit = fadeOut(
+                    animationSpec = tween(
+                        durationMillis = MAIN_HISTORY_PANEL_EXPAND_ANIM_MS,
+                        easing = FastOutSlowInEasing
+                    )
+                ) + shrinkVertically(
+                    animationSpec = tween(
+                        durationMillis = MAIN_HISTORY_PANEL_EXPAND_ANIM_MS,
+                        easing = FastOutSlowInEasing
+                    )
+                )
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    MainHistoryDateRangeHeader(
+                        color = Color.White,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        MainHistoryDateButton(
+                            text = formatMainHistoryDate(startDate),
+                            onClick = { datePickerTarget = MainHistoryDatePickerTarget.START },
+                            modifier = Modifier.weight(1f)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .height(28.dp)
+                                .width(1.dp)
+                                .background(dividerColor)
+                        )
+                        MainHistoryDateButton(
+                            text = formatMainHistoryDate(endDate),
+                            onClick = { datePickerTarget = MainHistoryDatePickerTarget.END },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    MainHistoryHeatmapSlot(
+                        heatmapData = heatmapData,
+                        loading = heatmapLoading,
+                        heatmapVisible = heatmapVisible,
+                        selectorsVisible = selectorsVisible,
+                        selectionStartFraction = selectedStartFraction,
+                        selectionEndFraction = selectedEndFraction,
+                        preciseSelectionFraction = preciseFraction,
+                        onSelectionStartFractionChange = { selectedStartFraction = it },
+                        onSelectionEndFractionChange = { selectedEndFraction = it },
+                        onPreciseSelectionFractionChange = { preciseFraction = it },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    AnimatedVisibility(
+                        visible = selectorsVisible,
+                        enter = fadeIn(
+                            animationSpec = tween(
+                                durationMillis = MAIN_HISTORY_SELECTORS_FADE_IN_MS,
+                                easing = FastOutSlowInEasing
+                            )
+                        ),
+                        exit = fadeOut(animationSpec = tween(durationMillis = 120))
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = preciseDateTimeParts.first,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.width(22.dp))
+                            Text(
+                                text = preciseDateTimeParts.second,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        } 
+                    }
+                }
+            }
+        }
+    }
+
+    datePickerTarget?.let { target ->
+        val selectedDate = when (target) {
+            MainHistoryDatePickerTarget.START -> startDate
+            MainHistoryDatePickerTarget.END -> endDate
+        } ?: (earliestDate ?: todayUtc)
+
+        val minSelectableMs = earliestDate?.let(::localDateToUtcStartMillis)
+        val maxSelectableMs = localDateToUtcStartMillis(todayUtc)
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = localDateToUtcStartMillis(selectedDate),
+            selectableDates = remember(minSelectableMs, maxSelectableMs) {
+                object : SelectableDates {
+                    override fun isSelectableDate(utcTimeMillis: Long): Boolean {
+                        if (minSelectableMs != null && utcTimeMillis < minSelectableMs) {
+                            return false
+                        }
+                        return utcTimeMillis <= maxSelectableMs
+                    }
+
+                    override fun isSelectableYear(year: Int): Boolean = true
+                }
+            }
+        )
+
+        DatePickerDialog(
+            onDismissRequest = { datePickerTarget = null },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val pickedDate = datePickerState.selectedDateMillis?.let(::utcMillisToLocalDate)
+                        if (pickedDate != null) {
+                            when (target) {
+                                MainHistoryDatePickerTarget.START -> {
+                                    startDate = pickedDate
+                                    userEditedStartDate = true
+                                }
+
+                                MainHistoryDatePickerTarget.END -> {
+                                    endDate = pickedDate
+                                }
+                            }
+                        }
+                        datePickerTarget = null
+                    }
+                ) {
+                    Text("OK")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { datePickerTarget = null }) {
+                    Text("Cancel")
+                }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
+}
+
+@Composable
+private fun MainHistoryDateRangeHeader(
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    val density = LocalDensity.current
+    val labelHalfWidthPx = with(density) { 42.dp.toPx() }
+    val strokePx = with(density) { 1.dp.toPx() }
+    val tickHeightPx = with(density) { 8.dp.toPx() }
+    val buttonCenterStartFraction = 0.25f
+    val buttonCenterEndFraction = 0.75f
+
+    Box(
+        modifier = modifier.height(24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val centerX = size.width * 0.5f
+            val centerY = size.height * 0.45f
+            val leftAnchorX = size.width * buttonCenterStartFraction
+            val rightAnchorX = size.width * buttonCenterEndFraction
+            val leftLabelEdgeX = centerX - labelHalfWidthPx
+            val rightLabelEdgeX = centerX + labelHalfWidthPx
+
+            drawLine(
+                color = color,
+                start = Offset(leftLabelEdgeX, centerY),
+                end = Offset(leftAnchorX, centerY),
+                strokeWidth = strokePx,
+                cap = StrokeCap.Round
+            )
+            drawLine(
+                color = color,
+                start = Offset(rightLabelEdgeX, centerY),
+                end = Offset(rightAnchorX, centerY),
+                strokeWidth = strokePx,
+                cap = StrokeCap.Round
+            )
+            drawLine(
+                color = color,
+                start = Offset(leftAnchorX, centerY),
+                end = Offset(leftAnchorX, (centerY + tickHeightPx).coerceAtMost(size.height)),
+                strokeWidth = strokePx,
+                cap = StrokeCap.Round
+            )
+            drawLine(
+                color = color,
+                start = Offset(rightAnchorX, centerY),
+                end = Offset(rightAnchorX, (centerY + tickHeightPx).coerceAtMost(size.height)),
+                strokeWidth = strokePx,
+                cap = StrokeCap.Round
+            )
+        }
+        Text(
+            text = "Date Range",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(horizontal = 8.dp)
+        )
+    }
+}
+
+@Composable
+private fun MainHistoryDateButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Button(
+        onClick = onClick,
+        modifier = modifier
+            .height(44.dp)
+            .padding(horizontal = 8.dp),
+        shape = RoundedCornerShape(12.dp),
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+    ) {
+        Text(
+            text = text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+@Composable
+private fun MainHistoryHeatmapSlot(
+    heatmapData: MainHistoryHeatmapData?,
+    loading: Boolean,
+    heatmapVisible: Boolean,
+    selectorsVisible: Boolean,
+    selectionStartFraction: Float,
+    selectionEndFraction: Float,
+    preciseSelectionFraction: Float,
+    onSelectionStartFractionChange: (Float) -> Unit,
+    onSelectionEndFractionChange: (Float) -> Unit,
+    onPreciseSelectionFractionChange: (Float) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val slotShape = RoundedCornerShape(MAIN_HISTORY_TIMELINE_CORNER_RADIUS)
+    val view = LocalView.current
+    val baseColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)
+    val lowColor = Color(0xFF1F334A)
+    val highColor = Color(0xFF4DA3FF)
+    val pulseColor = Color(0xFF4DA3FF)
+    val selectionShellColor = Color(0xFFDDEEFF).copy(alpha = 0.24f)
+    val selectionOutlineColor = Color.White.copy(alpha = 0.56f)
+    val handleGlyphColor = Color(0xFF1E3B57)
+    val preciseLineColor = Color.White.copy(alpha = 0.96f)
+    val density = LocalDensity.current
+    val slotCornerRadiusPx = with(density) { MAIN_HISTORY_TIMELINE_CORNER_RADIUS.toPx() }
+    val handleWidthPx = with(density) { MAIN_HISTORY_HANDLE_WIDTH.toPx() }
+    val handleHeightPx = with(density) { MAIN_HISTORY_HANDLE_HEIGHT.toPx() }
+    val preciseLineWidthPx = with(density) { MAIN_HISTORY_PRECISE_LINE_WIDTH.toPx() }
+    val dragTouchRadiusPx = with(density) { MAIN_HISTORY_DRAG_TOUCH_RADIUS.toPx() }
+    val selectionStrokeWidthPx = with(density) { 1.5.dp.toPx() }
+    val halfPreciseLinePx = preciseLineWidthPx * 0.5f
+    val latestStartFraction by rememberUpdatedState(selectionStartFraction.coerceIn(0f, 1f))
+    val latestEndFraction by rememberUpdatedState(selectionEndFraction.coerceIn(0f, 1f))
+    val latestPreciseFraction by rememberUpdatedState(preciseSelectionFraction.coerceIn(0f, 1f))
+    val updateStartFraction by rememberUpdatedState(onSelectionStartFractionChange)
+    val updateEndFraction by rememberUpdatedState(onSelectionEndFractionChange)
+    val updatePreciseFraction by rememberUpdatedState(onPreciseSelectionFractionChange)
+    val pulseTransition = rememberInfiniteTransition(label = "main_history_heatmap_pulse")
+    val pulseAlpha by pulseTransition.animateFloat(
+        initialValue = 0.08f,
+        targetValue = 0.24f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(
+                durationMillis = MAIN_HISTORY_HEATMAP_PULSE_DURATION_MS,
+                easing = FastOutSlowInEasing
+            ),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "main_history_heatmap_pulse_alpha"
+    )
+    val heatmapAlpha by animateFloatAsState(
+        targetValue = if (heatmapVisible) 1f else 0f,
+        animationSpec = tween(
+            durationMillis = MAIN_HISTORY_HEATMAP_FADE_IN_MS,
+            easing = FastOutSlowInEasing
+        ),
+        label = "main_history_heatmap_alpha"
+    )
+    val selectorsAlpha by animateFloatAsState(
+        targetValue = if (selectorsVisible) 1f else 0f,
+        animationSpec = tween(
+            durationMillis = MAIN_HISTORY_SELECTORS_FADE_IN_MS,
+            easing = FastOutSlowInEasing
+        ),
+        label = "main_history_selectors_alpha"
+    )
+
+    BoxWithConstraints(
+        modifier = modifier
+            .height(MAIN_HISTORY_TIMELINE_HEIGHT)
+            .clip(slotShape)
+            .background(MaterialTheme.colorScheme.surface)
+            .neomorphicShadow(
+                shape = slotShape,
+                pressed = true,
+                addBorder = false,
+                depth = 4.dp,
+                blurRadius = 8.dp
+            )
+            .padding(3.dp)
+    ) {
+        val barWidthPx = with(density) { maxWidth.toPx().coerceAtLeast(1f) }
+        val minSelectionSpanFraction = remember(barWidthPx, handleWidthPx, preciseLineWidthPx) {
+            ((2f * handleWidthPx + preciseLineWidthPx + 1f) / barWidthPx).coerceIn(0f, 1f)
+        }
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(slotShape)
+                .background(baseColor)
+                .then(
+                    if (selectorsVisible) {
+                        Modifier.pointerInput(
+                            barWidthPx,
+                            minSelectionSpanFraction,
+                            handleWidthPx,
+                            preciseLineWidthPx,
+                            dragTouchRadiusPx
+                        ) {
+                            var activeTarget: MainHistoryDragTarget? = null
+                            var workingStart = latestStartFraction
+                            var workingEnd = latestEndFraction
+                            var workingPrecise = latestPreciseFraction
+                            var hitStartBoundary = false
+                            var hitEndBoundary = false
+                            var hitPreciseMin = false
+                            var hitPreciseMax = false
+
+                            detectDragGestures(
+                                onDragStart = { touchOffset ->
+                                    workingStart = latestStartFraction
+                                    workingEnd = latestEndFraction
+                                    workingPrecise = latestPreciseFraction
+
+                                    if (workingEnd - workingStart < minSelectionSpanFraction) {
+                                        workingEnd = (workingStart + minSelectionSpanFraction).coerceAtMost(1f)
+                                        workingStart = (workingEnd - minSelectionSpanFraction).coerceAtLeast(0f)
+                                    }
+                                    val startOuterX = workingStart * barWidthPx
+                                    val endOuterX = workingEnd * barWidthPx
+                                    val startCenterX = startOuterX + (handleWidthPx * 0.5f)
+                                    val endCenterX = endOuterX - (handleWidthPx * 0.5f)
+                                    val preciseMinX = startOuterX + handleWidthPx + (preciseLineWidthPx * 0.5f)
+                                    val preciseMaxX = endOuterX - handleWidthPx - (preciseLineWidthPx * 0.5f)
+                                    val preciseX = (workingPrecise * barWidthPx).coerceIn(preciseMinX, preciseMaxX)
+                                    workingPrecise = preciseX / barWidthPx
+
+                                    updateStartFraction(workingStart)
+                                    updateEndFraction(workingEnd)
+                                    updatePreciseFraction(workingPrecise)
+
+                                    val touchX = touchOffset.x.coerceIn(0f, barWidthPx)
+                                    val startDistance = kotlin.math.abs(touchX - startCenterX)
+                                    val endDistance = kotlin.math.abs(touchX - endCenterX)
+                                    val preciseDistance = kotlin.math.abs(touchX - preciseX)
+                                    val nearest = listOf(
+                                        MainHistoryDragTarget.START to startDistance,
+                                        MainHistoryDragTarget.END to endDistance,
+                                        MainHistoryDragTarget.PRECISE to preciseDistance
+                                    ).minByOrNull { it.second }
+                                    activeTarget = if (nearest != null && nearest.second <= dragTouchRadiusPx) {
+                                        nearest.first
+                                    } else {
+                                        MainHistoryDragTarget.PRECISE
+                                    }
+                                    view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                    hitStartBoundary = false
+                                    hitEndBoundary = false
+                                    hitPreciseMin = false
+                                    hitPreciseMax = false
+                                },
+                                onDragEnd = {
+                                    activeTarget = null
+                                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                },
+                                onDragCancel = {
+                                    activeTarget = null
+                                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                },
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    val target = activeTarget ?: return@detectDragGestures
+                                    val deltaFraction = dragAmount.x / barWidthPx
+
+                                    when (target) {
+                                        MainHistoryDragTarget.START -> {
+                                            val proposedStart = workingStart + deltaFraction
+                                            val maxStartWithoutPush = (workingEnd - minSelectionSpanFraction).coerceAtLeast(0f)
+                                            if (proposedStart <= maxStartWithoutPush) {
+                                                workingStart = proposedStart.coerceAtLeast(0f)
+                                            } else {
+                                                val overflow = proposedStart - maxStartWithoutPush
+                                                val pushedEnd = (workingEnd + overflow).coerceAtMost(1f)
+                                                workingEnd = pushedEnd
+                                                workingStart = (proposedStart).coerceAtMost(workingEnd - minSelectionSpanFraction)
+                                            }
+                                        }
+
+                                        MainHistoryDragTarget.END -> {
+                                            val proposedEnd = workingEnd + deltaFraction
+                                            val minEndWithoutPush = (workingStart + minSelectionSpanFraction).coerceAtMost(1f)
+                                            if (proposedEnd >= minEndWithoutPush) {
+                                                workingEnd = proposedEnd.coerceAtMost(1f)
+                                            } else {
+                                                val overflow = minEndWithoutPush - proposedEnd
+                                                val pushedStart = (workingStart - overflow).coerceAtLeast(0f)
+                                                workingStart = pushedStart
+                                                workingEnd = (proposedEnd).coerceAtLeast(workingStart + minSelectionSpanFraction)
+                                            }
+                                        }
+
+                                        MainHistoryDragTarget.PRECISE -> Unit
+                                    }
+
+                                    val preciseMinX = (workingStart * barWidthPx) + handleWidthPx + (preciseLineWidthPx * 0.5f)
+                                    val preciseMaxX = (workingEnd * barWidthPx) - handleWidthPx - (preciseLineWidthPx * 0.5f)
+                                    val nextPreciseX = if (target == MainHistoryDragTarget.PRECISE) {
+                                        ((workingPrecise * barWidthPx) + (deltaFraction * barWidthPx))
+                                            .coerceIn(preciseMinX, preciseMaxX)
+                                    } else {
+                                        (workingPrecise * barWidthPx).coerceIn(preciseMinX, preciseMaxX)
+                                    }
+                                    workingPrecise = nextPreciseX / barWidthPx
+
+                                    val startAtBoundary = workingStart <= 0f
+                                    val endAtBoundary = workingEnd >= 1f
+                                    val preciseAtMin = nextPreciseX <= preciseMinX
+                                    val preciseAtMax = nextPreciseX >= preciseMaxX
+                                    if (startAtBoundary && !hitStartBoundary) {
+                                        view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                    }
+                                    if (endAtBoundary && !hitEndBoundary) {
+                                        view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                    }
+                                    if (preciseAtMin && !hitPreciseMin) {
+                                        view.performHapticFeedback(HapticFeedbackConstants.TEXT_HANDLE_MOVE)
+                                    }
+                                    if (preciseAtMax && !hitPreciseMax) {
+                                        view.performHapticFeedback(HapticFeedbackConstants.TEXT_HANDLE_MOVE)
+                                    }
+                                    hitStartBoundary = startAtBoundary
+                                    hitEndBoundary = endAtBoundary
+                                    hitPreciseMin = preciseAtMin
+                                    hitPreciseMax = preciseAtMax
+
+                                    updateStartFraction(workingStart)
+                                    updateEndFraction(workingEnd)
+                                    updatePreciseFraction(workingPrecise)
+                                }
+                            )
+                        }
+                    } else {
+                        Modifier
+                    }
+                )
+        ) {
+            val bins = heatmapData?.bins.orEmpty()
+            val maxBinCount = heatmapData?.maxBinCount?.coerceAtLeast(1) ?: 1
+            var safeStartOuter = selectionStartFraction.coerceIn(0f, 1f)
+            var safeEndOuter = selectionEndFraction.coerceIn(0f, 1f)
+            if (safeEndOuter - safeStartOuter < minSelectionSpanFraction) {
+                safeEndOuter = (safeStartOuter + minSelectionSpanFraction).coerceAtMost(1f)
+                safeStartOuter = (safeEndOuter - minSelectionSpanFraction).coerceAtLeast(0f)
+            }
+            val startOuterX = safeStartOuter * size.width
+            val endOuterX = safeEndOuter * size.width
+            val startAtBoundary = startOuterX <= 0.5f
+            val endAtBoundary = endOuterX >= (size.width - 0.5f)
+            val boundaryInsetPx = selectionStrokeWidthPx * 0.5f
+            val startHandleX = if (startAtBoundary) {
+                startOuterX + boundaryInsetPx
+            } else {
+                startOuterX
+            }
+            val endHandleX = if (endAtBoundary) {
+                (endOuterX - handleWidthPx) + boundaryInsetPx
+            } else {
+                endOuterX - handleWidthPx
+            }
+            val handleDrawWidth = if (startAtBoundary || endAtBoundary) {
+                (handleWidthPx - boundaryInsetPx).coerceAtLeast(1f)
+            } else {
+                handleWidthPx
+            }
+            val startCenterX = startHandleX + (handleDrawWidth * 0.5f)
+            val endCenterX = endHandleX + (handleDrawWidth * 0.5f)
+            val preciseMinX = startOuterX + handleWidthPx + halfPreciseLinePx
+            val preciseMaxX = endOuterX - handleWidthPx - halfPreciseLinePx
+            val preciseX = (preciseSelectionFraction.coerceIn(0f, 1f) * size.width).coerceIn(preciseMinX, preciseMaxX)
+            val handleDrawHeight = size.height
+            val handleTop = 0f
+            val rangeBodyHeight = size.height
+            val rangeBodyTop = 0f
+            val handleCornerRadius = CornerRadius(
+                x = slotCornerRadiusPx,
+                y = slotCornerRadiusPx
+            )
+            val rangeCornerRadius = CornerRadius(
+                x = (handleWidthPx * 0.46f).coerceAtLeast(1f),
+                y = (handleWidthPx * 0.46f).coerceAtLeast(1f)
+            )
+
+            if (bins.isNotEmpty()) {
+                val binWidth = size.width / bins.size.toFloat()
+                bins.forEachIndexed { index, count ->
+                    val intensity = (count.toFloat() / maxBinCount.toFloat()).coerceIn(0f, 1f)
+                    val color = lerp(lowColor, highColor, intensity)
+                    drawRect(
+                        color = color.copy(alpha = (0.18f + (0.72f * intensity)) * heatmapAlpha),
+                        topLeft = Offset(x = index * binWidth, y = 0f),
+                        size = Size(width = binWidth + 0.75f, height = size.height)
+                    )
+                }
+            }
+            if (selectorsAlpha > 0.001f) {
+                val rangeWidth = (endOuterX - startOuterX).coerceAtLeast(1f)
+                drawRoundRect(
+                    color = selectionShellColor.copy(alpha = selectionShellColor.alpha * selectorsAlpha),
+                    topLeft = Offset(x = startOuterX, y = rangeBodyTop),
+                    size = Size(width = rangeWidth, height = rangeBodyHeight),
+                    cornerRadius = rangeCornerRadius
+                )
+                drawRoundRect(
+                    color = selectionOutlineColor.copy(alpha = selectionOutlineColor.alpha * selectorsAlpha),
+                    topLeft = Offset(x = startOuterX, y = rangeBodyTop),
+                    size = Size(width = rangeWidth, height = rangeBodyHeight),
+                    cornerRadius = rangeCornerRadius,
+                    style = Stroke(width = selectionStrokeWidthPx)
+                )
+            }
+            if (loading) {
+                drawRect(
+                    color = pulseColor.copy(alpha = pulseAlpha),
+                    topLeft = Offset.Zero,
+                    size = size
+                )
+            }
+
+            if (selectorsAlpha > 0.001f) {
+                drawRoundRect(
+                    color = selectionShellColor.copy(alpha = selectionShellColor.alpha * selectorsAlpha),
+                    topLeft = Offset(x = startHandleX, y = handleTop),
+                    size = Size(width = handleDrawWidth, height = handleDrawHeight),
+                    cornerRadius = handleCornerRadius
+                )
+                drawRoundRect(
+                    color = selectionOutlineColor.copy(alpha = selectionOutlineColor.alpha * selectorsAlpha),
+                    topLeft = Offset(x = startHandleX, y = handleTop),
+                    size = Size(width = handleDrawWidth, height = handleDrawHeight),
+                    cornerRadius = handleCornerRadius,
+                    style = Stroke(width = selectionStrokeWidthPx)
+                )
+                drawRoundRect(
+                    color = selectionShellColor.copy(alpha = selectionShellColor.alpha * selectorsAlpha),
+                    topLeft = Offset(x = endHandleX, y = handleTop),
+                    size = Size(width = handleDrawWidth, height = handleDrawHeight),
+                    cornerRadius = handleCornerRadius
+                )
+                drawRoundRect(
+                    color = selectionOutlineColor.copy(alpha = selectionOutlineColor.alpha * selectorsAlpha),
+                    topLeft = Offset(x = endHandleX, y = handleTop),
+                    size = Size(width = handleDrawWidth, height = handleDrawHeight),
+                    cornerRadius = handleCornerRadius,
+                    style = Stroke(width = selectionStrokeWidthPx)
+                )
+
+                drawMainHistoryHandleGlyph(
+                    centerX = startCenterX,
+                    centerY = size.height / 2f,
+                    handleWidthPx = handleDrawWidth,
+                    handleHeightPx = handleDrawHeight,
+                    outwardLeft = true,
+                    atBoundary = startAtBoundary,
+                    color = handleGlyphColor.copy(alpha = selectorsAlpha)
+                )
+                drawMainHistoryHandleGlyph(
+                    centerX = endCenterX,
+                    centerY = size.height / 2f,
+                    handleWidthPx = handleDrawWidth,
+                    handleHeightPx = handleDrawHeight,
+                    outwardLeft = false,
+                    atBoundary = endAtBoundary,
+                    color = handleGlyphColor.copy(alpha = selectorsAlpha)
+                )
+
+                drawRoundRect(
+                    color = preciseLineColor.copy(alpha = selectorsAlpha),
+                    topLeft = Offset(x = preciseX - halfPreciseLinePx, y = 4f),
+                    size = Size(width = preciseLineWidthPx, height = size.height - 8f),
+                    cornerRadius = CornerRadius(
+                        x = preciseLineWidthPx * 0.5f,
+                        y = preciseLineWidthPx * 0.5f
+                    )
+                )
+            }
+        }
+        if (!loading && heatmapVisible && (heatmapData?.totalSamples ?: 0) == 0) {
+            Text(
+                text = "No samples in selected range",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.align(Alignment.Center)
+            )
+        }
+    }
+}
+
+private fun DrawScope.drawMainHistoryHandleGlyph(
+    centerX: Float,
+    centerY: Float,
+    handleWidthPx: Float,
+    handleHeightPx: Float,
+    outwardLeft: Boolean,
+    atBoundary: Boolean,
+    color: Color
+) {
+    val ySpread = handleHeightPx * 0.22f
+    val stroke = (handleWidthPx * 0.18f).coerceAtLeast(1.2f)
+    if (atBoundary) {
+        drawLine(
+            color = color,
+            start = Offset(centerX, centerY - ySpread),
+            end = Offset(centerX, centerY + ySpread),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round
+        )
+        return
+    }
+
+    val arrowVertexX = if (outwardLeft) {
+        centerX - (handleWidthPx * 0.20f)
+    } else {
+        centerX + (handleWidthPx * 0.20f)
+    }
+    val arrowArmX = if (outwardLeft) {
+        centerX + (handleWidthPx * 0.20f)
+    } else {
+        centerX - (handleWidthPx * 0.20f)
+    }
+    drawLine(
+        color = color,
+        start = Offset(arrowArmX, centerY - ySpread),
+        end = Offset(arrowVertexX, centerY),
+        strokeWidth = stroke,
+        cap = StrokeCap.Round
+    )
+    drawLine(
+        color = color,
+        start = Offset(arrowArmX, centerY + ySpread),
+        end = Offset(arrowVertexX, centerY),
+        strokeWidth = stroke,
+        cap = StrokeCap.Round
+    )
+}
+
+private fun formatMainHistoryDate(date: LocalDate?): String {
+    return date?.format(MAIN_HISTORY_DATE_FORMATTER) ?: "--"
+}
+
+private fun formatMainHistoryPreciseDateTimeParts(
+    utcTimeMs: Long?,
+    sample: MainHistoryTimelineSample?
+): Pair<String, String> {
+    if (utcTimeMs == null) return "--" to "--"
+    val zoneOffset = sample?.let(::approximateZoneOffsetForSample) ?: ZoneOffset.UTC
+    val zoned = Instant.ofEpochMilli(utcTimeMs).atOffset(zoneOffset)
+    val datePart = zoned.format(MAIN_HISTORY_PRECISE_DATE_FORMATTER)
+    val timePart = "${zoned.format(MAIN_HISTORY_PRECISE_TIME_FORMATTER)}  ${zoneOffset.id}"
+    return datePart to timePart
+}
+
+private fun findNearestTimelineSample(
+    samples: List<MainHistoryTimelineSample>,
+    targetUtcMs: Long?
+): MainHistoryTimelineSample? {
+    if (samples.isEmpty() || targetUtcMs == null) return null
+    var low = 0
+    var high = samples.lastIndex
+    while (low <= high) {
+        val mid = (low + high) ushr 1
+        val value = samples[mid].timestampMs
+        when {
+            value < targetUtcMs -> low = mid + 1
+            value > targetUtcMs -> high = mid - 1
+            else -> return samples[mid]
+        }
+    }
+    val lower = samples.getOrNull(high)
+    val upper = samples.getOrNull(low)
+    return when {
+        lower == null -> upper
+        upper == null -> lower
+        kotlin.math.abs(lower.timestampMs - targetUtcMs) <= kotlin.math.abs(upper.timestampMs - targetUtcMs) -> lower
+        else -> upper
+    }
+}
+
+private fun approximateZoneOffsetForSample(sample: MainHistoryTimelineSample): ZoneOffset {
+    val estimatedHour = kotlin.math.round(sample.longitude / 15.0)
+        .toInt()
+        .coerceIn(-12, 14)
+    return ZoneOffset.ofHours(estimatedHour)
+}
+
+private fun mainHistoryMsForFraction(
+    windowStartMs: Long,
+    windowEndInclusiveMs: Long,
+    fraction: Float
+): Long {
+    if (windowEndInclusiveMs <= windowStartMs) {
+        return windowStartMs
+    }
+    val clampedFraction = fraction.coerceIn(0f, 1f)
+    val rangeMs = (windowEndInclusiveMs - windowStartMs).toDouble()
+    return windowStartMs + kotlin.math.round(rangeMs * clampedFraction).toLong()
+}
+
+private fun localDateToUtcStartMillis(date: LocalDate): Long {
+    return date.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+}
+
+private fun utcMillisToLocalDate(utcTimeMillis: Long): LocalDate {
+    return Instant.ofEpochMilli(utcTimeMillis).atZone(ZoneOffset.UTC).toLocalDate()
+}
+
+private fun defaultMainHistoryStartDate(
+    earliestDate: LocalDate?,
+    todayUtc: LocalDate
+): LocalDate {
+    val cappedStart = todayUtc.minusDays(MAIN_HISTORY_DEFAULT_RANGE_DAYS_MAX)
+    val earliest = earliestDate ?: return cappedStart
+    return maxOf(earliest, cappedStart)
+}
+
+private suspend fun loadMainHistoryEarliestDateUtc(): LocalDate? {
+    val archiveEarliest = runCatching {
+        LocationPersistenceController.getArchiveRecords()
+            .minOfOrNull { it.dayUtc }
+    }.getOrElse { throwable ->
+        if (throwable is CancellationException) throw throwable
+        null
+    }
+    if (archiveEarliest != null) {
+        return archiveEarliest
+    }
+
+    val todayUtc = LocalDate.now(ZoneOffset.UTC)
+    val startMs = localDateToUtcStartMillis(todayUtc)
+    val endMs = System.currentTimeMillis() + MAIN_HISTORY_DAY_MS
+    val rows = runCatching {
+        LocationPersistenceController.readRange(
+            startInclusiveMs = startMs,
+            endInclusiveMs = endMs
+        )
+    }.getOrElse { throwable ->
+        if (throwable is CancellationException) throw throwable
+        emptyList()
+    }
+    val earliestSampleMs = rows.minOfOrNull { it.receivedAtMs } ?: return null
+    return Instant.ofEpochMilli(earliestSampleMs).atZone(ZoneOffset.UTC).toLocalDate()
+}
+
+private suspend fun loadMainHistoryHeatmapData(
+    startDate: LocalDate,
+    endDate: LocalDate
+): MainHistoryHeatmapData {
+    val normalizedStartDate = minOf(startDate, endDate)
+    val normalizedEndDate = maxOf(startDate, endDate)
+    val startMs = localDateToUtcStartMillis(normalizedStartDate)
+    val endExclusiveMs = localDateToUtcStartMillis(normalizedEndDate.plusDays(1))
+    val endInclusiveMs = (endExclusiveMs - 1L).coerceAtLeast(startMs)
+    val bins = IntArray(MAIN_HISTORY_HEATMAP_BIN_COUNT)
+    val samples = runCatching {
+        LocationPersistenceController.readRange(
+            startInclusiveMs = startMs,
+            endInclusiveMs = endInclusiveMs
+        )
+    }.getOrElse { throwable ->
+        if (throwable is CancellationException) throw throwable
+        emptyList()
+    }
+    val durationMs = (endInclusiveMs - startMs).coerceAtLeast(1L)
+
+    samples.forEach { sample ->
+        val offsetMs = (sample.receivedAtMs - startMs).coerceIn(0L, durationMs)
+        val index = ((offsetMs.toDouble() / durationMs.toDouble()) * bins.size.toDouble())
+            .toInt()
+            .coerceIn(0, bins.lastIndex)
+        bins[index] += sample.samplesMergedCount.coerceAtLeast(1)
+    }
+    val timelineSamples = buildMainHistoryTimelineSamples(samples)
+
+    return MainHistoryHeatmapData(
+        bins = bins.toList(),
+        totalSamples = bins.sum(),
+        maxBinCount = bins.maxOrNull() ?: 0,
+        timelineSamples = timelineSamples
+    )
+}
+
+private fun buildMainHistoryTimelineSamples(
+    samples: List<com.example.blackbox.data.locationdb.LocationSampleEntity>,
+    maxPoints: Int = 512
+): List<MainHistoryTimelineSample> {
+    if (samples.isEmpty()) return emptyList()
+    if (samples.size <= maxPoints) {
+        return samples.map {
+            MainHistoryTimelineSample(
+                timestampMs = it.receivedAtMs,
+                latitude = it.lat,
+                longitude = it.lon
+            )
+        }
+    }
+    val step = (samples.size.toDouble() / maxPoints.toDouble()).coerceAtLeast(1.0)
+    val output = ArrayList<MainHistoryTimelineSample>(maxPoints)
+    var idx = 0.0
+    while (idx < samples.size) {
+        val sample = samples[idx.toInt().coerceIn(0, samples.lastIndex)]
+        output += MainHistoryTimelineSample(
+            timestampMs = sample.receivedAtMs,
+            latitude = sample.lat,
+            longitude = sample.lon
+        )
+        idx += step
+    }
+    return output.sortedBy { it.timestampMs }
 }

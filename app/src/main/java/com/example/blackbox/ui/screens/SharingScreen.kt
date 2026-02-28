@@ -1848,7 +1848,9 @@ fun FullscreenInteractiveMapDialog(
     userLatitude: Double? = null,
     userLongitude: Double? = null,
     userRadiusMeters: Double? = null,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    showDefaultBackButton: Boolean = true,
+    topOverlay: (@Composable () -> Unit)? = null
 ) {
     val mapView = rememberInteractiveMapViewWithLifecycle()
     val density = LocalDensity.current
@@ -1984,14 +1986,26 @@ fun FullscreenInteractiveMapDialog(
 
                 }
 
-                RoundMapActionButton(
-                    iconRes = android.R.drawable.ic_media_previous,
-                    contentDescription = "Back",
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(12.dp),
-                    onClick = onDismiss
-                )
+                if (showDefaultBackButton) {
+                    RoundMapActionButton(
+                        iconRes = android.R.drawable.ic_media_previous,
+                        contentDescription = "Back",
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(12.dp),
+                        onClick = onDismiss
+                    )
+                }
+
+                if (topOverlay != null) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(horizontal = 12.dp, vertical = 12.dp)
+                    ) {
+                        topOverlay()
+                    }
+                }
 
                 Column(
                     modifier = Modifier

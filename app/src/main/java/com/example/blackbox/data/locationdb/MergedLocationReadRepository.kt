@@ -9,6 +9,7 @@ import java.io.File
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
@@ -39,21 +40,33 @@ class MergedLocationReadRepository(
                 val archivedUris = archivedIndex[day].orEmpty()
 
                 localFiles.forEach { localFile ->
-                    result += readFromLocalDb(
-                        file = localFile,
-                        startInclusiveMs = startInclusiveMs,
-                        endInclusiveMs = endInclusiveMs
-                    )
+                    val rows = runCatching {
+                        readFromLocalDb(
+                            file = localFile,
+                            startInclusiveMs = startInclusiveMs,
+                            endInclusiveMs = endInclusiveMs
+                        )
+                    }.getOrElse { throwable ->
+                        if (throwable is CancellationException) throw throwable
+                        emptyList()
+                    }
+                    result += rows
                 }
 
                 archivedUris.forEachIndexed { index, archivedUri ->
-                    result += readFromArchivedDb(
-                        archiveUri = archivedUri,
-                        day = day,
-                        cacheSuffix = index,
-                        startInclusiveMs = startInclusiveMs,
-                        endInclusiveMs = endInclusiveMs
-                    )
+                    val rows = runCatching {
+                        readFromArchivedDb(
+                            archiveUri = archivedUri,
+                            day = day,
+                            cacheSuffix = index,
+                            startInclusiveMs = startInclusiveMs,
+                            endInclusiveMs = endInclusiveMs
+                        )
+                    }.getOrElse { throwable ->
+                        if (throwable is CancellationException) throw throwable
+                        emptyList()
+                    }
+                    result += rows
                 }
             }
 
@@ -126,6 +139,9 @@ class MergedLocationReadRepository(
                 db.openHelper.writableDatabase
                 return block(db)
             } catch (throwable: Throwable) {
+                if (throwable is CancellationException) {
+                    throw throwable
+                }
                 lastError = throwable
             } finally {
                 runCatching { db.close() }
