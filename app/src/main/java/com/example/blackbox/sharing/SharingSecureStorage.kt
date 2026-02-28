@@ -30,7 +30,13 @@ class SharingSecureStorage(context: Context) {
 
         val iv = wrapper.ivBase64.base64Decode()
         val ciphertext = wrapper.ciphertextBase64.base64Decode()
-        return aesGcmDecrypt(iv = iv, ciphertext = ciphertext)
+        return runCatching {
+            aesGcmDecrypt(iv = iv, ciphertext = ciphertext)
+        }.getOrElse {
+            // Keystore mismatch/corruption (often after restore): reset to recover on next launch.
+            runCatching { stateFile.delete() }
+            null
+        }
     }
 
     fun writePlaintextState(plaintext: ByteArray) {

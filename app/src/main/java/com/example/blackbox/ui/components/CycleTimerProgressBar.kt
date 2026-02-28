@@ -44,8 +44,8 @@ fun CycleTimerProgressBar(
     remainingMs: Long,
     sampleNowMs: Long,
     isActive: Boolean,
-    pulse: Boolean = false,
     modifier: Modifier = Modifier,
+    pulse: Boolean = false,
     onTap: (() -> Unit)? = null
 ) {
     val progress = rememberFrameSyncedProgress(

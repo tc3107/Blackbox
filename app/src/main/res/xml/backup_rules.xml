@@ -2,4 +2,5 @@
     <exclude domain="file" path="location/live/" />
     <exclude domain="file" path="location/pending_archive/" />
     <exclude domain="file" path="location/keys/" />
+    <exclude domain="file" path="location/sharing/" />
 </full-backup-content>

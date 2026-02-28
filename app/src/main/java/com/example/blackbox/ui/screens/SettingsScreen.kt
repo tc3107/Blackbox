@@ -1,6 +1,7 @@
 package com.example.blackbox.ui.screens
 
 import android.net.Uri
+import androidx.core.net.toUri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -354,7 +355,7 @@ fun SettingsScreen(
                     SharingConfigEditor.RelayUrl -> {
                         val normalized = settingsEditorInput.trim().trimEnd('/')
                         if (!isValidRelayBaseUrl(normalized)) {
-                            settingsEditorError = "Relay URL must start with http:// or https:// and include host."
+                            settingsEditorError = "Relay URL must start with https:// and include host."
                             return@SettingsEditorDialog
                         }
                         LocationSharingController.setRelayBaseUrl(normalized)
@@ -558,9 +559,9 @@ private fun SettingsEditorDialog(
 
 private fun isValidRelayBaseUrl(baseUrl: String): Boolean {
     val normalized = baseUrl.trim()
-    if (!(normalized.startsWith("http://") || normalized.startsWith("https://"))) {
+    if (!normalized.startsWith("https://")) {
         return false
     }
-    val uri = runCatching { android.net.Uri.parse(normalized) }.getOrNull() ?: return false
-    return !uri.host.isNullOrBlank()
+    val uri = runCatching { normalized.toUri() }.getOrNull() ?: return false
+    return uri.scheme == "https" && !uri.host.isNullOrBlank()
 }

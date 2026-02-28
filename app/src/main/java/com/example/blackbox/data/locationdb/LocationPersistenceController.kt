@@ -4,7 +4,8 @@ import android.content.Context
 import android.content.ContentValues
 import android.database.sqlite.SQLiteDatabase
 import android.net.Uri
-import android.util.Log
+import com.example.blackbox.logging.AppLog as Log
+import androidx.core.database.sqlite.transaction
 import com.example.blackbox.location.LocationEngine
 import com.example.blackbox.location.LocationSampleEvent
 import java.io.File
@@ -477,8 +478,7 @@ object LocationPersistenceController {
                 """.trimIndent()
             )
 
-            db.beginTransaction()
-            try {
+            db.transaction {
                 rows.forEach { row ->
                     val values = ContentValues().apply {
                         put("received_at_ms", row.receivedAtMs)
@@ -504,9 +504,6 @@ object LocationPersistenceController {
                         SQLiteDatabase.CONFLICT_IGNORE
                     )
                 }
-                db.setTransactionSuccessful()
-            } finally {
-                db.endTransaction()
             }
         } finally {
             db.close()

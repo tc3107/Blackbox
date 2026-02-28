@@ -5,12 +5,13 @@ import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
-import android.util.Log
-import android.util.Size
+import com.example.blackbox.logging.AppLog as Log
 import android.widget.TextView
+import androidx.annotation.OptIn
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
@@ -27,6 +28,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
+@OptIn(markerClass = [ExperimentalGetImage::class])
 class QrScannerActivity : ComponentActivity() {
     private lateinit var previewView: PreviewView
     private lateinit var statusText: TextView
@@ -76,7 +78,7 @@ class QrScannerActivity : ComponentActivity() {
     }
 
     private fun startCamera() {
-        statusText.text = "Point camera at a Blackbox location QR code"
+        statusText.text = getString(R.string.qr_scanner_status_point_camera)
         val providerFuture = ProcessCameraProvider.getInstance(this)
         providerFuture.addListener(
             {
@@ -90,7 +92,6 @@ class QrScannerActivity : ComponentActivity() {
 
                     val analysis = ImageAnalysis.Builder()
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                        .setTargetResolution(Size(1280, 720))
                         .build()
                         .also { useCase ->
                             useCase.setAnalyzer(cameraExecutor) { imageProxy ->

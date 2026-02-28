@@ -5,6 +5,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.view.HapticFeedbackConstants
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -68,6 +69,9 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -251,10 +255,10 @@ fun MainViewScreen(
             .distinctUntilChanged()
     }.collectAsState(
         initial = MainViewLocationState(
-            bestPositionFix = LocationEngine.state.value.bestPositionFix,
-            bestMotionFix = LocationEngine.state.value.bestMotionFix,
-            engineEnabled = LocationEngine.state.value.engineEnabled,
-            engineMode = LocationEngine.state.value.engineMode
+            bestPositionFix = null,
+            bestMotionFix = null,
+            engineEnabled = false,
+            engineMode = LocationEngineMode.Off
         )
     )
     val sharingState by LocationSharingController.state.collectAsState()
@@ -280,8 +284,8 @@ fun MainViewScreen(
     var historyMapRenderData by remember {
         mutableStateOf<MainHistoryMapRenderData?>(null)
     }
-    var historyPlaybackToggleSignal by remember { mutableStateOf(0) }
-    var historyPlaybackCancelSignal by remember { mutableStateOf(0) }
+    var historyPlaybackToggleSignal by remember { mutableIntStateOf(0) }
+    var historyPlaybackCancelSignal by remember { mutableIntStateOf(0) }
     var historyPlaybackUiState by remember {
         mutableStateOf(MainHistoryPlaybackUiState(canPlay = false, isPlaying = false))
     }
@@ -531,13 +535,13 @@ fun MainViewScreen(
                 ) {
                     ActionWidget(
                         title = "Database",
-                        iconRes = android.R.drawable.ic_menu_manage,
+                        iconRes = android.R.drawable.ic_menu_save,
                         modifier = Modifier.weight(1f),
                         onClick = { databaseDialogVisible = true }
                     )
                     ActionWidget(
                         title = "Settings",
-                        iconRes = android.R.drawable.ic_menu_preferences,
+                        iconRes = android.R.drawable.ic_menu_manage,
                         modifier = Modifier.weight(1f),
                         onClick = { settingsDialogVisible = true }
                     )
@@ -1242,7 +1246,7 @@ private fun ToggleRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
-    var lastToggleAtMs by remember(title) { mutableStateOf(0L) }
+    var lastToggleAtMs by remember(title) { mutableLongStateOf(0L) }
     val toggleInteractionSource = remember(title, checked) { MutableInteractionSource() }
 
     Row(
@@ -1361,6 +1365,15 @@ private fun isInsideZone(lat: Double?, lon: Double?, zone: ShareZone): Boolean {
     return distanceM <= zone.radiusM.toDouble()
 }
 
+@Suppress("InlinedApi")
+private fun textHandleMoveHapticCode(): Int {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+        HapticFeedbackConstants.TEXT_HANDLE_MOVE
+    } else {
+        HapticFeedbackConstants.KEYBOARD_TAP
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MainLocationHistoryOverlayPanel(
@@ -1375,9 +1388,9 @@ private fun MainLocationHistoryOverlayPanel(
     var endDate by remember { mutableStateOf<LocalDate?>(null) }
     var userEditedStartDate by remember { mutableStateOf(false) }
     var datePickerTarget by remember { mutableStateOf<MainHistoryDatePickerTarget?>(null) }
-    var selectedStartFraction by rememberSaveable { mutableStateOf(0f) }
-    var selectedEndFraction by rememberSaveable { mutableStateOf(1f) }
-    var preciseFraction by rememberSaveable { mutableStateOf(0.5f) }
+    var selectedStartFraction by rememberSaveable { mutableFloatStateOf(0f) }
+    var selectedEndFraction by rememberSaveable { mutableFloatStateOf(1f) }
+    var preciseFraction by rememberSaveable { mutableFloatStateOf(0.5f) }
     var isPlaying by rememberSaveable { mutableStateOf(false) }
 
     val todayUtc = remember { LocalDate.now(ZoneOffset.UTC) }
@@ -2200,10 +2213,10 @@ private fun MainHistoryHeatmapSlot(
                                         view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                                     }
                                     if (preciseAtMin && !hitPreciseMin) {
-                                        view.performHapticFeedback(HapticFeedbackConstants.TEXT_HANDLE_MOVE)
+                                        view.performHapticFeedback(textHandleMoveHapticCode())
                                     }
                                     if (preciseAtMax && !hitPreciseMax) {
-                                        view.performHapticFeedback(HapticFeedbackConstants.TEXT_HANDLE_MOVE)
+                                        view.performHapticFeedback(textHandleMoveHapticCode())
                                     }
                                     hitStartBoundary = startAtBoundary
                                     hitEndBoundary = endAtBoundary

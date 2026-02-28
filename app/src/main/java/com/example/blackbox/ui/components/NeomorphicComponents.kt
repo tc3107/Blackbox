@@ -1,5 +1,6 @@
 package com.example.blackbox.ui.components
 
+import android.os.Build
 import android.view.HapticFeedbackConstants
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.interaction.PressInteraction
@@ -29,6 +30,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -41,6 +43,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
+import com.example.blackbox.ui.theme.NEO_PRESS_ANIM_MS
 import com.example.blackbox.ui.theme.neomorphicPalette
 import com.example.blackbox.ui.theme.neomorphicShadow
 import kotlinx.coroutines.delay
@@ -55,7 +58,7 @@ import androidx.compose.material3.TextField as M3TextField
 import androidx.compose.material3.TextButton as M3TextButton
 
 private val NeoShadowPadding = 3.dp
-private const val NeoTapHoldMs = 160L
+private const val NeoTapHoldMs = NEO_PRESS_ANIM_MS + 20L
 private const val NeoSecondStageHapticDelayMs = 45L
 
 enum class NeoButtonHapticMode {
@@ -73,12 +76,21 @@ private fun android.view.View.emitNeoHaptic(code: Int, fallbackCode: Int = code)
 private fun android.view.View.emitNeoLightHaptic() {
     emitNeoHaptic(
         code = HapticFeedbackConstants.KEYBOARD_TAP,
-        fallbackCode = HapticFeedbackConstants.TEXT_HANDLE_MOVE
+        fallbackCode = textHandleMoveHapticCode()
     )
 }
 
 private fun android.view.View.emitNeoConfirmHaptic() {
     emitNeoHaptic(code = HapticFeedbackConstants.LONG_PRESS, fallbackCode = HapticFeedbackConstants.LONG_PRESS)
+}
+
+@Suppress("InlinedApi")
+private fun textHandleMoveHapticCode(): Int {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+        HapticFeedbackConstants.TEXT_HANDLE_MOVE
+    } else {
+        HapticFeedbackConstants.KEYBOARD_TAP
+    }
 }
 
 @Composable
@@ -114,8 +126,8 @@ fun NeoButton(
     val view = LocalView.current
     val scope = rememberCoroutineScope()
     var tapLatched by remember { mutableStateOf(false) }
-    var hapticToken by remember { mutableStateOf(0L) }
-    var latchToken by remember { mutableStateOf(0L) }
+    var hapticToken by remember { mutableLongStateOf(0L) }
+    var latchToken by remember { mutableLongStateOf(0L) }
     LaunchedEffect(source, hapticMode, enabled) {
         if (!enabled || hapticMode == NeoButtonHapticMode.None) return@LaunchedEffect
         source.interactions.collect { interaction ->
@@ -212,8 +224,8 @@ fun NeoOutlinedButton(
     val view = LocalView.current
     val scope = rememberCoroutineScope()
     var tapLatched by remember { mutableStateOf(false) }
-    var hapticToken by remember { mutableStateOf(0L) }
-    var latchToken by remember { mutableStateOf(0L) }
+    var hapticToken by remember { mutableLongStateOf(0L) }
+    var latchToken by remember { mutableLongStateOf(0L) }
     LaunchedEffect(source, hapticMode, enabled) {
         if (!enabled || hapticMode == NeoButtonHapticMode.None) return@LaunchedEffect
         source.interactions.collect { interaction ->
@@ -308,8 +320,8 @@ fun NeoTextButton(
     val view = LocalView.current
     val scope = rememberCoroutineScope()
     var tapLatched by remember { mutableStateOf(false) }
-    var hapticToken by remember { mutableStateOf(0L) }
-    var latchToken by remember { mutableStateOf(0L) }
+    var hapticToken by remember { mutableLongStateOf(0L) }
+    var latchToken by remember { mutableLongStateOf(0L) }
     LaunchedEffect(source, hapticMode, enabled) {
         if (!enabled || hapticMode == NeoButtonHapticMode.None) return@LaunchedEffect
         source.interactions.collect { interaction ->

@@ -5,7 +5,8 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.util.Log
+import android.os.Build
+import com.example.blackbox.logging.AppLog as Log
 import android.view.HapticFeedbackConstants
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -92,6 +93,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.core.graphics.toColorInt
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -246,17 +248,26 @@ private fun fullscreenPaletteForTarget(targetType: MapTargetType): MapCirclePale
 
 private fun emitTapHaptic(view: android.view.View) {
     if (!view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)) {
-        view.performHapticFeedback(HapticFeedbackConstants.TEXT_HANDLE_MOVE)
+        view.performHapticFeedback(textHandleMoveHapticCode())
     }
 }
 
 private fun emitToggleRowHaptic(view: android.view.View, scope: CoroutineScope) {
     if (!view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)) {
-        view.performHapticFeedback(HapticFeedbackConstants.TEXT_HANDLE_MOVE)
+        view.performHapticFeedback(textHandleMoveHapticCode())
     }
     scope.launch {
         delay(ROW_EXPAND_ANIM_MS.toLong())
         view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+    }
+}
+
+@Suppress("InlinedApi")
+private fun textHandleMoveHapticCode(): Int {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+        HapticFeedbackConstants.TEXT_HANDLE_MOVE
+    } else {
+        HapticFeedbackConstants.KEYBOARD_TAP
     }
 }
 
@@ -2574,14 +2585,14 @@ private fun upsertFullscreenCircleLayers(
     val targetAreaFillLayer = (style.getLayer(FsTargetAreaFillLayerId) as? FillLayer)
         ?: FillLayer(FsTargetAreaFillLayerId, FsTargetAreaSourceId).also(style::addLayer)
     targetAreaFillLayer.setProperties(
-        fillColor(android.graphics.Color.parseColor(targetPalette.fillHex)),
+        fillColor(targetPalette.fillHex.toColorInt()),
         fillOpacity(0.20f)
     )
 
     val targetAreaStrokeLayer = (style.getLayer(FsTargetAreaStrokeLayerId) as? LineLayer)
         ?: LineLayer(FsTargetAreaStrokeLayerId, FsTargetAreaSourceId).also(style::addLayer)
     targetAreaStrokeLayer.setProperties(
-        lineColor(android.graphics.Color.parseColor(targetPalette.strokeHex)),
+        lineColor(targetPalette.strokeHex.toColorInt()),
         lineOpacity(0.90f),
         lineWidth(2f)
     )
@@ -2589,7 +2600,7 @@ private fun upsertFullscreenCircleLayers(
     val targetCenterOuterLayer = (style.getLayer(FsTargetCenterOuterLayerId) as? CircleLayer)
         ?: CircleLayer(FsTargetCenterOuterLayerId, FsTargetCenterSourceId).also(style::addLayer)
     targetCenterOuterLayer.setProperties(
-        circleColor(android.graphics.Color.parseColor(targetPalette.centerOuterHex)),
+        circleColor(targetPalette.centerOuterHex.toColorInt()),
         circleOpacity(1f),
         circleRadius(5f)
     )
@@ -2625,7 +2636,7 @@ private fun upsertFullscreenCircleLayers(
     if (style.getLayer(FsUserAreaFillLayerId) == null) {
         style.addLayer(
             FillLayer(FsUserAreaFillLayerId, FsUserAreaSourceId).withProperties(
-                fillColor(android.graphics.Color.parseColor("#4785FF")),
+                fillColor("#4785FF".toColorInt()),
                 fillOpacity(if (hasUser) 0.20f else 0f)
             )
         )
@@ -2637,7 +2648,7 @@ private fun upsertFullscreenCircleLayers(
     if (style.getLayer(FsUserAreaStrokeLayerId) == null) {
         style.addLayer(
             LineLayer(FsUserAreaStrokeLayerId, FsUserAreaSourceId).withProperties(
-                lineColor(android.graphics.Color.parseColor("#3B82F6")),
+                lineColor("#3B82F6".toColorInt()),
                 lineOpacity(if (hasUser) 0.95f else 0f),
                 lineWidth(2f)
             )
@@ -2650,7 +2661,7 @@ private fun upsertFullscreenCircleLayers(
     if (style.getLayer(FsUserCenterOuterLayerId) == null) {
         style.addLayer(
             CircleLayer(FsUserCenterOuterLayerId, FsUserCenterSourceId).withProperties(
-                circleColor(android.graphics.Color.parseColor("#4DA3FF")),
+                circleColor("#4DA3FF".toColorInt()),
                 circleOpacity(if (hasUser) 1f else 0f),
                 circleRadius(5f)
             )
@@ -2700,7 +2711,7 @@ private fun upsertFullscreenHistoryPathLayer(
     val pathLayer = (style.getLayer(FsHistoryPathLayerId) as? LineLayer)
         ?: LineLayer(FsHistoryPathLayerId, FsHistoryPathSourceId).also(style::addLayer)
     pathLayer.setProperties(
-        lineColor(android.graphics.Color.parseColor("#2D7DFF")),
+        lineColor("#2D7DFF".toColorInt()),
         lineOpacity(if (hasPath) 0.94f else 0f),
         lineWidth(3.2f)
     )
@@ -2742,14 +2753,14 @@ private fun upsertFullscreenHistorySelectedPointLayer(
     val selectedAreaFillLayer = (style.getLayer(FsHistoryPointAreaFillLayerId) as? FillLayer)
         ?: FillLayer(FsHistoryPointAreaFillLayerId, FsHistoryPointAreaSourceId).also(style::addLayer)
     selectedAreaFillLayer.setProperties(
-        fillColor(android.graphics.Color.parseColor("#2ECC71")),
+        fillColor("#2ECC71".toColorInt()),
         fillOpacity(if (hasSelectedPoint) 0.24f else 0f)
     )
 
     val selectedAreaStrokeLayer = (style.getLayer(FsHistoryPointAreaStrokeLayerId) as? LineLayer)
         ?: LineLayer(FsHistoryPointAreaStrokeLayerId, FsHistoryPointAreaSourceId).also(style::addLayer)
     selectedAreaStrokeLayer.setProperties(
-        lineColor(android.graphics.Color.parseColor("#27AE60")),
+        lineColor("#27AE60".toColorInt()),
         lineOpacity(if (hasSelectedPoint) 0.95f else 0f),
         lineWidth(2f)
     )
@@ -2757,7 +2768,7 @@ private fun upsertFullscreenHistorySelectedPointLayer(
     val selectedCenterOuterLayer = (style.getLayer(FsHistoryPointCenterOuterLayerId) as? CircleLayer)
         ?: CircleLayer(FsHistoryPointCenterOuterLayerId, FsHistoryPointCenterSourceId).also(style::addLayer)
     selectedCenterOuterLayer.setProperties(
-        circleColor(android.graphics.Color.parseColor("#36D67A")),
+        circleColor("#36D67A".toColorInt()),
         circleOpacity(if (hasSelectedPoint) 1f else 0f),
         circleRadius(5f)
     )

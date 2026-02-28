@@ -1,6 +1,8 @@
 package com.example.blackbox.sharing
 
 import android.content.Context
+import androidx.core.content.edit
+import androidx.core.net.toUri
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -31,7 +33,9 @@ class SharingSettingsStore(context: Context) {
     fun setSharingEnabled(enabled: Boolean) {
         _settings.update { it.copy(sharingEnabled = enabled) }
         scope.launch {
-            preferences().edit().putBoolean(KEY_SHARING_ENABLED, enabled).apply()
+            preferences().edit {
+                putBoolean(KEY_SHARING_ENABLED, enabled)
+            }
         }
     }
 
@@ -39,15 +43,19 @@ class SharingSettingsStore(context: Context) {
         val normalized = normalizeUsername(username)
         _settings.update { it.copy(username = normalized) }
         scope.launch {
-            preferences().edit().putString(KEY_USERNAME, normalized).apply()
+            preferences().edit {
+                putString(KEY_USERNAME, normalized)
+            }
         }
     }
 
     fun setRelayBaseUrl(baseUrl: String) {
-        val normalized = baseUrl.trim().trimEnd('/').ifBlank { DEFAULT_RELAY_BASE_URL }
+        val normalized = normalizeRelayBaseUrl(baseUrl)
         _settings.update { it.copy(relayBaseUrl = normalized) }
         scope.launch {
-            preferences().edit().putString(KEY_RELAY_BASE_URL, normalized).apply()
+            preferences().edit {
+                putString(KEY_RELAY_BASE_URL, normalized)
+            }
         }
     }
 
@@ -61,21 +69,18 @@ class SharingSettingsStore(context: Context) {
             )
         }
         scope.launch {
-            preferences()
-                .edit()
-                .putLong(KEY_NORMAL_INTERVAL_MS, boundedNormal)
-                .putLong(KEY_FAST_INTERVAL_MS, boundedFast)
-                .apply()
+            preferences().edit {
+                putLong(KEY_NORMAL_INTERVAL_MS, boundedNormal)
+                putLong(KEY_FAST_INTERVAL_MS, boundedFast)
+            }
         }
     }
 
     private fun readSettings(): SharingSettings {
         val preferences = preferences()
-        val relayBaseUrl = preferences.getString(KEY_RELAY_BASE_URL, DEFAULT_RELAY_BASE_URL)
-            ?.trim()
-            ?.trimEnd('/')
-            ?.takeIf { it.isNotBlank() }
-            ?: DEFAULT_RELAY_BASE_URL
+        val relayBaseUrl = normalizeRelayBaseUrl(
+            preferences.getString(KEY_RELAY_BASE_URL, DEFAULT_RELAY_BASE_URL).orEmpty()
+        )
         val username = normalizeUsername(preferences.getString(KEY_USERNAME, "").orEmpty())
         val normal = preferences.getLong(KEY_NORMAL_INTERVAL_MS, DEFAULT_NORMAL_PUSH_INTERVAL_MS)
             .coerceIn(MIN_NORMAL_INTERVAL_MS, MAX_NORMAL_INTERVAL_MS)
@@ -89,6 +94,18 @@ class SharingSettingsStore(context: Context) {
             fastIntervalMs = fast,
             fastSpeedThresholdMps = DEFAULT_FAST_SPEED_THRESHOLD_MPS
         )
+    }
+
+    private fun normalizeRelayBaseUrl(baseUrl: String): String {
+        val trimmed = baseUrl.trim().trimEnd('/')
+        if (!trimmed.startsWith("https://")) {
+            return DEFAULT_RELAY_BASE_URL
+        }
+        val uri = runCatching { trimmed.toUri() }.getOrNull()
+        if (uri?.scheme != "https" || uri.host.isNullOrBlank()) {
+            return DEFAULT_RELAY_BASE_URL
+        }
+        return trimmed
     }
 
     private fun preferences() = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

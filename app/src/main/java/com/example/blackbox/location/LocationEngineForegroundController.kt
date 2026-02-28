@@ -2,6 +2,7 @@ package com.example.blackbox.location
 
 import android.content.Context
 import android.content.Intent
+import androidx.core.content.edit
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -131,10 +132,9 @@ object LocationEngineForegroundController {
     }
 
     private fun writeEnabledPreference(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putBoolean(KEY_ENABLED, enabled)
-            .apply()
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putBoolean(KEY_ENABLED, enabled)
+        }
     }
 
     private fun readEnabledPreference(context: Context): Boolean {

@@ -1,5 +1,6 @@
 package com.example.blackbox.location
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.hardware.Sensor
 import android.hardware.SensorManager
@@ -15,7 +16,8 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
 import android.os.SystemClock
-import android.util.Log
+import com.example.blackbox.logging.AppLog as Log
+import androidx.annotation.RequiresApi
 import java.util.Locale
 import java.util.concurrent.Executor
 import kotlin.math.abs
@@ -344,6 +346,7 @@ object LocationEngine {
         }
     }
 
+    @SuppressLint("MissingPermission")
     private fun requestProviderUpdates(
         manager: LocationManager,
         provider: String,
@@ -351,26 +354,21 @@ object LocationEngine {
     ): Boolean {
         val handler = ensureEngineHandler()
         val executor = ensureEngineExecutor()
-        val (intervalMillis, quality) = when {
-            provider == LocationManager.PASSIVE_PROVIDER -> 0L to LocationRequest.QUALITY_LOW_POWER
+        val intervalMillis = when {
+            provider == LocationManager.PASSIVE_PROVIDER -> 0L
             engineMode == LocationEngineMode.LowPower && provider == LocationManager.NETWORK_PROVIDER -> {
-                LOW_POWER_NETWORK_INTERVAL_MS to LocationRequest.QUALITY_LOW_POWER
+                LOW_POWER_NETWORK_INTERVAL_MS
             }
 
-            provider == LocationManager.GPS_PROVIDER -> ACTIVE_UPDATE_INTERVAL_MS to LocationRequest.QUALITY_HIGH_ACCURACY
-            else -> ACTIVE_UPDATE_INTERVAL_MS to LocationRequest.QUALITY_BALANCED_POWER_ACCURACY
+            provider == LocationManager.GPS_PROVIDER -> ACTIVE_UPDATE_INTERVAL_MS
+            else -> ACTIVE_UPDATE_INTERVAL_MS
         }
 
         val requestResult = runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val request = LocationRequest.Builder(intervalMillis)
-                    .setMinUpdateDistanceMeters(0f)
-                    .setMinUpdateIntervalMillis(intervalMillis)
-                    .setQuality(quality)
-                    .build()
                 manager.requestLocationUpdates(
                     provider,
-                    request,
+                    buildApi31LocationRequest(provider = provider, intervalMillis = intervalMillis),
                     executor,
                     listener
                 )
@@ -407,6 +405,25 @@ object LocationEngine {
         return false
     }
 
+    @RequiresApi(Build.VERSION_CODES.S)
+    private fun buildApi31LocationRequest(provider: String, intervalMillis: Long): LocationRequest {
+        val quality = when {
+            provider == LocationManager.PASSIVE_PROVIDER -> LocationRequest.QUALITY_LOW_POWER
+            engineMode == LocationEngineMode.LowPower && provider == LocationManager.NETWORK_PROVIDER -> {
+                LocationRequest.QUALITY_LOW_POWER
+            }
+
+            provider == LocationManager.GPS_PROVIDER -> LocationRequest.QUALITY_HIGH_ACCURACY
+            else -> LocationRequest.QUALITY_BALANCED_POWER_ACCURACY
+        }
+        return LocationRequest.Builder(intervalMillis)
+            .setMinUpdateDistanceMeters(0f)
+            .setMinUpdateIntervalMillis(intervalMillis)
+            .setQuality(quality)
+            .build()
+    }
+
+    @SuppressLint("MissingPermission")
     private fun publishBestLastKnownLocations() {
         val manager = locationManager ?: return
         val nowMillis = System.currentTimeMillis()
@@ -742,6 +759,7 @@ object LocationEngine {
         significantMotionArmed = false
     }
 
+    @SuppressLint("MissingPermission")
     private fun syncGnssStatusUpdates() {
         val context = appContext
         val manager = locationManager
@@ -754,11 +772,6 @@ object LocationEngine {
 
         if (!context.hasAnyLocationPermission()) {
             stopGnssStatusUpdates("GNSS unavailable: location permission denied.")
-            return
-        }
-
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
-            stopGnssStatusUpdates("GNSS status callbacks require Android API 24+.")
             return
         }
 

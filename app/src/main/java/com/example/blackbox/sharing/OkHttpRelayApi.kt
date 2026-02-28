@@ -1,6 +1,6 @@
 package com.example.blackbox.sharing
 
-import android.util.Log
+import com.example.blackbox.logging.AppLog as Log
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import kotlinx.coroutines.Dispatchers
@@ -117,8 +117,8 @@ class OkHttpRelayApi(
         return withContext(Dispatchers.IO) {
             runCatching {
                 val baseUrl = baseUrlProvider().trim().trimEnd('/')
-                require(baseUrl.startsWith("http://") || baseUrl.startsWith("https://")) {
-                    "Relay URL must be absolute (http/https)."
+                require(baseUrl.startsWith("https://")) {
+                    "Relay URL must be absolute and use HTTPS."
                 }
                 val endpoint = baseUrl + path
 

@@ -2,6 +2,8 @@ package com.example.blackbox.data.locationdb
 
 import android.content.Context
 import android.net.Uri
+import androidx.core.content.edit
+import androidx.core.net.toUri
 
 class LocationArchivePreferences(private val context: Context) {
     private val appContext = context.applicationContext
@@ -9,7 +11,7 @@ class LocationArchivePreferences(private val context: Context) {
 
     fun getArchiveTreeUri(): Uri? {
         val raw = preferences.getString(KEY_ARCHIVE_TREE_URI, null) ?: return null
-        return runCatching { Uri.parse(raw) }.getOrNull()
+        return runCatching { raw.toUri() }.getOrNull()
     }
 
     fun setArchiveTreeUri(uri: Uri?) {
@@ -19,10 +21,9 @@ class LocationArchivePreferences(private val context: Context) {
                 appContext.contentResolver.takePersistableUriPermission(uri, flags)
             }
         }
-        preferences
-            .edit()
-            .putString(KEY_ARCHIVE_TREE_URI, uri?.toString())
-            .apply()
+        preferences.edit {
+            putString(KEY_ARCHIVE_TREE_URI, uri?.toString())
+        }
     }
 
     private object IntentFlags {

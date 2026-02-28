@@ -1,6 +1,6 @@
 package com.example.blackbox.ui.components
 
-import android.graphics.Color as AndroidColor
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import androidx.compose.foundation.layout.Box
@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.graphics.toColorInt
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -97,8 +98,8 @@ fun StaticRadiusMapPreview(
     latitude: Double,
     longitude: Double,
     radiusMeters: Double,
-    targetType: MapTargetType = MapTargetType.USER,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    targetType: MapTargetType = MapTargetType.USER
 ) {
     val mapView = rememberMapViewWithLifecycle()
     val mapFallbackBackground = lerp(
@@ -160,7 +161,12 @@ fun StaticRadiusMapPreview(
                 factory = {
                     mapView.apply {
                         setBackgroundColor(mapFallbackBackground.toArgb())
-                        setOnTouchListener { _, _ -> true }
+                        setOnTouchListener { view, event ->
+                            if (event?.action == MotionEvent.ACTION_UP) {
+                                view.performClick()
+                            }
+                            true
+                        }
                         disableMapOrnamentsForPreview()
                         getMapAsync { map ->
                             if (disposed) return@getMapAsync
@@ -313,14 +319,14 @@ private fun upsertTargetCircleLayers(
     val areaFillLayer = (style.getLayer(TargetAreaFillLayerId) as? FillLayer)
         ?: FillLayer(TargetAreaFillLayerId, TargetAreaSourceId).also(style::addLayer)
     areaFillLayer.setProperties(
-        fillColor(AndroidColor.parseColor(palette.fillHex)),
+        fillColor(palette.fillHex.toColorInt()),
         fillOpacity(0.20f)
     )
 
     val areaStrokeLayer = (style.getLayer(TargetAreaStrokeLayerId) as? LineLayer)
         ?: LineLayer(TargetAreaStrokeLayerId, TargetAreaSourceId).also(style::addLayer)
     areaStrokeLayer.setProperties(
-        lineColor(AndroidColor.parseColor(palette.strokeHex)),
+        lineColor(palette.strokeHex.toColorInt()),
         lineOpacity(0.90f),
         lineWidth(2f)
     )
@@ -328,7 +334,7 @@ private fun upsertTargetCircleLayers(
     val centerOuterLayer = (style.getLayer(TargetCenterOuterLayerId) as? CircleLayer)
         ?: CircleLayer(TargetCenterOuterLayerId, TargetCenterSourceId).also(style::addLayer)
     centerOuterLayer.setProperties(
-        circleColor(AndroidColor.parseColor(palette.centerOuterHex)),
+        circleColor(palette.centerOuterHex.toColorInt()),
         circleOpacity(1.0f),
         circleRadius(5f)
     )
@@ -336,7 +342,7 @@ private fun upsertTargetCircleLayers(
     val centerInnerLayer = (style.getLayer(TargetCenterInnerLayerId) as? CircleLayer)
         ?: CircleLayer(TargetCenterInnerLayerId, TargetCenterSourceId).also(style::addLayer)
     centerInnerLayer.setProperties(
-        circleColor(AndroidColor.WHITE),
+        circleColor(android.graphics.Color.WHITE),
         circleOpacity(1.0f),
         circleRadius(2f)
     )

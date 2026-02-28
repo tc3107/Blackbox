@@ -1,6 +1,7 @@
 package com.example.blackbox.data.settings
 
 import android.content.Context
+import androidx.core.content.edit
 import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,10 +33,9 @@ class UiSettingsStore(context: Context) {
 
         _settings.value = UiSettings(customAccentHex = normalizedHex)
         scope.launch {
-            preferences()
-                .edit()
-                .putString(KEY_CUSTOM_ACCENT_HEX, normalizedHex)
-                .apply()
+            preferences().edit {
+                putString(KEY_CUSTOM_ACCENT_HEX, normalizedHex)
+            }
         }
     }
 

@@ -3,9 +3,10 @@ package com.example.blackbox.sharing
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.os.BatteryManager
 import android.net.Uri
-import android.util.Log
+import android.os.BatteryManager
+import com.example.blackbox.logging.AppLog as Log
+import androidx.core.net.toUri
 import com.example.blackbox.location.LocationEngine
 import com.example.blackbox.location.LocationEngineMode
 import com.example.blackbox.location.LocationSampleEvent
@@ -55,6 +56,7 @@ object LocationSharingController {
     private val relayStatusStopGraceMs = 1_200L
     private val relayStatusTimeoutRetryDelayMs = 1_500L
     private val relayStatusTimeoutUnreachableThreshold = 2
+    private val maxAclUpsertAttempts = 4
 
     private var currentSettings: SharingSettings = SharingSettings()
     private var snapshot: SharingStateSnapshot = SharingStateSnapshot()
@@ -214,11 +216,12 @@ object LocationSharingController {
 
     fun setRelayBaseUrl(baseUrl: String) {
         Log.d(SHARING_DEBUG_TAG, "setRelayBaseUrl requested=$baseUrl")
+        val normalizedRelayBaseUrl = normalizeRelayBaseUrl(baseUrl)
         currentSettings = currentSettings.copy(
-            relayBaseUrl = baseUrl.trim().trimEnd('/').ifBlank { DEFAULT_RELAY_BASE_URL }
+            relayBaseUrl = normalizedRelayBaseUrl
         )
         publishState()
-        settingsStore?.setRelayBaseUrl(baseUrl)
+        settingsStore?.setRelayBaseUrl(normalizedRelayBaseUrl)
     }
 
     fun setIntervals(normalMs: Long, fastMs: Long) {
@@ -497,16 +500,23 @@ object LocationSharingController {
                 ?: error("Failed to open bundle.")
             val imported = localCrypto.decryptIdentityBundle(raw, passphrase)
             mutateSnapshot { current ->
+                val sameSender = current.identity?.senderId == imported.senderId
+                val carriedSync = if (sameSender) {
+                    // Preserve monotonic counters for same identity to avoid relay sequence conflicts after restore.
+                    current.sync
+                } else {
+                    SharingSyncState()
+                }
                 current.copy(
                     identity = imported,
                     contacts = current.contacts.map { it.copy(canReceiveFromMe = false) },
                     pendingPush = null,
-                    sync = SharingSyncState()
+                    sync = carriedSync
                 )
             }
             setInfo("Identity bundle imported.")
         }.onFailure {
-            setError(it.message ?: "Identity import failed")
+            setError(normalizeIdentityImportError(it))
         }
     }
 
@@ -1032,6 +1042,10 @@ object LocationSharingController {
             maybeLogIneligiblePush("no_outbound_recipients")
             return
         }
+        if (!forceImmediate && localSnapshot.pendingPush != null) {
+            maybeLogIneligiblePush("pending_push_in_flight")
+            return
+        }
 
         val seq = localSnapshot.sync.nextSeq
         val claim = buildClaim(event = event, senderId = identity.senderId, seq = seq)
@@ -1301,7 +1315,43 @@ object LocationSharingController {
             return Result.success(Unit)
         }
 
-        val aclSeq = snapshot.sync.lastAclSeq + 1L
+        var aclSeq = initialAclSeqCandidate()
+        var lastFailure: Throwable? = null
+        repeat(maxAclUpsertAttempts) { attemptIndex ->
+            val attempt = attemptAclUpsert(
+                identity = identity,
+                receiverIds = receiverIds,
+                digest = digest,
+                aclSeq = aclSeq,
+                localRelay = localRelay,
+                localCrypto = localCrypto
+            )
+            if (attempt.isSuccess) {
+                return Result.success(Unit)
+            }
+            val failure = attempt.exceptionOrNull()
+            lastFailure = failure
+            if (!isAclSeqConflictError(failure)) {
+                return Result.failure(failure ?: IllegalStateException("ACL upsert failed"))
+            }
+            val nextAclSeq = nextAclSeqAfterConflict(aclSeq)
+            Log.w(
+                SHARING_DEBUG_TAG,
+                "ACL seq conflict sender=${shortSharingId(identity.senderId)} attemptedAclSeq=$aclSeq retry=${attemptIndex + 1}/$maxAclUpsertAttempts nextAclSeq=$nextAclSeq"
+            )
+            aclSeq = nextAclSeq
+        }
+        return Result.failure(lastFailure ?: IllegalStateException("ACL upsert failed after retries"))
+    }
+
+    private suspend fun attemptAclUpsert(
+        identity: SharingIdentityState,
+        receiverIds: List<String>,
+        digest: String,
+        aclSeq: Long,
+        localRelay: RelayApi,
+        localCrypto: SharingCrypto
+    ): Result<Unit> {
         val acl = AclUnsigned(
             senderId = identity.senderId,
             aclSeq = aclSeq,
@@ -1550,6 +1600,46 @@ object LocationSharingController {
         return message.contains("Push seq must increase monotonically", ignoreCase = true)
     }
 
+    private fun isAclSeqConflictError(throwable: Throwable?): Boolean {
+        val relayHttp = throwable as? RelayHttpException
+        if (relayHttp?.statusCode == 409 &&
+            relayHttp.responseBody.contains("aclSeq must increase monotonically", ignoreCase = true)
+        ) {
+            return true
+        }
+        val message = throwable?.message ?: return false
+        return message.contains("aclSeq must increase monotonically", ignoreCase = true)
+    }
+
+    private fun initialAclSeqCandidate(): Long {
+        val currentSync = snapshot.sync
+        val nextFromState = currentSync.lastAclSeq + 1L
+        return if (currentSync.lastAclSeq == 0L) {
+            maxOf(nextFromState, currentSync.nextSeq, System.currentTimeMillis())
+        } else {
+            maxOf(nextFromState, currentSync.nextSeq)
+        }
+    }
+
+    private fun nextAclSeqAfterConflict(currentAttempt: Long): Long {
+        val plusOne = if (currentAttempt < Long.MAX_VALUE) currentAttempt + 1L else currentAttempt
+        val doubled = if (currentAttempt <= Long.MAX_VALUE / 2L) currentAttempt * 2L else currentAttempt
+        return maxOf(plusOne, doubled, System.currentTimeMillis())
+    }
+
+    private fun normalizeIdentityImportError(throwable: Throwable): String {
+        val message = throwable.message.orEmpty()
+        val looksLikeWrongPassphrase =
+            message.contains("BAD_DECRYPT", ignoreCase = true) ||
+                message.contains("Tag mismatch", ignoreCase = true) ||
+                message.contains("mac check in GCM failed", ignoreCase = true)
+        return if (looksLikeWrongPassphrase) {
+            "Identity import failed: incorrect passphrase or corrupted bundle."
+        } else {
+            message.ifBlank { "Identity import failed." }
+        }
+    }
+
     private suspend fun reconcilePushSeqConflict(
         identity: SharingIdentityState,
         attemptedSeq: Long,
@@ -1745,6 +1835,18 @@ object LocationSharingController {
             return "Network permission missing (INTERNET/ACCESS_NETWORK_STATE). Update or reinstall the app."
         }
         return null
+    }
+
+    private fun normalizeRelayBaseUrl(baseUrl: String): String {
+        val trimmed = baseUrl.trim().trimEnd('/')
+        if (!trimmed.startsWith("https://")) {
+            return DEFAULT_RELAY_BASE_URL
+        }
+        val parsed = runCatching { trimmed.toUri() }.getOrNull()
+        if (parsed?.scheme != "https" || parsed.host.isNullOrBlank()) {
+            return DEFAULT_RELAY_BASE_URL
+        }
+        return trimmed
     }
 
     private fun buildPushContext(senderId: String, recipientId: String, seq: Long): ByteArray {

@@ -1,6 +1,6 @@
 package com.example.blackbox.sharing
 
-import android.util.Log
+import com.example.blackbox.logging.AppLog as Log
 import com.google.crypto.tink.CleartextKeysetHandle
 import com.google.crypto.tink.HybridDecrypt
 import com.google.crypto.tink.HybridEncrypt

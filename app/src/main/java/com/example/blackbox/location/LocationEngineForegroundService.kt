@@ -1,5 +1,6 @@
 package com.example.blackbox.location
 
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -21,6 +22,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 class LocationEngineForegroundService : Service() {
@@ -48,7 +50,7 @@ class LocationEngineForegroundService : Service() {
 
             else -> {
                 val started = runCatching {
-                    startAsForeground("Starting Keepalive.")
+                    startAsForeground(currentExpandedNotificationText())
                     startHostingEngine()
                 }.isSuccess
                 if (started) {
@@ -88,19 +90,30 @@ class LocationEngineForegroundService : Service() {
 
         if (engineStateJob == null) {
             engineStateJob = serviceScope.launch {
-                LocationEngine.state.collectLatest { engineState ->
-                    val notificationText = buildNotificationText(engineState)
-                    updateNotification(notificationText)
+                combine(
+                    LocationEngine.state,
+                    LocationPersistenceController.state,
+                    LocationSharingController.state
+                ) { engineState, persistenceState, sharingState ->
+                    NotificationUiState(
+                        expandedText = buildExpandedNotificationText(
+                            loggingEnabled = persistenceState.loggingEnabled,
+                            sharingEnabled = sharingState.settings.sharingEnabled
+                        ),
+                        engineModeLabel = engineState.engineMode.name
+                    )
+                }.collectLatest { uiState ->
+                    updateNotification(uiState.expandedText)
                     LocationEngineForegroundController.markRunning(
-                        "Keepalive active (${engineState.engineMode.name})."
+                        "Keepalive active (${uiState.engineModeLabel})."
                     )
                 }
             }
         }
     }
 
-    private fun startAsForeground(contentText: String) {
-        val notification = buildNotification(contentText)
+    private fun startAsForeground(expandedText: String) {
+        val notification = buildNotification(expandedText)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
                 NOTIFICATION_ID,
@@ -112,11 +125,17 @@ class LocationEngineForegroundService : Service() {
         }
     }
 
-    private fun updateNotification(contentText: String) {
-        NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification(contentText))
+    @SuppressLint("MissingPermission")
+    private fun updateNotification(expandedText: String) {
+        if (!applicationContext.hasNotificationPermission()) {
+            return
+        }
+        runCatching {
+            NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification(expandedText))
+        }
     }
 
-    private fun buildNotification(contentText: String): Notification {
+    private fun buildNotification(expandedText: String): Notification {
         val openAppIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
@@ -128,13 +147,18 @@ class LocationEngineForegroundService : Service() {
         )
         val notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setContentTitle(getString(R.string.location_notification_title))
-            .setContentText(contentText)
+            .setContentText("")
+            .setStyle(
+                NotificationCompat.BigTextStyle()
+                    .bigText(expandedText)
+            )
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setContentIntent(openAppPendingIntent)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setAutoCancel(false)
             .setSilent(true)
+            .setShowWhen(false)
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .build()
@@ -162,16 +186,28 @@ class LocationEngineForegroundService : Service() {
         manager.createNotificationChannel(channel)
     }
 
-    private fun buildNotificationText(state: LocationEngineState): String {
-        if (!state.engineEnabled) {
-            return "Keepalive active. Engine is off."
-        }
-        return if (state.bestPositionFix == null) {
-            "Waiting for valid fix."
-        } else {
-            "Location tracking active."
+    private fun currentExpandedNotificationText(): String {
+        val loggingEnabled = LocationPersistenceController.state.value.loggingEnabled
+        val sharingEnabled = LocationSharingController.state.value.settings.sharingEnabled
+        return buildExpandedNotificationText(
+            loggingEnabled = loggingEnabled,
+            sharingEnabled = sharingEnabled
+        )
+    }
+
+    private fun buildExpandedNotificationText(loggingEnabled: Boolean, sharingEnabled: Boolean): String {
+        return when {
+            sharingEnabled && loggingEnabled -> "Sharing and logging location."
+            sharingEnabled -> "Sharing location."
+            loggingEnabled -> "Logging location."
+            else -> "Location service active."
         }
     }
+
+    private data class NotificationUiState(
+        val expandedText: String,
+        val engineModeLabel: String
+    )
 
     companion object {
         const val ACTION_START = "com.example.blackbox.locationengine.action.START"

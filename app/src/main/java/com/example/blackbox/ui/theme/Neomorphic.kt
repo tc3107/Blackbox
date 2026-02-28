@@ -26,7 +26,7 @@ import androidx.compose.ui.unit.dp
 
 private const val ENABLE_NEOMORPHIC_EFFECTS = true
 private const val ENABLE_NEOMORPHIC_BLUR_SHADOWS = true
-private const val NEO_PRESS_ANIM_MS = 210
+internal const val NEO_PRESS_ANIM_MS = 210
 
 @Immutable
 data class NeomorphicPalette(
