@@ -1,7 +1,6 @@
 package com.example.blackbox.ui.screens
 
 import android.net.Uri
-import androidx.core.net.toUri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -50,6 +49,7 @@ import com.example.blackbox.sharing.MIN_FAST_INTERVAL_MS
 import com.example.blackbox.sharing.MIN_NORMAL_INTERVAL_MS
 import com.example.blackbox.sharing.USERNAME_MAX_LENGTH
 import com.example.blackbox.sharing.USERNAME_MIN_LENGTH
+import com.example.blackbox.sharing.isValidRelayBaseUrl
 import com.example.blackbox.sharing.isValidUsername
 import com.example.blackbox.ui.components.ButtonLabel
 import kotlinx.coroutines.Dispatchers
@@ -66,7 +66,10 @@ fun SettingsScreen(
     settings: UiSettings,
     onCustomAccentSaved: (String?) -> Unit,
     modifier: Modifier = Modifier,
-    embeddedInDialog: Boolean = false
+    embeddedInDialog: Boolean = false,
+    initialEditor: SharingConfigEditor? = null,
+    editorOnlyMode: Boolean = false,
+    onEditorClosed: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -183,144 +186,150 @@ fun SettingsScreen(
         }
     }
 
-    Column(
-        modifier = modifier
-            .then(
-                if (embeddedInDialog) {
-                    Modifier
+    LaunchedEffect(initialEditor) {
+        initialEditor?.let(::openSettingsEditor)
+    }
+
+    if (!editorOnlyMode) {
+        Column(
+            modifier = modifier
+                .then(
+                    if (embeddedInDialog) {
+                        Modifier
+                            .fillMaxWidth()
+                            .wrapContentHeight()
+                    } else {
+                        Modifier.fillMaxSize()
+                    }
+                )
+                .verticalScroll(rememberScrollState())
+                .padding(
+                    start = 20.dp,
+                    top = if (embeddedInDialog) 4.dp else SETTINGS_TOP_BAR_SCROLL_CLEARANCE,
+                    end = 20.dp,
+                    bottom = if (embeddedInDialog) 12.dp else SETTINGS_BOTTOM_BAR_SCROLL_CLEARANCE
+                ),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            if (!embeddedInDialog) {
+                Text(
+                    text = "Settings",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
                         .fillMaxWidth()
-                        .wrapContentHeight()
-                } else {
-                    Modifier.fillMaxSize()
-                }
-            )
-            .verticalScroll(rememberScrollState())
-            .padding(
-                start = 20.dp,
-                top = if (embeddedInDialog) 4.dp else SETTINGS_TOP_BAR_SCROLL_CLEARANCE,
-                end = 20.dp,
-                bottom = if (embeddedInDialog) 12.dp else SETTINGS_BOTTOM_BAR_SCROLL_CLEARANCE
-            ),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        if (!embeddedInDialog) {
-            Text(
-                text = "Settings",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
-            )
-        }
-
-        OutlinedCard(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Text("Sharing Configuration", style = MaterialTheme.typography.titleSmall)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    OutlinedButton(onClick = { openSettingsEditor(SharingConfigEditor.Username) }, modifier = Modifier.weight(1f)) {
-                        ButtonLabel("Edit Username")
-                    }
-                    OutlinedButton(onClick = { openSettingsEditor(SharingConfigEditor.RelayUrl) }, modifier = Modifier.weight(1f)) {
-                        ButtonLabel("Edit Relay URL")
-                    }
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = { openSettingsEditor(SharingConfigEditor.NormalIntervalMinutes) },
-                        modifier = Modifier.weight(1f)
+                    Text("Sharing Configuration", style = MaterialTheme.typography.titleSmall)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        ButtonLabel("Edit Normal Interval")
+                        OutlinedButton(onClick = { openSettingsEditor(SharingConfigEditor.Username) }, modifier = Modifier.weight(1f)) {
+                            ButtonLabel("Edit Username")
+                        }
+                        OutlinedButton(onClick = { openSettingsEditor(SharingConfigEditor.RelayUrl) }, modifier = Modifier.weight(1f)) {
+                            ButtonLabel("Edit Relay URL")
+                        }
                     }
-                    OutlinedButton(
-                        onClick = { openSettingsEditor(SharingConfigEditor.FastIntervalSeconds) },
-                        modifier = Modifier.weight(1f)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        ButtonLabel("Edit Fast Interval")
+                        OutlinedButton(
+                            onClick = { openSettingsEditor(SharingConfigEditor.NormalIntervalMinutes) },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            ButtonLabel("Edit Normal Interval")
+                        }
+                        OutlinedButton(
+                            onClick = { openSettingsEditor(SharingConfigEditor.FastIntervalSeconds) },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            ButtonLabel("Edit Fast Interval")
+                        }
                     }
                 }
             }
-        }
 
-        OutlinedCard(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Text("Data Backups", style = MaterialTheme.typography.titleSmall)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+            OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Button(
-                        onClick = {
-                            backupAction = BackupAction.ExportIdentity
-                            backupPassphrase = ""
-                            backupPassphraseConfirm = ""
-                            backupDialogError = null
-                        },
-                        modifier = Modifier.weight(1f)
+                    Text("Data Backups", style = MaterialTheme.typography.titleSmall)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        ButtonLabel("Export Identity")
+                        Button(
+                            onClick = {
+                                backupAction = BackupAction.ExportIdentity
+                                backupPassphrase = ""
+                                backupPassphraseConfirm = ""
+                                backupDialogError = null
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            ButtonLabel("Export Identity")
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                backupAction = BackupAction.ImportIdentity
+                                backupPassphrase = ""
+                                backupPassphraseConfirm = ""
+                                backupDialogError = null
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            ButtonLabel("Import Identity")
+                        }
                     }
-                    OutlinedButton(
-                        onClick = {
-                            backupAction = BackupAction.ImportIdentity
-                            backupPassphrase = ""
-                            backupPassphraseConfirm = ""
-                            backupDialogError = null
-                        },
-                        modifier = Modifier.weight(1f)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        ButtonLabel("Import Identity")
-                    }
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = {
-                            backupAction = BackupAction.ExportKey
-                            backupPassphrase = ""
-                            backupPassphraseConfirm = ""
-                            backupDialogError = null
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        ButtonLabel("Export DB Keys")
-                    }
-                    OutlinedButton(
-                        onClick = {
-                            backupAction = BackupAction.ImportKey
-                            backupPassphrase = ""
-                            backupPassphraseConfirm = ""
-                            backupDialogError = null
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        ButtonLabel("Import DB Keys")
+                        Button(
+                            onClick = {
+                                backupAction = BackupAction.ExportKey
+                                backupPassphrase = ""
+                                backupPassphraseConfirm = ""
+                                backupDialogError = null
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            ButtonLabel("Export DB Keys")
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                backupAction = BackupAction.ImportKey
+                                backupPassphrase = ""
+                                backupPassphraseConfirm = ""
+                                backupDialogError = null
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            ButtonLabel("Import DB Keys")
+                        }
                     }
                 }
             }
-        }
 
-        if (!statusMessage.isNullOrBlank()) {
-            Text(
-                text = statusMessage.orEmpty(),
-                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            if (!statusMessage.isNullOrBlank()) {
+                Text(
+                    text = statusMessage.orEmpty(),
+                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 
@@ -341,6 +350,9 @@ fun SettingsScreen(
             onDismiss = {
                 activeSettingsEditor = null
                 settingsEditorError = null
+                if (editorOnlyMode) {
+                    onEditorClosed?.invoke()
+                }
             },
             onConfirm = {
                 when (editor) {
@@ -389,6 +401,9 @@ fun SettingsScreen(
                 }
                 activeSettingsEditor = null
                 settingsEditorError = null
+                if (editorOnlyMode) {
+                    onEditorClosed?.invoke()
+                }
             }
         )
     }
@@ -487,7 +502,7 @@ fun SettingsScreen(
     }
 }
 
-private enum class SharingConfigEditor {
+enum class SharingConfigEditor {
     Username,
     RelayUrl,
     NormalIntervalMinutes,
@@ -555,13 +570,4 @@ private fun SettingsEditorDialog(
         confirmButton = { TextButton(onClick = onConfirm) { Text("Confirm") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
-}
-
-private fun isValidRelayBaseUrl(baseUrl: String): Boolean {
-    val normalized = baseUrl.trim()
-    if (!normalized.startsWith("https://")) {
-        return false
-    }
-    val uri = runCatching { normalized.toUri() }.getOrNull() ?: return false
-    return uri.scheme == "https" && !uri.host.isNullOrBlank()
 }

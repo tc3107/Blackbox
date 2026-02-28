@@ -1,5 +1,6 @@
 package com.example.blackbox.sharing
 
+import androidx.core.net.toUri
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -221,6 +222,23 @@ fun normalizeUsername(raw: String): String {
 fun isValidUsername(value: String): Boolean {
     val normalized = value.trim()
     return normalized.length in USERNAME_MIN_LENGTH..USERNAME_MAX_LENGTH
+}
+
+fun isValidRelayBaseUrl(baseUrl: String): Boolean {
+    val normalized = baseUrl.trim().trimEnd('/')
+    if (!normalized.startsWith("https://")) {
+        return false
+    }
+    val uri = runCatching { normalized.toUri() }.getOrNull() ?: return false
+    return uri.scheme == "https" && !uri.host.isNullOrBlank()
+}
+
+fun isValidNormalIntervalMs(value: Long): Boolean {
+    return value in MIN_NORMAL_INTERVAL_MS..MAX_NORMAL_INTERVAL_MS
+}
+
+fun isValidFastIntervalMs(value: Long): Boolean {
+    return value in MIN_FAST_INTERVAL_MS..MAX_FAST_INTERVAL_MS
 }
 
 fun normalizeZoneName(raw: String): String {

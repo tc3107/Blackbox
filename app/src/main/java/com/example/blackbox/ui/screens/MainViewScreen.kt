@@ -118,6 +118,9 @@ import com.example.blackbox.sharing.ZONE_NAME_MAX_LENGTH
 import com.example.blackbox.sharing.ZONE_NAME_MIN_LENGTH
 import com.example.blackbox.sharing.ZONE_RADIUS_MAX_METERS
 import com.example.blackbox.sharing.ZONE_RADIUS_MIN_METERS
+import com.example.blackbox.sharing.isValidFastIntervalMs
+import com.example.blackbox.sharing.isValidNormalIntervalMs
+import com.example.blackbox.sharing.isValidRelayBaseUrl
 import com.example.blackbox.sharing.isValidUsername
 import com.example.blackbox.sharing.normalizeUsername
 import com.example.blackbox.ui.components.ButtonLabel
@@ -273,6 +276,8 @@ fun MainViewScreen(
     var zonesDialogVisible by rememberSaveable { mutableStateOf(false) }
     var databaseDialogVisible by rememberSaveable { mutableStateOf(false) }
     var settingsDialogVisible by rememberSaveable { mutableStateOf(false) }
+    var settingsDialogInitialEditor by remember { mutableStateOf<SharingConfigEditor?>(null) }
+    var settingsQuickFixEditor by remember { mutableStateOf<SharingConfigEditor?>(null) }
     var scanError by rememberSaveable { mutableStateOf<String?>(null) }
     var createZoneDialogVisible by rememberSaveable { mutableStateOf(false) }
     var zoneDialogName by rememberSaveable { mutableStateOf("") }
@@ -288,6 +293,29 @@ fun MainViewScreen(
     var historyPlaybackCancelSignal by remember { mutableIntStateOf(0) }
     var historyPlaybackUiState by remember {
         mutableStateOf(MainHistoryPlaybackUiState(canPlay = false, isPlaying = false))
+    }
+
+    fun openSettingsDialog(initialEditor: SharingConfigEditor? = null) {
+        settingsQuickFixEditor = null
+        settingsDialogInitialEditor = initialEditor
+        settingsDialogVisible = true
+    }
+
+    fun firstInvalidSharingSettingsEditor(): SharingConfigEditor? {
+        val shareSettings = sharingState.settings
+        if (!isValidUsername(normalizeUsername(shareSettings.username))) {
+            return SharingConfigEditor.Username
+        }
+        if (!isValidRelayBaseUrl(shareSettings.relayBaseUrl)) {
+            return SharingConfigEditor.RelayUrl
+        }
+        if (!isValidNormalIntervalMs(shareSettings.normalIntervalMs)) {
+            return SharingConfigEditor.NormalIntervalMinutes
+        }
+        if (!isValidFastIntervalMs(shareSettings.fastIntervalMs)) {
+            return SharingConfigEditor.FastIntervalSeconds
+        }
+        return null
     }
 
     val scanQrLauncher = rememberLauncherForActivityResult(
@@ -484,9 +512,12 @@ fun MainViewScreen(
                             title = "Location Sharing",
                             checked = sharingState.settings.sharingEnabled
                         ) { enabled ->
-                            if (enabled && !isValidUsername(normalizeUsername(sharingState.settings.username))) {
-                                settingsDialogVisible = true
-                                return@ToggleRow
+                            if (enabled) {
+                                val invalidEditor = firstInvalidSharingSettingsEditor()
+                                if (invalidEditor != null) {
+                                    settingsQuickFixEditor = invalidEditor
+                                    return@ToggleRow
+                                }
                             }
                             LocationSharingController.setSharingEnabled(enabled)
                         }
@@ -543,7 +574,7 @@ fun MainViewScreen(
                         title = "Settings",
                         iconRes = android.R.drawable.ic_menu_manage,
                         modifier = Modifier.weight(1f),
-                        onClick = { settingsDialogVisible = true }
+                        onClick = { openSettingsDialog() }
                     )
                 }
             }
@@ -742,16 +773,30 @@ fun MainViewScreen(
 
     if (settingsDialogVisible) {
         MainOverlayDialog(
-            onDismissRequest = { settingsDialogVisible = false },
+            onDismissRequest = {
+                settingsDialogVisible = false
+                settingsDialogInitialEditor = null
+            },
             title = "Settings"
         ) {
             SettingsScreen(
                 settings = settings,
                 onCustomAccentSaved = onCustomAccentSaved,
                 modifier = Modifier.fillMaxWidth(),
-                embeddedInDialog = true
+                embeddedInDialog = true,
+                initialEditor = settingsDialogInitialEditor
             )
         }
+    }
+
+    settingsQuickFixEditor?.let { editor ->
+        SettingsScreen(
+            settings = settings,
+            onCustomAccentSaved = onCustomAccentSaved,
+            initialEditor = editor,
+            editorOnlyMode = true,
+            onEditorClosed = { settingsQuickFixEditor = null }
+        )
     }
 
     if (createZoneDialogVisible) {
