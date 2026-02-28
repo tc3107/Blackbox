@@ -44,8 +44,8 @@ fun neomorphicPalette(): NeomorphicPalette {
     return NeomorphicPalette(
         surface = surface,
         surfaceVariant = scheme.surfaceVariant,
-        lightShadow = lerp(surface, Color.White, 0.22f),
-        darkShadow = lerp(surface, Color.Black, 0.52f),
+        lightShadow = lerp(surface, Color.White, 0.30f),
+        darkShadow = lerp(surface, Color.Black, 0.62f),
         stroke = lerp(surface, Color.White, 0.14f)
     )
 }
@@ -73,8 +73,8 @@ fun Modifier.neomorphicShadow(
         val path = outline.toPath()
         val rimWidthPx = 1.dp.toPx()
 
-        val topLeftColor = palette.lightShadow.copy(alpha = 0.82f)
-        val bottomRightColor = palette.darkShadow.copy(alpha = 0.62f)
+        val topLeftColor = palette.lightShadow.copy(alpha = 0.92f)
+        val bottomRightColor = palette.darkShadow.copy(alpha = 0.74f)
 
         val rimBrush = Brush.linearGradient(
             colors = listOf(topLeftColor, bottomRightColor),
