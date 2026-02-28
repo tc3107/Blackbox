@@ -407,6 +407,25 @@ object LocationSharingController {
         }
     }
 
+    fun manualRelayStatusNow() {
+        Log.d(SHARING_DEBUG_TAG, "Manual relay status check requested")
+        scope.launch {
+            refreshRelayStatus(trigger = "manual")
+        }
+    }
+
+    fun manualPushNow() {
+        Log.d(SHARING_DEBUG_TAG, "Manual push requested")
+        scope.launch {
+            val event = buildManualLocationSampleEvent()
+            if (event == null) {
+                setError("No location fix available yet.")
+                return@launch
+            }
+            handleLocationEvent(event = event, forceImmediate = true)
+        }
+    }
+
     fun clearRelayLocationNow() {
         scope.launch {
             val localRelay = relayApi ?: return@launch
@@ -969,8 +988,8 @@ object LocationSharingController {
         }
     }
 
-    private suspend fun handleLocationEvent(event: LocationSampleEvent) {
-        val ineligibilityReason = pushIneligibilityReason(event)
+    private suspend fun handleLocationEvent(event: LocationSampleEvent, forceImmediate: Boolean = false) {
+        val ineligibilityReason = pushIneligibilityReason(event, forceImmediate = forceImmediate)
         if (ineligibilityReason != null) {
             maybeLogIneligiblePush(ineligibilityReason)
             return
@@ -1010,7 +1029,7 @@ object LocationSharingController {
         sendEnvelope(envelope = envelope, claim = claim, identity = identity)
     }
 
-    private fun pushIneligibilityReason(event: LocationSampleEvent): String? {
+    private fun pushIneligibilityReason(event: LocationSampleEvent, forceImmediate: Boolean): String? {
         if (!currentSettings.sharingEnabled) {
             return "sharing_disabled"
         }
@@ -1037,11 +1056,32 @@ object LocationSharingController {
         }
 
         val lastSuccess = snapshot.sync.lastPushSuccessAtMs
-        if (lastSuccess != null && System.currentTimeMillis() - lastSuccess < thresholdMs) {
+        if (!forceImmediate && lastSuccess != null && System.currentTimeMillis() - lastSuccess < thresholdMs) {
             return "threshold_not_elapsed"
         }
 
         return null
+    }
+
+    private fun buildManualLocationSampleEvent(): LocationSampleEvent? {
+        val engineState = LocationEngine.state.value
+        val fix = engineState.bestPositionFix ?: return null
+        val motion = engineState.bestMotionFix
+        val location = fix.location
+        return LocationSampleEvent(
+            receivedAtMs = System.currentTimeMillis(),
+            fixTimeMs = fix.fixTimeMillis,
+            provider = fix.provider.ifBlank { location.provider ?: "unknown" },
+            lat = location.latitude,
+            lon = location.longitude,
+            accuracyM = fix.accuracyMeters,
+            altitudeM = location.takeIf { it.hasAltitude() }?.altitude,
+            speedMps = motion?.speedMetersPerSecond ?: location.takeIf { it.hasSpeed() }?.speed,
+            bearingDeg = motion?.bearingDegrees ?: location.takeIf { it.hasBearing() }?.bearing,
+            speedAccuracyMps = motion?.speedAccuracyMetersPerSecond,
+            bearingAccuracyDeg = motion?.bearingAccuracyDegrees,
+            engineMode = engineState.engineMode
+        )
     }
 
     private fun buildClaim(event: LocationSampleEvent, senderId: String, seq: Long): LocationClaimV1 {

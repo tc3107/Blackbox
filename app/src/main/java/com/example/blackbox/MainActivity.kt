@@ -74,7 +74,6 @@ class MainActivity : ComponentActivity() {
             .detectDiskReads()
             .detectDiskWrites()
             .detectNetwork()
-            .penaltyLog()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             threadPolicyBuilder.penaltyListener(strictModeListenerExecutor) { violation ->
                 val source = "strictmode.${violation.javaClass.simpleName.removeSuffix("Violation")}"
@@ -90,7 +89,6 @@ class MainActivity : ComponentActivity() {
             StrictMode.VmPolicy.Builder()
                 .detectLeakedClosableObjects()
                 .detectLeakedSqlLiteObjects()
-                .penaltyLog()
                 .build()
         )
     }

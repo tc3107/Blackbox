@@ -9,6 +9,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
@@ -45,7 +46,9 @@ import com.example.blackbox.ui.components.NeoOutlinedButton as OutlinedButton
 import com.example.blackbox.ui.components.NeoOutlinedCard as OutlinedCard
 import androidx.compose.material3.Text
 import com.example.blackbox.ui.components.NeoTextButton as TextButton
+import com.example.blackbox.ui.components.StaticRadiusMapPreview
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -86,13 +89,16 @@ import com.example.blackbox.sharing.ZONE_RADIUS_MIN_METERS
 import com.example.blackbox.sharing.isValidUsername
 import com.example.blackbox.sharing.normalizeUsername
 import com.example.blackbox.ui.components.ButtonLabel
+import com.example.blackbox.ui.components.MapTargetType
 import com.example.blackbox.ui.components.NeoButtonHapticMode
 import com.example.blackbox.ui.perf.UiPerfSection
 import com.example.blackbox.ui.perf.uiPerfDraw
+import com.example.blackbox.ui.theme.neomorphicShadow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -103,9 +109,22 @@ private const val MAIN_ACTIVE_LOCATION_EVENT_INTERVAL_MS = 1_000L
 private const val MAIN_LOW_POWER_LOCATION_EVENT_INTERVAL_MS = 3 * 60_000L
 private const val MAIN_PROGRESS_SMOOTH_ANIM_MS = 900
 private const val MAIN_TOGGLE_DEBOUNCE_MS = 120L
+private const val MAIN_SEND_TIMER_TAP_HIGH_DEMAND_WINDOW_MS = 8_000L
+private const val MAIN_SEND_TIMER_TAP_CONSUMER_ID = "main_send_timer_tap"
+private const val MAIN_MAP_USER_FIX_RECENT_WINDOW_MS = 20 * 60_000L
 private val MAIN_TOP_BAR_SCROLL_CLEARANCE = 16.dp
 private val MAIN_BOTTOM_BAR_SCROLL_CLEARANCE = 120.dp
 private val MAIN_QR_BUTTON_HEIGHT = 56.dp
+
+private data class MainFullscreenMapRequest(
+    val latitude: Double,
+    val longitude: Double,
+    val radiusMeters: Double,
+    val targetType: MapTargetType = MapTargetType.USER,
+    val userLatitude: Double? = null,
+    val userLongitude: Double? = null,
+    val userRadiusMeters: Double? = null
+)
 
 private data class MainViewLocationState(
     val bestPositionFix: PositionFix?,
@@ -142,6 +161,7 @@ fun MainViewScreen(
     )
     val sharingState by LocationSharingController.state.collectAsState()
     val persistenceState by LocationPersistenceController.state.collectAsState()
+    var lastKnownMapFix by remember { mutableStateOf<PositionFix?>(null) }
 
     var permissionGranted by rememberSaveable { mutableStateOf(context.hasAnyLocationPermission()) }
     var permissionRequestInFlight by rememberSaveable { mutableStateOf(false) }
@@ -154,6 +174,9 @@ fun MainViewScreen(
     var zoneDialogName by rememberSaveable { mutableStateOf("") }
     var zoneDialogRadius by rememberSaveable { mutableStateOf("100") }
     var zoneDialogError by rememberSaveable { mutableStateOf<String?>(null) }
+    var fullscreenMapRequest by remember {
+        mutableStateOf<MainFullscreenMapRequest?>(null)
+    }
 
     val scanQrLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
@@ -191,6 +214,10 @@ fun MainViewScreen(
         permissionGranted = context.hasAnyLocationPermission()
     }
 
+    LaunchedEffect(locationState.bestPositionFix) {
+        locationState.bestPositionFix?.let { lastKnownMapFix = it }
+    }
+
     val desiredEngineOn = sharingState.settings.sharingEnabled || persistenceState.loggingEnabled
     LaunchedEffect(desiredEngineOn, permissionGranted) {
         if (desiredEngineOn) {
@@ -222,7 +249,7 @@ fun MainViewScreen(
         }
     }
 
-    val lastFix = locationState.bestPositionFix
+    val lastFix = locationState.bestPositionFix ?: lastKnownMapFix
 
     LazyColumn(
         modifier = modifier
@@ -243,26 +270,62 @@ fun MainViewScreen(
                         .fillMaxWidth()
                         .uiPerfDraw("Main Map Card")
                 ) {
+                    val outerShape = RoundedCornerShape(14.dp)
+                    val innerShape = RoundedCornerShape(12.dp)
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(220.dp)
-                            .padding(12.dp)
+                            .clip(outerShape)
+                            .background(MaterialTheme.colorScheme.surface)
+                            .neomorphicShadow(
+                                shape = outerShape,
+                                pressed = false,
+                                addBorder = false,
+                                depth = 2.dp,
+                                blurRadius = 3.dp
+                            )
+                            .padding(10.dp)
                     ) {
-                        Text(
-                            text = if (lastFix != null) {
-                                "Map Placeholder\n${formatLatLon(lastFix.location.latitude, lastFix.location.longitude)}"
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clip(innerShape)
+                                .background(MaterialTheme.colorScheme.surface)
+                                .neomorphicShadow(
+                                    shape = innerShape,
+                                    pressed = true,
+                                    addBorder = false,
+                                    depth = 5.dp,
+                                    blurRadius = 10.dp
+                                )
+                                .padding(2.dp)
+                        ) {
+                            if (lastFix != null) {
+                                StaticRadiusMapPreview(
+                                    latitude = lastFix.location.latitude,
+                                    longitude = lastFix.location.longitude,
+                                    radiusMeters = lastFix.accuracyMeters.toDouble(),
+                                    targetType = MapTargetType.USER,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .clip(innerShape)
+                                )
                             } else {
-                                "Map Placeholder\nNo location yet"
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.align(Alignment.Center)
-                        )
+                                Text(
+                                    text = "Map unavailable\nNo location yet",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.align(Alignment.Center)
+                                )
+                            }
+                        }
                         RelativeAgeLabel(
                             timestampMs = lastFix?.receivedAtMillis,
-                            modifier = Modifier.align(Alignment.BottomStart)
+                            modifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .padding(10.dp)
                         )
                     }
                 }
@@ -322,13 +385,13 @@ fun MainViewScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     ActionWidget(
-                        title = "My Zones",
+                        title = "Zones",
                         iconRes = android.R.drawable.ic_menu_mapmode,
                         modifier = Modifier.weight(1f),
                         onClick = { zonesDialogVisible = true }
                     )
                     ActionWidget(
-                        title = "View Contacts",
+                        title = "Contacts",
                         iconRes = android.R.drawable.ic_menu_myplaces,
                         modifier = Modifier.weight(1f),
                         onClick = { viewContactsDialogVisible = true }
@@ -337,24 +400,6 @@ fun MainViewScreen(
             }
         }
 
-        item {
-            UiPerfSection("Main Action Row B") {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .uiPerfDraw("Main Action Row B"),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    ActionWidget(
-                        title = "Settings",
-                        iconRes = android.R.drawable.ic_menu_preferences,
-                        modifier = Modifier.weight(1f),
-                        onClick = onOpenSettings
-                    )
-                    Spacer(modifier = Modifier.weight(1f))
-                }
-            }
-        }
     }
 
     if (addContactsDialogVisible) {
@@ -467,6 +512,20 @@ fun MainViewScreen(
                 },
                 onRemoveContact = { senderId ->
                     LocationSharingController.removeContact(senderId)
+                },
+                onOpenMap = { lat, lon, radiusMeters ->
+                    val myFix = locationState.bestPositionFix
+                    val hasRecentMyFix = myFix != null &&
+                        (System.currentTimeMillis() - myFix.receivedAtMillis) <= MAIN_MAP_USER_FIX_RECENT_WINDOW_MS
+                    fullscreenMapRequest = MainFullscreenMapRequest(
+                        latitude = lat,
+                        longitude = lon,
+                        radiusMeters = radiusMeters,
+                        targetType = MapTargetType.CONTACT,
+                        userLatitude = if (hasRecentMyFix) myFix?.location?.latitude else null,
+                        userLongitude = if (hasRecentMyFix) myFix?.location?.longitude else null,
+                        userRadiusMeters = if (hasRecentMyFix) myFix?.accuracyMeters?.toDouble() else null
+                    )
                 }
             )
         }
@@ -500,6 +559,20 @@ fun MainViewScreen(
                 },
                 onDeleteZone = { id ->
                     LocationSharingController.removeZone(id)
+                },
+                onOpenMap = { lat, lon, radiusMeters ->
+                    val myFix = locationState.bestPositionFix
+                    val hasRecentMyFix = myFix != null &&
+                        (System.currentTimeMillis() - myFix.receivedAtMillis) <= MAIN_MAP_USER_FIX_RECENT_WINDOW_MS
+                    fullscreenMapRequest = MainFullscreenMapRequest(
+                        latitude = lat,
+                        longitude = lon,
+                        radiusMeters = radiusMeters,
+                        targetType = MapTargetType.ZONE,
+                        userLatitude = if (hasRecentMyFix) myFix?.location?.latitude else null,
+                        userLongitude = if (hasRecentMyFix) myFix?.location?.longitude else null,
+                        userRadiusMeters = if (hasRecentMyFix) myFix?.accuracyMeters?.toDouble() else null
+                    )
                 }
             )
         }
@@ -551,6 +624,19 @@ fun MainViewScreen(
                 zoneDialogName = ""
                 zoneDialogRadius = "100"
             }
+        )
+    }
+
+    fullscreenMapRequest?.let { request ->
+        FullscreenInteractiveMapDialog(
+            latitude = request.latitude,
+            longitude = request.longitude,
+            radiusMeters = request.radiusMeters,
+            targetType = request.targetType,
+            userLatitude = request.userLatitude,
+            userLongitude = request.userLongitude,
+            userRadiusMeters = request.userRadiusMeters,
+            onDismiss = { fullscreenMapRequest = null }
         )
     }
 }
@@ -652,6 +738,14 @@ private fun MainRefreshDelaysCard(
     locationState: MainViewLocationState,
     contactsOpen: Boolean
 ) {
+    val scope = rememberCoroutineScope()
+    var sendTapReleaseJob by remember { mutableStateOf<Job?>(null) }
+    DisposableEffect(Unit) {
+        onDispose {
+            sendTapReleaseJob?.cancel()
+            LocationEngine.unregisterHighDemandConsumer(MAIN_SEND_TIMER_TAP_CONSUMER_ID)
+        }
+    }
     val nowMs by produceState(initialValue = System.currentTimeMillis(), key1 = contactsOpen) {
         while (true) {
             delay(1_000L)
@@ -678,6 +772,12 @@ private fun MainRefreshDelaysCard(
         lastAtMs = sharingState.sync.lastPollAttemptAtMs,
         totalMs = pollTotal
     )
+    val hasFollowTargets = sharingState.followingCount > 0
+    val pollDisplayRemaining = if (hasFollowTargets && pollRemaining == 0L && pollTotal > 0L) {
+        1_000L
+    } else {
+        pollRemaining
+    }
     val sendAnchor = sharingState.sync.lastPushSuccessAtMs ?: sharingState.sync.lastPushAttemptAtMs
     val sendRemaining = mainRemainingDelayMs(
         nowMs = nowMs,
@@ -697,15 +797,16 @@ private fun MainRefreshDelaysCard(
     val waitingForLocationEvent = sendWaiting && sendRemaining == 0L && locationEventIntervalMs > 0L
     val sendDisplayTotal = if (waitingForLocationEvent) locationEventIntervalMs else sendTotal
     val sendDisplayRemaining = if (waitingForLocationEvent) {
-        mainRemainingDelayMs(
+        val waitingRemaining = mainRemainingDelayMs(
             nowMs = nowMs,
             lastAtMs = locationState.bestPositionFix?.receivedAtMillis,
             totalMs = locationEventIntervalMs
         )
+        if (waitingRemaining == 0L && locationEventIntervalMs > 0L) 1_000L else waitingRemaining
     } else {
         sendRemaining
     }
-    val retrieveWaiting = sharingState.sync.pollingActive && sharingState.followingCount > 0
+    val retrieveWaiting = hasFollowTargets
 
     OutlinedCard(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -723,7 +824,8 @@ private fun MainRefreshDelaysCard(
                     failureStreak = sharingState.sync.relayCheckFailureStreak,
                     lastSuccessAtMs = sharingState.sync.lastRelayStatusOkAtMs
                 ),
-                isActive = true
+                isActive = true,
+                onTapAction = { LocationSharingController.manualRelayStatusNow() }
             )
             MainDelayProgressRow(
                 label = "Sending Location",
@@ -734,18 +836,30 @@ private fun MainRefreshDelaysCard(
                     failureStreak = sharingState.sync.pushFailureStreak,
                     lastSuccessAtMs = sharingState.sync.lastPushSuccessAtMs
                 ),
-                isActive = sendWaiting
+                isActive = sendWaiting,
+                allowTimerDrivenVisualActive = false,
+                onTapAction = {
+                    LocationEngine.registerHighDemandConsumer(MAIN_SEND_TIMER_TAP_CONSUMER_ID)
+                    sendTapReleaseJob?.cancel()
+                    sendTapReleaseJob = scope.launch {
+                        delay(MAIN_SEND_TIMER_TAP_HIGH_DEMAND_WINDOW_MS)
+                        LocationEngine.unregisterHighDemandConsumer(MAIN_SEND_TIMER_TAP_CONSUMER_ID)
+                    }
+                    LocationSharingController.manualPushNow()
+                }
             )
             MainDelayProgressRow(
                 label = "Retrieve Locations",
                 totalMs = pollTotal,
-                remainingMs = pollRemaining,
+                remainingMs = pollDisplayRemaining,
                 nowMs = nowMs,
                 statusColor = mainStatusDotColor(
                     failureStreak = sharingState.sync.pollFailureStreak,
                     lastSuccessAtMs = sharingState.sync.lastPollSuccessAtMs
                 ),
-                isActive = retrieveWaiting
+                isActive = retrieveWaiting,
+                allowTimerDrivenVisualActive = false,
+                onTapAction = { LocationSharingController.manualPollNow() }
             )
         }
     }
@@ -758,8 +872,13 @@ private fun MainDelayProgressRow(
     remainingMs: Long,
     nowMs: Long,
     statusColor: Color,
-    isActive: Boolean
+    isActive: Boolean,
+    allowTimerDrivenVisualActive: Boolean = true,
+    onTapAction: () -> Unit
 ) {
+    val visualActive = isActive || (
+        allowTimerDrivenVisualActive && totalMs > 0L && remainingMs in 1L until totalMs
+    )
     val progress = if (totalMs <= 0L) {
         1f
     } else {
@@ -779,13 +898,13 @@ private fun MainDelayProgressRow(
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         val muted = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
-        val effectiveStatusColor = if (isActive) statusColor else muted
-        val labelColor = if (isActive) {
+        val effectiveStatusColor = if (visualActive) statusColor else muted
+        val labelColor = if (visualActive) {
             MaterialTheme.colorScheme.onSurface
         } else {
             muted
         }
-        val valueColor = if (isActive) {
+        val valueColor = if (visualActive) {
             MaterialTheme.colorScheme.onSurfaceVariant
         } else {
             muted
@@ -817,37 +936,54 @@ private fun MainDelayProgressRow(
                 color = valueColor
             )
         }
-        MainDelayProgressBar(progress = smoothProgress, nowMs = nowMs, isActive = isActive)
+        MainDelayProgressBar(
+            progress = smoothProgress,
+            nowMs = nowMs,
+            isActive = visualActive,
+            onTapAction = onTapAction
+        )
     }
 }
 
 @Composable
-private fun MainDelayProgressBar(progress: Float, nowMs: Long, isActive: Boolean) {
+private fun MainDelayProgressBar(
+    progress: Float,
+    nowMs: Long,
+    isActive: Boolean,
+    onTapAction: () -> Unit
+) {
     val scope = rememberCoroutineScope()
-    val outlineColor = if (isActive) {
+    var tapBoostActive by remember { mutableStateOf(false) }
+    val drawAsActive = isActive || tapBoostActive
+    val outlineColor = if (drawAsActive) {
         MaterialTheme.colorScheme.outline.copy(alpha = 0.75f)
     } else {
         MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.28f)
     }
-    val trailColor = if (isActive) {
+    val trailColor = if (drawAsActive) {
         MaterialTheme.colorScheme.primary
     } else {
         MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
     }
     val inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.60f)
-    var boostStartMs by remember { mutableStateOf<Long?>(null) }
-    var boostFromProgress by remember { mutableStateOf(0f) }
     var boostToken by remember { mutableStateOf(0L) }
-    val displayedProgress = run {
-        val startMs = boostStartMs
-        if (startMs == null) {
-            progress.coerceIn(0f, 1f)
+    val animatedProgress = remember { Animatable(progress.coerceIn(0f, 1f)) }
+    val targetProgress = if (tapBoostActive) 1f else progress.coerceIn(0f, 1f)
+    LaunchedEffect(targetProgress) {
+        if (targetProgress >= animatedProgress.value) {
+            animatedProgress.animateTo(
+                targetValue = targetProgress,
+                animationSpec = tween(
+                    durationMillis = MAIN_BAR_TAP_BOOST_DURATION_MS.toInt(),
+                    easing = FastOutSlowInEasing
+                )
+            )
         } else {
-            val t = ((nowMs - startMs).toFloat() / MAIN_BAR_TAP_BOOST_DURATION_MS.toFloat()).coerceIn(0f, 1f)
-            val eased = FastOutSlowInEasing.transform(t)
-            (boostFromProgress + ((1f - boostFromProgress) * eased)).coerceIn(0f, 1f)
+            // Snap on decreases/resets to avoid visible reverse jitter.
+            animatedProgress.snapTo(targetProgress)
         }
     }
+    val displayedProgress = animatedProgress.value
 
     val shape = RoundedCornerShape(7.dp)
     BoxWithConstraints(
@@ -857,15 +993,15 @@ private fun MainDelayProgressBar(progress: Float, nowMs: Long, isActive: Boolean
             .clip(shape)
             .border(width = 1.5.dp, color = outlineColor, shape = shape)
             .padding(1.dp)
-            .clickable(enabled = isActive) {
-                boostFromProgress = progress.coerceIn(0f, 1f)
-                boostStartMs = nowMs
+            .clickable {
                 val token = boostToken + 1L
                 boostToken = token
+                tapBoostActive = true
+                onTapAction()
                 scope.launch {
                     delay(MAIN_BAR_TAP_BOOST_DURATION_MS)
                     if (boostToken == token) {
-                        boostStartMs = null
+                        tapBoostActive = false
                     }
                 }
             }
@@ -874,7 +1010,7 @@ private fun MainDelayProgressBar(progress: Float, nowMs: Long, isActive: Boolean
             val width = size.width
             val height = size.height
 
-            if (!isActive) {
+            if (!drawAsActive) {
                 drawRect(
                     color = inactiveTrackColor,
                     topLeft = Offset.Zero,

@@ -2,7 +2,6 @@ package com.example.blackbox.debug
 
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -14,7 +13,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
-private const val WATCHDOG_TAG = "BBX_MAIN_WATCHDOG"
 private const val WATCHDOG_TIMEOUT_MS = 400L
 private const val WATCHDOG_SAMPLE_INTERVAL_MS = 1_000L
 private const val WATCHDOG_COOLDOWN_MS = 2_000L
@@ -38,11 +36,6 @@ object MainThreadWatchdog {
                         durationMs = ping.durationMs.coerceAtLeast(WATCHDOG_TIMEOUT_MS),
                         stackTrace = rawStack,
                         source = "watchdog"
-                    )
-                    val stack = rawStack.joinToString(separator = "\n") { "  at $it" }
-                    Log.e(
-                        WATCHDOG_TAG,
-                        "Main thread stall detected (${ping.durationMs}ms).\n$stack"
                     )
                     delay(WATCHDOG_COOLDOWN_MS)
                 } else {

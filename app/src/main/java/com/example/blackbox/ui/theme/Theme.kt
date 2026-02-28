@@ -4,7 +4,6 @@ import android.os.Build
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.ui.graphics.Color
@@ -44,38 +43,26 @@ fun accentColorFromHex(hex: String): Color {
 
 @Composable
 private fun blackboxColorScheme(): ColorScheme {
-    val context = LocalContext.current
-    val dynamicColorAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-
-    val baseScheme = if (dynamicColorAvailable) {
-        dynamicDarkColorScheme(context)
-    } else {
-        darkColorScheme(
-            primary = FallbackAccentGrayWhite,
-            secondary = FallbackAccentGrayWhite.copy(alpha = 0.84f),
-            tertiary = FallbackAccentGrayWhite.copy(alpha = 0.68f)
-        )
-    }
-
-    val accentColor = if (dynamicColorAvailable) {
-        baseScheme.primary
-    } else {
-        FallbackAccentGrayWhite
-    }
+    val baseScheme = darkColorScheme(
+        primary = AppAccentBlue,
+        secondary = AppAccentBlue.copy(alpha = 0.84f),
+        tertiary = AppAccentBlue.copy(alpha = 0.68f)
+    )
+    val accentColor = AppAccentBlue
 
     return baseScheme.copy(
         primary = accentColor,
         onPrimary = colorForForeground(accentColor),
         primaryContainer = lerp(NeoSurface, accentColor, 0.22f),
-        onPrimaryContainer = Color.White,
+        onPrimaryContainer = Color(0xFFE6EAF0),
         secondary = accentColor.copy(alpha = 0.84f),
         tertiary = accentColor.copy(alpha = 0.68f),
         background = NeoBackground,
-        onBackground = Color.White,
+        onBackground = Color(0xFFE6EAF0),
         surface = NeoSurface,
-        onSurface = Color.White,
+        onSurface = Color(0xFFE6EAF0),
         surfaceVariant = NeoSurfaceVariant,
-        onSurfaceVariant = Color(0xFFDADADA),
+        onSurfaceVariant = Color(0xFFD4D8DE),
         outline = lerp(NeoSurface, Color.White, 0.18f),
         outlineVariant = lerp(NeoSurface, Color.Black, 0.26f)
     )
@@ -86,4 +73,4 @@ private fun colorForForeground(background: Color): Color {
 }
 
 private val AccentHexRegex = Regex("^[0-9A-Fa-f]{6}$")
-private val FallbackAccentGrayWhite = Color(0xFFE3E3E3)
+private val AppAccentBlue = Color(0xFF3B82F6)

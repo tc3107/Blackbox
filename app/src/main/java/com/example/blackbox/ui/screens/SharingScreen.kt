@@ -12,6 +12,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.AnimatedVisibility
@@ -28,6 +29,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -42,6 +44,7 @@ import com.example.blackbox.ui.components.NeoCard as Card
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import com.example.blackbox.ui.components.NeoOutlinedButton as OutlinedButton
 import com.example.blackbox.ui.components.NeoOutlinedCard as OutlinedCard
@@ -68,17 +71,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.Canvas
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.CircleShape
@@ -86,6 +93,28 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import org.maplibre.android.MapLibre
+import org.maplibre.android.camera.CameraPosition
+import org.maplibre.android.camera.CameraUpdateFactory
+import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.maps.MapLibreMap
+import org.maplibre.android.maps.MapView
+import org.maplibre.android.maps.Style
+import org.maplibre.android.style.layers.CircleLayer
+import org.maplibre.android.style.layers.FillLayer
+import org.maplibre.android.style.layers.LineLayer
+import org.maplibre.android.style.layers.PropertyFactory.circleColor
+import org.maplibre.android.style.layers.PropertyFactory.circleOpacity
+import org.maplibre.android.style.layers.PropertyFactory.circleRadius
+import org.maplibre.android.style.layers.PropertyFactory.fillColor
+import org.maplibre.android.style.layers.PropertyFactory.fillOpacity
+import org.maplibre.android.style.layers.PropertyFactory.lineColor
+import org.maplibre.android.style.layers.PropertyFactory.lineOpacity
+import org.maplibre.android.style.layers.PropertyFactory.lineWidth
+import org.maplibre.android.style.sources.GeoJsonSource
+import org.maplibre.geojson.Feature
+import org.maplibre.geojson.Point
+import org.maplibre.geojson.Polygon
 import com.example.blackbox.location.LocationEngine
 import com.example.blackbox.sharing.LocationSharingController
 import com.example.blackbox.sharing.LocationSharingState
@@ -98,11 +127,15 @@ import com.example.blackbox.sharing.QrScannerActivity
 import com.example.blackbox.sharing.SHARING_DEBUG_TAG
 import com.example.blackbox.sharing.hasSharingNetworkPermissions
 import com.example.blackbox.ui.components.ButtonLabel
+import com.example.blackbox.ui.components.MapTargetType
+import com.example.blackbox.ui.components.StaticRadiusMapPreview
 import com.example.blackbox.ui.theme.neomorphicShadow
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.math.cos
+import kotlin.math.log2
 import kotlin.math.pow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
@@ -118,6 +151,66 @@ private const val ACTIVE_LOCATION_EVENT_INTERVAL_MS = 1_000L
 private const val LOW_POWER_LOCATION_EVENT_INTERVAL_MS = 3 * 60_000L
 private const val ROW_EXPAND_ANIM_MS = 180
 private val SHARING_QR_BUTTON_HEIGHT = 56.dp
+private const val FULLSCREEN_MAP_STYLE_URL = "https://tiles.openfreemap.org/styles/dark"
+private const val FULLSCREEN_MAP_MIN_RADIUS_M = 5.0
+private const val FULLSCREEN_MAP_MIN_VERTICAL_SPAN_M = 900.0
+private const val FULLSCREEN_MAP_EXTRA_ZOOM_OUT_FACTOR = 1.8
+private const val FULLSCREEN_MAP_EARTH_CIRCUMFERENCE_M = 40_075_016.686
+private const val FULLSCREEN_MAP_TILE_SIZE_PX = 512.0
+private const val FULLSCREEN_MAP_MAX_ZOOM = 22.0
+private const val MAP_USER_FIX_RECENT_WINDOW_MS = 20 * 60_000L
+private const val FsTargetAreaSourceId = "bbx_fs_target_area_source"
+private const val FsTargetCenterSourceId = "bbx_fs_target_center_source"
+private const val FsTargetAreaFillLayerId = "bbx_fs_target_area_fill_layer"
+private const val FsTargetAreaStrokeLayerId = "bbx_fs_target_area_stroke_layer"
+private const val FsTargetCenterOuterLayerId = "bbx_fs_target_center_outer_layer"
+private const val FsTargetCenterInnerLayerId = "bbx_fs_target_center_inner_layer"
+private const val FsUserAreaSourceId = "bbx_fs_user_area_source"
+private const val FsUserCenterSourceId = "bbx_fs_user_center_source"
+private const val FsUserAreaFillLayerId = "bbx_fs_user_area_fill_layer"
+private const val FsUserAreaStrokeLayerId = "bbx_fs_user_area_stroke_layer"
+private const val FsUserCenterOuterLayerId = "bbx_fs_user_center_outer_layer"
+private const val FsUserCenterInnerLayerId = "bbx_fs_user_center_inner_layer"
+
+private data class FullscreenMapRequest(
+    val latitude: Double,
+    val longitude: Double,
+    val radiusMeters: Double,
+    val targetType: MapTargetType = MapTargetType.USER,
+    val userLatitude: Double? = null,
+    val userLongitude: Double? = null,
+    val userRadiusMeters: Double? = null
+)
+
+private data class MapCirclePalette(
+    val fillHex: String,
+    val strokeHex: String,
+    val centerOuterHex: String
+)
+
+private fun fullscreenPaletteForTarget(targetType: MapTargetType): MapCirclePalette = when (targetType) {
+    MapTargetType.USER -> MapCirclePalette(
+        fillHex = "#4785FF",
+        strokeHex = "#3B82F6",
+        centerOuterHex = "#4DA3FF"
+    )
+    MapTargetType.CONTACT -> MapCirclePalette(
+        fillHex = "#2ECC71",
+        strokeHex = "#27AE60",
+        centerOuterHex = "#36D67A"
+    )
+    MapTargetType.ZONE -> MapCirclePalette(
+        fillHex = "#9AA0A6",
+        strokeHex = "#7D858C",
+        centerOuterHex = "#B0B6BC"
+    )
+}
+
+private fun emitTapHaptic(view: android.view.View) {
+    if (!view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)) {
+        view.performHapticFeedback(HapticFeedbackConstants.TEXT_HANDLE_MOVE)
+    }
+}
 
 private fun emitToggleRowHaptic(view: android.view.View, scope: CoroutineScope) {
     if (!view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)) {
@@ -149,6 +242,9 @@ fun SharingScreen(modifier: Modifier = Modifier) {
     var zoneDialogError by rememberSaveable { mutableStateOf<String?>(null) }
     var networkPermissionGranted by rememberSaveable {
         mutableStateOf(context.applicationContext.hasSharingNetworkPermissions())
+    }
+    var fullscreenMapRequest by remember {
+        mutableStateOf<FullscreenMapRequest?>(null)
     }
 
     fun importContactCodeAndHandle(
@@ -273,6 +369,20 @@ fun SharingScreen(modifier: Modifier = Modifier) {
                 },
                 onRemoveContact = { senderId ->
                     LocationSharingController.removeContact(senderId)
+                },
+                onOpenMap = { lat, lon, radiusMeters ->
+                    val myFix = locationState.bestPositionFix
+                    val hasRecentMyFix = myFix != null &&
+                        (System.currentTimeMillis() - myFix.receivedAtMillis) <= MAP_USER_FIX_RECENT_WINDOW_MS
+                    fullscreenMapRequest = FullscreenMapRequest(
+                        latitude = lat,
+                        longitude = lon,
+                        radiusMeters = radiusMeters,
+                        targetType = MapTargetType.CONTACT,
+                        userLatitude = if (hasRecentMyFix) myFix?.location?.latitude else null,
+                        userLongitude = if (hasRecentMyFix) myFix?.location?.longitude else null,
+                        userRadiusMeters = if (hasRecentMyFix) myFix?.accuracyMeters?.toDouble() else null
+                    )
                 }
             )
         }
@@ -302,6 +412,20 @@ fun SharingScreen(modifier: Modifier = Modifier) {
                 },
                 onDeleteZone = { id ->
                     LocationSharingController.removeZone(id)
+                },
+                onOpenMap = { lat, lon, radiusMeters ->
+                    val myFix = locationState.bestPositionFix
+                    val hasRecentMyFix = myFix != null &&
+                        (System.currentTimeMillis() - myFix.receivedAtMillis) <= MAP_USER_FIX_RECENT_WINDOW_MS
+                    fullscreenMapRequest = FullscreenMapRequest(
+                        latitude = lat,
+                        longitude = lon,
+                        radiusMeters = radiusMeters,
+                        targetType = MapTargetType.ZONE,
+                        userLatitude = if (hasRecentMyFix) myFix?.location?.latitude else null,
+                        userLongitude = if (hasRecentMyFix) myFix?.location?.longitude else null,
+                        userRadiusMeters = if (hasRecentMyFix) myFix?.accuracyMeters?.toDouble() else null
+                    )
                 }
             )
         }
@@ -376,6 +500,19 @@ fun SharingScreen(modifier: Modifier = Modifier) {
                     }
                 )
             }
+        )
+    }
+
+    fullscreenMapRequest?.let { request ->
+        FullscreenInteractiveMapDialog(
+            latitude = request.latitude,
+            longitude = request.longitude,
+            radiusMeters = request.radiusMeters,
+            targetType = request.targetType,
+            userLatitude = request.userLatitude,
+            userLongitude = request.userLongitude,
+            userRadiusMeters = request.userRadiusMeters,
+            onDismiss = { fullscreenMapRequest = null }
         )
     }
 
@@ -528,6 +665,12 @@ private fun RefreshDelaysCard(
         lastAtMs = sharingState.sync.lastPollAttemptAtMs,
         totalMs = pollTotal
     )
+    val hasFollowTargets = sharingState.followingCount > 0
+    val pollDisplayRemaining = if (hasFollowTargets && pollRemaining == 0L && pollTotal > 0L) {
+        1_000L
+    } else {
+        pollRemaining
+    }
     val sendAnchor = sharingState.sync.lastPushSuccessAtMs ?: sharingState.sync.lastPushAttemptAtMs
     val sendRemaining = remainingDelayMs(
         nowMs = nowMs,
@@ -546,15 +689,16 @@ private fun RefreshDelaysCard(
     val waitingForLocationEvent = sendWaiting && sendRemaining == 0L && locationEventIntervalMs > 0L
     val sendDisplayTotal = if (waitingForLocationEvent) locationEventIntervalMs else sendTotal
     val sendDisplayRemaining = if (waitingForLocationEvent) {
-        remainingDelayMs(
+        val waitingRemaining = remainingDelayMs(
             nowMs = nowMs,
             lastAtMs = locationState.bestPositionFix?.receivedAtMillis,
             totalMs = locationEventIntervalMs
         )
+        if (waitingRemaining == 0L && locationEventIntervalMs > 0L) 1_000L else waitingRemaining
     } else {
         sendRemaining
     }
-    val retrieveWaiting = sharingState.sync.pollingActive && sharingState.followingCount > 0
+    val retrieveWaiting = hasFollowTargets
 
     OutlinedCard(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -577,13 +721,14 @@ private fun RefreshDelaysCard(
             DelayProgressRow(
                 label = "Retrieve Locations",
                 totalMs = pollTotal,
-                remainingMs = pollRemaining,
+                remainingMs = pollDisplayRemaining,
                 nowMs = nowMs,
                 statusColor = statusDotColor(
                     failureStreak = sharingState.sync.pollFailureStreak,
                     lastSuccessAtMs = sharingState.sync.lastPollSuccessAtMs
                 ),
-                isActive = retrieveWaiting
+                isActive = retrieveWaiting,
+                allowTimerDrivenVisualActive = false
             )
             DelayProgressRow(
                 label = "Sending Location",
@@ -594,7 +739,8 @@ private fun RefreshDelaysCard(
                     failureStreak = sharingState.sync.pushFailureStreak,
                     lastSuccessAtMs = sharingState.sync.lastPushSuccessAtMs
                 ),
-                isActive = sendWaiting
+                isActive = sendWaiting,
+                allowTimerDrivenVisualActive = false
             )
         }
     }
@@ -607,8 +753,12 @@ private fun DelayProgressRow(
     remainingMs: Long,
     nowMs: Long,
     statusColor: Color,
-    isActive: Boolean
+    isActive: Boolean,
+    allowTimerDrivenVisualActive: Boolean = true
 ) {
+    val visualActive = isActive || (
+        allowTimerDrivenVisualActive && totalMs > 0L && remainingMs in 1L until totalMs
+    )
     val progress = if (totalMs <= 0L) {
         1f
     } else {
@@ -619,9 +769,9 @@ private fun DelayProgressRow(
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         val muted = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
-        val effectiveStatusColor = if (isActive) statusColor else muted
-        val labelColor = if (isActive) MaterialTheme.colorScheme.onSurface else muted
-        val valueColor = if (isActive) MaterialTheme.colorScheme.onSurfaceVariant else muted
+        val effectiveStatusColor = if (visualActive) statusColor else muted
+        val labelColor = if (visualActive) MaterialTheme.colorScheme.onSurface else muted
+        val valueColor = if (visualActive) MaterialTheme.colorScheme.onSurfaceVariant else muted
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -649,36 +799,44 @@ private fun DelayProgressRow(
                 color = valueColor
             )
         }
-        DelayProgressBar(progress = progress, nowMs = nowMs, isActive = isActive)
+        DelayProgressBar(progress = progress, nowMs = nowMs, isActive = visualActive)
     }
 }
 
 @Composable
 private fun DelayProgressBar(progress: Float, nowMs: Long, isActive: Boolean) {
     val scope = rememberCoroutineScope()
-    val outlineColor = if (isActive) {
+    var tapBoostActive by remember { mutableStateOf(false) }
+    val drawAsActive = isActive || tapBoostActive
+    val outlineColor = if (drawAsActive) {
         MaterialTheme.colorScheme.outline.copy(alpha = 0.75f)
     } else {
         MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.28f)
     }
-    val trailColor = if (isActive) {
+    val trailColor = if (drawAsActive) {
         MaterialTheme.colorScheme.primary
     } else {
         MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
     }
-    var boostStartMs by remember { mutableStateOf<Long?>(null) }
-    var boostFromProgress by remember { mutableStateOf(0f) }
+    val inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.60f)
     var boostToken by remember { mutableStateOf(0L) }
-    val displayedProgress = run {
-        val startMs = boostStartMs
-        if (startMs == null) {
-            progress.coerceIn(0f, 1f)
+    val animatedProgress = remember { Animatable(progress.coerceIn(0f, 1f)) }
+    val targetProgress = if (tapBoostActive) 1f else progress.coerceIn(0f, 1f)
+    LaunchedEffect(targetProgress) {
+        if (targetProgress >= animatedProgress.value) {
+            animatedProgress.animateTo(
+                targetValue = targetProgress,
+                animationSpec = tween(
+                    durationMillis = BAR_TAP_BOOST_DURATION_MS.toInt(),
+                    easing = FastOutSlowInEasing
+                )
+            )
         } else {
-            val t = ((nowMs - startMs).toFloat() / BAR_TAP_BOOST_DURATION_MS.toFloat()).coerceIn(0f, 1f)
-            val eased = FastOutSlowInEasing.transform(t)
-            (boostFromProgress + ((1f - boostFromProgress) * eased)).coerceIn(0f, 1f)
+            // Snap on decreases/resets to avoid visible reverse jitter.
+            animatedProgress.snapTo(targetProgress)
         }
     }
+    val displayedProgress = animatedProgress.value
     val shape = RoundedCornerShape(7.dp)
     BoxWithConstraints(
         modifier = Modifier
@@ -687,15 +845,14 @@ private fun DelayProgressBar(progress: Float, nowMs: Long, isActive: Boolean) {
             .clip(shape)
             .border(width = 1.5.dp, color = outlineColor, shape = shape)
             .padding(1.dp)
-            .clickable(enabled = isActive) {
-                boostFromProgress = progress.coerceIn(0f, 1f)
-                boostStartMs = nowMs
+            .clickable {
                 val token = boostToken + 1L
                 boostToken = token
+                tapBoostActive = true
                 scope.launch {
                     delay(BAR_TAP_BOOST_DURATION_MS)
                     if (boostToken == token) {
-                        boostStartMs = null
+                        tapBoostActive = false
                     }
                 }
             }
@@ -703,6 +860,14 @@ private fun DelayProgressBar(progress: Float, nowMs: Long, isActive: Boolean) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val width = size.width
             val height = size.height
+            if (!drawAsActive) {
+                drawRect(
+                    color = inactiveTrackColor,
+                    topLeft = Offset.Zero,
+                    size = Size(width, height)
+                )
+                return@Canvas
+            }
             val headX = width * displayedProgress
             val trailLength = width * 0.34f
             val trailStart = (headX - trailLength).coerceAtLeast(0f)
@@ -985,7 +1150,8 @@ fun ContactsSection(
     onToggleShareTo: (String, Boolean) -> Unit,
     onToggleFollow: (String, Boolean) -> Unit,
     onAliasApply: (String, String?) -> Unit,
-    onRemoveContact: (String) -> Unit
+    onRemoveContact: (String) -> Unit,
+    onOpenMap: (Double, Double, Double) -> Unit = { _, _, _ -> }
 ) {
     val context = LocalContext.current
     val view = LocalView.current
@@ -1054,8 +1220,6 @@ fun ContactsSection(
             sortedContacts.forEach { contact ->
                 val lastReceivedAtMs = receivedBySender[contact.senderId]
                 val latestCard = latestCardBySender[contact.senderId]
-                val hasRecentLocation = lastReceivedAtMs != null &&
-                    (nowMs - lastReceivedAtMs) < 30 * 60_000L
                 val isExpanded = expandedSenderId == contact.senderId
                 val rowInteractionSource = remember(contact.senderId) { MutableInteractionSource() }
                 val cardShape = RoundedCornerShape(14.dp)
@@ -1130,7 +1294,7 @@ fun ContactsSection(
                                 .padding(horizontal = 10.dp, vertical = 8.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            if (contact.iFollow && hasRecentLocation && latestCard != null) {
+                            if (contact.iFollow && latestCard != null) {
                                 val zoneTitle = latestCard.claim.zones
                                     ?.takeIf { it.isNotEmpty() }
                                     ?.joinToString(", ")
@@ -1147,18 +1311,37 @@ fun ContactsSection(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(120.dp)
-                                        .border(
-                                            width = 1.5.dp,
-                                            color = MaterialTheme.colorScheme.outlineVariant,
-                                            shape = RoundedCornerShape(14.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(MaterialTheme.colorScheme.surface)
+                                        .neomorphicShadow(
+                                            shape = RoundedCornerShape(12.dp),
+                                            pressed = true,
+                                            addBorder = false,
+                                            depth = 5.dp,
+                                            blurRadius = 10.dp
                                         )
-                                        .padding(12.dp),
-                                    contentAlignment = Alignment.Center
+                                        .padding(2.dp)
                                 ) {
-                                    Text(
-                                        text = "Map Placeholder\n${formatLatLon(latestCard.claim.lat, latestCard.claim.lon)}",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    StaticRadiusMapPreview(
+                                        latitude = latestCard.claim.lat,
+                                        longitude = latestCard.claim.lon,
+                                        radiusMeters = latestCard.claim.accuracy?.toDouble() ?: 25.0,
+                                        targetType = MapTargetType.CONTACT,
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .clip(RoundedCornerShape(10.dp))
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .clickable {
+                                                emitTapHaptic(view)
+                                                onOpenMap(
+                                                    latestCard.claim.lat,
+                                                    latestCard.claim.lon,
+                                                    latestCard.claim.accuracy?.toDouble() ?: 25.0
+                                                )
+                                            }
                                     )
                                 }
                             }
@@ -1480,7 +1663,8 @@ fun ZonesSection(
     currentLon: Double?,
     onCreateZone: () -> Unit,
     onRenameZone: (String, String) -> Unit,
-    onDeleteZone: (String) -> Unit
+    onDeleteZone: (String) -> Unit,
+    onOpenMap: (Double, Double, Double) -> Unit = { _, _, _ -> }
 ) {
     val view = LocalView.current
     val scope = rememberCoroutineScope()
@@ -1589,19 +1773,37 @@ fun ZonesSection(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(120.dp)
-                                    .border(
-                                        width = 1.5.dp,
-                                        color = MaterialTheme.colorScheme.outlineVariant,
-                                        shape = RoundedCornerShape(14.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(MaterialTheme.colorScheme.surface)
+                                    .neomorphicShadow(
+                                        shape = RoundedCornerShape(12.dp),
+                                        pressed = true,
+                                        addBorder = false,
+                                        depth = 5.dp,
+                                        blurRadius = 10.dp
                                     )
-                                    .padding(12.dp),
-                                contentAlignment = Alignment.Center
+                                    .padding(2.dp)
                             ) {
-                                Text(
-                                    text = "Map Placeholder\n${formatLatLon(zone.centerLat, zone.centerLon)}",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    textAlign = TextAlign.Center
+                                StaticRadiusMapPreview(
+                                    latitude = zone.centerLat,
+                                    longitude = zone.centerLon,
+                                    radiusMeters = zone.radiusM.toDouble(),
+                                    targetType = MapTargetType.ZONE,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .clip(RoundedCornerShape(10.dp))
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .clickable {
+                                            emitTapHaptic(view)
+                                            onOpenMap(
+                                                zone.centerLat,
+                                                zone.centerLon,
+                                                zone.radiusM.toDouble()
+                                            )
+                                        }
                                 )
                             }
                             Text(
@@ -1707,6 +1909,474 @@ fun ZonesSection(
             }
         )
     }
+}
+
+@Composable
+fun FullscreenInteractiveMapDialog(
+    latitude: Double,
+    longitude: Double,
+    radiusMeters: Double,
+    targetType: MapTargetType = MapTargetType.USER,
+    userLatitude: Double? = null,
+    userLongitude: Double? = null,
+    userRadiusMeters: Double? = null,
+    onDismiss: () -> Unit
+) {
+    val mapView = rememberInteractiveMapViewWithLifecycle()
+    val density = LocalDensity.current
+    var mapLibreMap by remember { mutableStateOf<MapLibreMap?>(null) }
+    val fallbackBg = MaterialTheme.colorScheme.background.copy(alpha = 0.95f)
+    val hasUserLocation =
+        userLatitude != null && userLongitude != null && userRadiusMeters != null
+
+    BoxWithConstraints {
+        val mapHeightPx = with(density) { maxHeight.toPx() }.coerceAtLeast(1f)
+        val zoomLevel = remember(latitude, radiusMeters, mapHeightPx) {
+            fullscreenMapZoomForRadiusMeters(
+                latitude = latitude,
+                radiusMeters = radiusMeters.coerceAtLeast(FULLSCREEN_MAP_MIN_RADIUS_M),
+                mapHeightPx = mapHeightPx
+            )
+        }
+
+        LaunchedEffect(mapLibreMap, latitude, longitude, zoomLevel) {
+            mapLibreMap?.let { map ->
+                map.cameraPosition = CameraPosition.Builder()
+                    .target(LatLng(latitude, longitude))
+                    .zoom(zoomLevel)
+                    .bearing(0.0)
+                    .tilt(0.0)
+                    .build()
+            }
+        }
+        LaunchedEffect(
+            mapLibreMap,
+            latitude,
+            longitude,
+            radiusMeters,
+            userLatitude,
+            userLongitude,
+            userRadiusMeters
+        ) {
+            mapLibreMap?.getStyle { style ->
+                upsertFullscreenCircleLayers(
+                    style = style,
+                    targetLatitude = latitude,
+                    targetLongitude = longitude,
+                    targetRadiusMeters = radiusMeters.coerceAtLeast(FULLSCREEN_MAP_MIN_RADIUS_M),
+                    targetType = targetType,
+                    showUser = hasUserLocation,
+                    userLatitude = userLatitude,
+                    userLongitude = userLongitude,
+                    userRadiusMeters = userRadiusMeters
+                )
+            }
+        }
+
+        Dialog(
+            onDismissRequest = onDismiss,
+            properties = DialogProperties(
+                usePlatformDefaultWidth = false,
+                dismissOnBackPress = true,
+                dismissOnClickOutside = true
+            )
+        ) {
+            val outerShape = RoundedCornerShape(24.dp)
+            val innerShape = RoundedCornerShape(20.dp)
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(12.dp)
+                    .clip(outerShape)
+                    .background(MaterialTheme.colorScheme.surface)
+                    .neomorphicShadow(
+                        shape = outerShape,
+                        pressed = false,
+                        addBorder = false,
+                        depth = 3.dp,
+                        blurRadius = 6.dp
+                    )
+                    .padding(10.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(innerShape)
+                        .background(MaterialTheme.colorScheme.surface)
+                        .neomorphicShadow(
+                            shape = innerShape,
+                            pressed = true,
+                            addBorder = false,
+                            depth = 5.dp,
+                            blurRadius = 10.dp
+                        )
+                        .padding(2.dp)
+                ) {
+                    AndroidView(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(fallbackBg),
+                        factory = {
+                            mapView.apply {
+                                setBackgroundColor(fallbackBg.copy(alpha = 1f).toArgb())
+                                getMapAsync { map ->
+                                    map.uiSettings.setAllGesturesEnabled(true)
+                                    map.uiSettings.isCompassEnabled = false
+                                    map.uiSettings.isLogoEnabled = false
+                                    map.uiSettings.isAttributionEnabled = false
+                                    map.uiSettings.isRotateGesturesEnabled = false
+                                    map.uiSettings.isTiltGesturesEnabled = false
+                                    map.setStyle(FULLSCREEN_MAP_STYLE_URL) {
+                                        upsertFullscreenCircleLayers(
+                                            style = it,
+                                            targetLatitude = latitude,
+                                            targetLongitude = longitude,
+                                            targetRadiusMeters = radiusMeters.coerceAtLeast(FULLSCREEN_MAP_MIN_RADIUS_M),
+                                            targetType = targetType,
+                                            showUser = hasUserLocation,
+                                            userLatitude = userLatitude,
+                                            userLongitude = userLongitude,
+                                            userRadiusMeters = userRadiusMeters
+                                        )
+                                        map.cameraPosition = CameraPosition.Builder()
+                                            .target(LatLng(latitude, longitude))
+                                            .zoom(zoomLevel)
+                                            .bearing(0.0)
+                                            .tilt(0.0)
+                                            .build()
+                                    }
+                                    mapLibreMap = map
+                                }
+                            }
+                        },
+                        update = {
+                            it.setBackgroundColor(fallbackBg.copy(alpha = 1f).toArgb())
+                        }
+                    )
+
+                }
+
+                RoundMapActionButton(
+                    iconRes = android.R.drawable.ic_media_previous,
+                    contentDescription = "Back",
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(12.dp),
+                    onClick = onDismiss
+                )
+
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    RoundMapActionButton(
+                        iconRes = android.R.drawable.ic_menu_myplaces,
+                        contentDescription = "Recenter",
+                        onClick = {
+                            mapLibreMap?.let { map ->
+                                val current = map.cameraPosition
+                                map.animateCamera(
+                                    CameraUpdateFactory.newCameraPosition(
+                                        CameraPosition.Builder(current)
+                                            .target(LatLng(latitude, longitude))
+                                            .zoom(zoomLevel)
+                                            .bearing(0.0)
+                                            .tilt(0.0)
+                                            .build()
+                                    )
+                                )
+                            }
+                        }
+                    )
+                    if (hasUserLocation) {
+                        RoundMapActionButton(
+                            iconRes = android.R.drawable.ic_menu_mylocation,
+                            contentDescription = "Show My Location",
+                            onClick = {
+                                mapLibreMap?.let { map ->
+                                    val current = map.cameraPosition
+                                    map.animateCamera(
+                                        CameraUpdateFactory.newCameraPosition(
+                                            CameraPosition.Builder(current)
+                                                .target(LatLng(userLatitude!!, userLongitude!!))
+                                                .zoom(zoomLevel)
+                                                .bearing(0.0)
+                                                .tilt(0.0)
+                                                .build()
+                                        )
+                                    )
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RoundMapActionButton(
+    iconRes: Int,
+    contentDescription: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val view = LocalView.current
+    val shape = CircleShape
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    Box(
+        modifier = modifier
+            .size(50.dp)
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surface)
+            .neomorphicShadow(
+                shape = shape,
+                pressed = pressed,
+                addBorder = false,
+                depth = 3.dp,
+                blurRadius = 6.dp
+            )
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null
+            ) {
+                emitTapHaptic(view)
+                onClick()
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            painter = androidx.compose.ui.res.painterResource(id = iconRes),
+            contentDescription = contentDescription,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun rememberInteractiveMapViewWithLifecycle(): MapView {
+    val context = LocalContext.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val mapView = remember {
+        MapLibre.getInstance(context)
+        MapView(context).apply {
+            id = android.view.View.generateViewId()
+            onCreate(null)
+        }
+    }
+
+    DisposableEffect(lifecycle, mapView) {
+        var mapDestroyed = false
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> if (!mapDestroyed) mapView.onStart()
+                Lifecycle.Event.ON_RESUME -> if (!mapDestroyed) mapView.onResume()
+                Lifecycle.Event.ON_PAUSE -> if (!mapDestroyed) mapView.onPause()
+                Lifecycle.Event.ON_STOP -> if (!mapDestroyed) mapView.onStop()
+                Lifecycle.Event.ON_DESTROY -> {
+                    if (!mapDestroyed) {
+                        mapView.onDestroy()
+                        mapDestroyed = true
+                    }
+                }
+                else -> Unit
+            }
+        }
+        lifecycle.addObserver(observer)
+
+        if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) mapView.onStart()
+        if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) mapView.onResume()
+
+        onDispose {
+            lifecycle.removeObserver(observer)
+            if (!mapDestroyed) {
+                mapView.onPause()
+                mapView.onStop()
+                mapView.onDestroy()
+            }
+        }
+    }
+
+    return mapView
+}
+
+private fun fullscreenMapZoomForRadiusMeters(
+    latitude: Double,
+    radiusMeters: Double,
+    mapHeightPx: Float
+): Double {
+    val verticalSpanMeters = (radiusMeters * 6.0 * FULLSCREEN_MAP_EXTRA_ZOOM_OUT_FACTOR)
+        .coerceAtLeast(FULLSCREEN_MAP_MIN_VERTICAL_SPAN_M)
+    val metersPerPixel = verticalSpanMeters / mapHeightPx.coerceAtLeast(1f)
+    val latitudeCos = cos(Math.toRadians(latitude)).coerceAtLeast(0.01)
+    val zoom = log2(
+        (latitudeCos * FULLSCREEN_MAP_EARTH_CIRCUMFERENCE_M) /
+            (FULLSCREEN_MAP_TILE_SIZE_PX * metersPerPixel)
+    )
+    return zoom.coerceIn(0.0, FULLSCREEN_MAP_MAX_ZOOM)
+}
+
+private fun upsertFullscreenCircleLayers(
+    style: Style,
+    targetLatitude: Double,
+    targetLongitude: Double,
+    targetRadiusMeters: Double,
+    targetType: MapTargetType,
+    showUser: Boolean,
+    userLatitude: Double?,
+    userLongitude: Double?,
+    userRadiusMeters: Double?
+) {
+    val targetPalette = fullscreenPaletteForTarget(targetType)
+    val targetCenter = Point.fromLngLat(targetLongitude, targetLatitude)
+    val targetPolygon = buildMapCirclePolygon(
+        latitude = targetLatitude,
+        longitude = targetLongitude,
+        radiusMeters = targetRadiusMeters
+    )
+
+    val targetAreaSource = (style.getSource(FsTargetAreaSourceId) as? GeoJsonSource)
+        ?: GeoJsonSource(FsTargetAreaSourceId, Feature.fromGeometry(targetPolygon)).also(style::addSource)
+    targetAreaSource.setGeoJson(Feature.fromGeometry(targetPolygon))
+
+    val targetCenterSource = (style.getSource(FsTargetCenterSourceId) as? GeoJsonSource)
+        ?: GeoJsonSource(FsTargetCenterSourceId, Feature.fromGeometry(targetCenter)).also(style::addSource)
+    targetCenterSource.setGeoJson(Feature.fromGeometry(targetCenter))
+
+    val targetAreaFillLayer = (style.getLayer(FsTargetAreaFillLayerId) as? FillLayer)
+        ?: FillLayer(FsTargetAreaFillLayerId, FsTargetAreaSourceId).also(style::addLayer)
+    targetAreaFillLayer.setProperties(
+        fillColor(android.graphics.Color.parseColor(targetPalette.fillHex)),
+        fillOpacity(0.20f)
+    )
+
+    val targetAreaStrokeLayer = (style.getLayer(FsTargetAreaStrokeLayerId) as? LineLayer)
+        ?: LineLayer(FsTargetAreaStrokeLayerId, FsTargetAreaSourceId).also(style::addLayer)
+    targetAreaStrokeLayer.setProperties(
+        lineColor(android.graphics.Color.parseColor(targetPalette.strokeHex)),
+        lineOpacity(0.90f),
+        lineWidth(2f)
+    )
+
+    val targetCenterOuterLayer = (style.getLayer(FsTargetCenterOuterLayerId) as? CircleLayer)
+        ?: CircleLayer(FsTargetCenterOuterLayerId, FsTargetCenterSourceId).also(style::addLayer)
+    targetCenterOuterLayer.setProperties(
+        circleColor(android.graphics.Color.parseColor(targetPalette.centerOuterHex)),
+        circleOpacity(1f),
+        circleRadius(5f)
+    )
+
+    val targetCenterInnerLayer = (style.getLayer(FsTargetCenterInnerLayerId) as? CircleLayer)
+        ?: CircleLayer(FsTargetCenterInnerLayerId, FsTargetCenterSourceId).also(style::addLayer)
+    targetCenterInnerLayer.setProperties(
+        circleColor(android.graphics.Color.WHITE),
+        circleOpacity(1f),
+        circleRadius(2f)
+    )
+
+    val hasUser = showUser && userLatitude != null && userLongitude != null && userRadiusMeters != null
+    val userAreaSource = (style.getSource(FsUserAreaSourceId) as? GeoJsonSource)
+        ?: GeoJsonSource(FsUserAreaSourceId, Feature.fromGeometry(targetPolygon)).also(style::addSource)
+    val userCenterSource = (style.getSource(FsUserCenterSourceId) as? GeoJsonSource)
+        ?: GeoJsonSource(FsUserCenterSourceId, Feature.fromGeometry(targetCenter)).also(style::addSource)
+
+    if (hasUser) {
+        val userCenter = Point.fromLngLat(userLongitude!!, userLatitude!!)
+        val userPolygon = buildMapCirclePolygon(
+            latitude = userLatitude,
+            longitude = userLongitude,
+            radiusMeters = userRadiusMeters!!.coerceAtLeast(FULLSCREEN_MAP_MIN_RADIUS_M)
+        )
+        userAreaSource.setGeoJson(Feature.fromGeometry(userPolygon))
+        userCenterSource.setGeoJson(Feature.fromGeometry(userCenter))
+    } else {
+        userAreaSource.setGeoJson(Feature.fromGeometry(targetPolygon))
+        userCenterSource.setGeoJson(Feature.fromGeometry(targetCenter))
+    }
+
+    if (style.getLayer(FsUserAreaFillLayerId) == null) {
+        style.addLayer(
+            FillLayer(FsUserAreaFillLayerId, FsUserAreaSourceId).withProperties(
+                fillColor(android.graphics.Color.parseColor("#4785FF")),
+                fillOpacity(if (hasUser) 0.20f else 0f)
+            )
+        )
+    } else {
+        (style.getLayer(FsUserAreaFillLayerId) as FillLayer).setProperties(
+            fillOpacity(if (hasUser) 0.20f else 0f)
+        )
+    }
+    if (style.getLayer(FsUserAreaStrokeLayerId) == null) {
+        style.addLayer(
+            LineLayer(FsUserAreaStrokeLayerId, FsUserAreaSourceId).withProperties(
+                lineColor(android.graphics.Color.parseColor("#3B82F6")),
+                lineOpacity(if (hasUser) 0.95f else 0f),
+                lineWidth(2f)
+            )
+        )
+    } else {
+        (style.getLayer(FsUserAreaStrokeLayerId) as LineLayer).setProperties(
+            lineOpacity(if (hasUser) 0.95f else 0f)
+        )
+    }
+    if (style.getLayer(FsUserCenterOuterLayerId) == null) {
+        style.addLayer(
+            CircleLayer(FsUserCenterOuterLayerId, FsUserCenterSourceId).withProperties(
+                circleColor(android.graphics.Color.parseColor("#4DA3FF")),
+                circleOpacity(if (hasUser) 1f else 0f),
+                circleRadius(5f)
+            )
+        )
+    } else {
+        (style.getLayer(FsUserCenterOuterLayerId) as CircleLayer).setProperties(
+            circleOpacity(if (hasUser) 1f else 0f)
+        )
+    }
+    if (style.getLayer(FsUserCenterInnerLayerId) == null) {
+        style.addLayer(
+            CircleLayer(FsUserCenterInnerLayerId, FsUserCenterSourceId).withProperties(
+                circleColor(android.graphics.Color.WHITE),
+                circleOpacity(if (hasUser) 1f else 0f),
+                circleRadius(2f)
+            )
+        )
+    } else {
+        (style.getLayer(FsUserCenterInnerLayerId) as CircleLayer).setProperties(
+            circleOpacity(if (hasUser) 1f else 0f)
+        )
+    }
+}
+
+private fun buildMapCirclePolygon(
+    latitude: Double,
+    longitude: Double,
+    radiusMeters: Double,
+    segments: Int = 72
+): Polygon {
+    val earthRadius = 6_371_000.0
+    val angularDistance = radiusMeters / earthRadius
+    val latRad = Math.toRadians(latitude)
+    val lonRad = Math.toRadians(longitude)
+    val points = ArrayList<Point>(segments + 1)
+
+    for (i in 0..segments) {
+        val bearing = (2.0 * Math.PI * i) / segments.toDouble()
+        val sinLat = kotlin.math.sin(latRad)
+        val cosLat = kotlin.math.cos(latRad)
+        val sinAng = kotlin.math.sin(angularDistance)
+        val cosAng = kotlin.math.cos(angularDistance)
+        val lat2 = kotlin.math.asin(sinLat * cosAng + cosLat * sinAng * kotlin.math.cos(bearing))
+        val lon2 = lonRad + kotlin.math.atan2(
+            kotlin.math.sin(bearing) * sinAng * cosLat,
+            cosAng - sinLat * kotlin.math.sin(lat2)
+        )
+        points.add(Point.fromLngLat(Math.toDegrees(lon2), Math.toDegrees(lat2)))
+    }
+    return Polygon.fromLngLats(listOf(points))
 }
 
 private fun isWithinZone(lat: Double?, lon: Double?, zone: ShareZone): Boolean {
