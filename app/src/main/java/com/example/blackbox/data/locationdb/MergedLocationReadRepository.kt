@@ -74,6 +74,58 @@ class MergedLocationReadRepository(
         }
     }
 
+    override suspend fun queryHistoryRange(startInclusiveMs: Long, endInclusiveMs: Long): List<LocationHistorySample> {
+        return withContext(Dispatchers.IO) {
+            if (endInclusiveMs < startInclusiveMs) {
+                return@withContext emptyList()
+            }
+
+            val startDay = Instant.ofEpochMilli(startInclusiveMs).atZone(ZoneOffset.UTC).toLocalDate()
+            val endDay = Instant.ofEpochMilli(endInclusiveMs).atZone(ZoneOffset.UTC).toLocalDate()
+            val liveIndex = scanLocalIndexByDay(LocationDbPaths.liveRoot(filesDir))
+            val pendingIndex = scanLocalIndexByDay(LocationDbPaths.pendingArchiveRoot(filesDir))
+            val archivedIndex = scanArchivedIndexByDay()
+            val result = mutableListOf<LocationHistorySample>()
+
+            generateDaySequence(startDay = startDay, endDay = endDay).forEach { day ->
+                val localFiles = liveIndex[day].orEmpty() + pendingIndex[day].orEmpty()
+                val archivedUris = archivedIndex[day].orEmpty()
+
+                localFiles.forEach { localFile ->
+                    val rows = runCatching {
+                        readHistoryFromLocalDb(
+                            file = localFile,
+                            startInclusiveMs = startInclusiveMs,
+                            endInclusiveMs = endInclusiveMs
+                        )
+                    }.getOrElse { throwable ->
+                        if (throwable is CancellationException) throw throwable
+                        emptyList()
+                    }
+                    result += rows
+                }
+
+                archivedUris.forEachIndexed { index, archivedUri ->
+                    val rows = runCatching {
+                        readHistoryFromArchivedDb(
+                            archiveUri = archivedUri,
+                            day = day,
+                            cacheSuffix = index,
+                            startInclusiveMs = startInclusiveMs,
+                            endInclusiveMs = endInclusiveMs
+                        )
+                    }.getOrElse { throwable ->
+                        if (throwable is CancellationException) throw throwable
+                        emptyList()
+                    }
+                    result += rows
+                }
+            }
+
+            deduplicateHistorySamples(result.sortedBy { it.receivedAtMs })
+        }
+    }
+
     private suspend fun readFromLocalDb(
         file: File,
         startInclusiveMs: Long,
@@ -121,6 +173,53 @@ class MergedLocationReadRepository(
         return data
     }
 
+    private suspend fun readHistoryFromLocalDb(
+        file: File,
+        startInclusiveMs: Long,
+        endInclusiveMs: Long
+    ): List<LocationHistorySample> {
+        if (!file.exists()) {
+            return emptyList()
+        }
+        return openWithAnyKey(file) { db ->
+            db.locationSampleDao().getHistoryInRange(startInclusiveMs, endInclusiveMs)
+        }
+    }
+
+    private suspend fun readHistoryFromArchivedDb(
+        archiveUri: Uri,
+        day: LocalDate,
+        cacheSuffix: Int,
+        startInclusiveMs: Long,
+        endInclusiveMs: Long
+    ): List<LocationHistorySample> {
+        val cacheFile = File(appContext.cacheDir, "location-history-read-${day}-$cacheSuffix.db")
+        runCatching { cacheFile.delete() }
+
+        val copied = runCatching {
+            appContext.contentResolver.openInputStream(archiveUri)?.use { input ->
+                cacheFile.outputStream().use { output ->
+                    input.copyTo(output)
+                    output.flush()
+                }
+            } ?: error("Cannot read archived database.")
+        }
+
+        if (copied.isFailure || !cacheFile.exists()) {
+            return emptyList()
+        }
+
+        val data = openWithAnyKey(cacheFile) { db ->
+            db.locationSampleDao().getHistoryInRange(startInclusiveMs, endInclusiveMs)
+        }
+
+        runCatching { cacheFile.delete() }
+        runCatching { File(cacheFile.parentFile, "${cacheFile.name}-wal").delete() }
+        runCatching { File(cacheFile.parentFile, "${cacheFile.name}-shm").delete() }
+
+        return data
+    }
+
     private suspend fun <T> openWithAnyKey(file: File, block: suspend (BlackboxDayDb) -> T): T {
         val keys = keyManager.allKeys()
         var lastError: Throwable? = null
@@ -129,9 +228,8 @@ class MergedLocationReadRepository(
             val db = runCatching {
                 Room.databaseBuilder(appContext, BlackboxDayDb::class.java, file.absolutePath)
                     .openHelperFactory(SupportOpenHelperFactory(key.keyBytes.copyOf()))
-                    .addMigrations(LocationDbMigrations.MIGRATION_1_2)
+                    .addMigrations(*LocationDbMigrations.ALL_MIGRATIONS)
                     .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
-                    .fallbackToDestructiveMigration(dropAllTables = true)
                     .build()
             }.getOrNull() ?: return@forEach
 
@@ -205,6 +303,24 @@ class MergedLocationReadRepository(
         return output
     }
 
+    private fun deduplicateHistorySamples(samples: List<LocationHistorySample>): List<LocationHistorySample> {
+        val seen = linkedSetOf<HistorySampleKey>()
+        val output = ArrayList<LocationHistorySample>(samples.size)
+        samples.forEach { sample ->
+            val key = HistorySampleKey(
+                receivedAtMs = sample.receivedAtMs,
+                lat = sample.lat,
+                lon = sample.lon,
+                bestAccuracyM = sample.bestAccuracyM,
+                samplesMergedCount = sample.samplesMergedCount
+            )
+            if (seen.add(key)) {
+                output += sample
+            }
+        }
+        return output
+    }
+
     private fun walkSaf(root: DocumentFile, onFile: (DocumentFile) -> Unit) {
         val children = runCatching { root.listFiles() }.getOrDefault(emptyArray())
         children.forEach { child ->
@@ -233,5 +349,13 @@ class MergedLocationReadRepository(
         val worstAccuracyM: Float,
         val samplesMergedCount: Int,
         val engineMode: String
+    )
+
+    private data class HistorySampleKey(
+        val receivedAtMs: Long,
+        val lat: Double,
+        val lon: Double,
+        val bestAccuracyM: Float,
+        val samplesMergedCount: Int
     )
 }

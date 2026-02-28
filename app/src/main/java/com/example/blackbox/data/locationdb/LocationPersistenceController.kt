@@ -353,6 +353,11 @@ object LocationPersistenceController {
         return repository.queryRange(startInclusiveMs, endInclusiveMs)
     }
 
+    suspend fun readHistoryRange(startInclusiveMs: Long, endInclusiveMs: Long): List<LocationHistorySample> {
+        val repository = readRepository ?: return emptyList()
+        return repository.queryHistoryRange(startInclusiveMs, endInclusiveMs)
+    }
+
     suspend fun getArchiveRecords(): List<ArchiveRecord> {
         return withContext(Dispatchers.IO) {
             archiveRepository?.getArchiveRecords().orEmpty()

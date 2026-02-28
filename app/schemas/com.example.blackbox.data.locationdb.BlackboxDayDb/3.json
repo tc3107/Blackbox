@@ -1,0 +1,220 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 3,
+    "identityHash": "18770b4f9bc66e9565cc5f6b2fb60a38",
+    "entities": [
+      {
+        "tableName": "location_samples",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `received_at_ms` INTEGER NOT NULL, `last_seen_at_ms` INTEGER NOT NULL, `fix_time_ms` INTEGER NOT NULL, `provider` TEXT NOT NULL, `lat` REAL NOT NULL, `lon` REAL NOT NULL, `best_accuracy_m` REAL NOT NULL, `worst_accuracy_m` REAL NOT NULL, `samples_merged_count` INTEGER NOT NULL, `altitude_m` REAL, `speed_mps` REAL, `bearing_deg` REAL, `speed_accuracy_mps` REAL, `bearing_accuracy_deg` REAL, `engine_mode` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "receivedAtMs",
+            "columnName": "received_at_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastSeenAtMs",
+            "columnName": "last_seen_at_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fixTimeMs",
+            "columnName": "fix_time_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "provider",
+            "columnName": "provider",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lat",
+            "columnName": "lat",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lon",
+            "columnName": "lon",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bestAccuracyM",
+            "columnName": "best_accuracy_m",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "worstAccuracyM",
+            "columnName": "worst_accuracy_m",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "samplesMergedCount",
+            "columnName": "samples_merged_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "altitudeM",
+            "columnName": "altitude_m",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "speedMps",
+            "columnName": "speed_mps",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "bearingDeg",
+            "columnName": "bearing_deg",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "speedAccuracyMps",
+            "columnName": "speed_accuracy_mps",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "bearingAccuracyDeg",
+            "columnName": "bearing_accuracy_deg",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "engineMode",
+            "columnName": "engine_mode",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_location_samples_received_at_ms",
+            "unique": false,
+            "columnNames": [
+              "received_at_ms"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_location_samples_received_at_ms` ON `${TABLE_NAME}` (`received_at_ms`)"
+          },
+          {
+            "name": "index_location_samples_last_seen_at_ms",
+            "unique": false,
+            "columnNames": [
+              "last_seen_at_ms"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_location_samples_last_seen_at_ms` ON `${TABLE_NAME}` (`last_seen_at_ms`)"
+          }
+        ]
+      },
+      {
+        "tableName": "db_metadata",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `key_id` TEXT NOT NULL, `created_at_ms` INTEGER NOT NULL, `db_uuid` TEXT NOT NULL, `day_utc` TEXT NOT NULL, `row_count` INTEGER NOT NULL, `min_received_at_ms` INTEGER, `max_last_seen_at_ms` INTEGER, `min_lat` REAL, `max_lat` REAL, `min_lon` REAL, `max_lon` REAL, `updated_at_ms` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "keyId",
+            "columnName": "key_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "created_at_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dbUuid",
+            "columnName": "db_uuid",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dayUtc",
+            "columnName": "day_utc",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rowCount",
+            "columnName": "row_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "minReceivedAtMs",
+            "columnName": "min_received_at_ms",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "maxLastSeenAtMs",
+            "columnName": "max_last_seen_at_ms",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "minLat",
+            "columnName": "min_lat",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "maxLat",
+            "columnName": "max_lat",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "minLon",
+            "columnName": "min_lon",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "maxLon",
+            "columnName": "max_lon",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "updatedAtMs",
+            "columnName": "updated_at_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '18770b4f9bc66e9565cc5f6b2fb60a38')"
+    ]
+  }
+}

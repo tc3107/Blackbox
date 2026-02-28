@@ -39,6 +39,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -99,8 +100,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.blackbox.data.locationdb.LocationPersistenceController
+import com.example.blackbox.data.settings.UiSettings
 import com.example.blackbox.location.LocationEngine
 import com.example.blackbox.location.LocationEngineMode
+import com.example.blackbox.location.LocationEngineForegroundController
 import com.example.blackbox.location.MotionFix
 import com.example.blackbox.location.PositionFix
 import com.example.blackbox.location.hasAnyLocationPermission
@@ -230,7 +233,8 @@ private data class MainHistoryPlaybackUiState(
 @Composable
 fun MainViewScreen(
     modifier: Modifier = Modifier,
-    onOpenSettings: () -> Unit
+    settings: UiSettings,
+    onCustomAccentSaved: (String?) -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
@@ -263,6 +267,8 @@ fun MainViewScreen(
     var showQrDialogVisible by rememberSaveable { mutableStateOf(false) }
     var viewContactsDialogVisible by rememberSaveable { mutableStateOf(false) }
     var zonesDialogVisible by rememberSaveable { mutableStateOf(false) }
+    var databaseDialogVisible by rememberSaveable { mutableStateOf(false) }
+    var settingsDialogVisible by rememberSaveable { mutableStateOf(false) }
     var scanError by rememberSaveable { mutableStateOf<String?>(null) }
     var createZoneDialogVisible by rememberSaveable { mutableStateOf(false) }
     var zoneDialogName by rememberSaveable { mutableStateOf("") }
@@ -336,6 +342,7 @@ fun MainViewScreen(
             }
         } else {
             LocationEngine.setEngineEnabled(false)
+            LocationEngineForegroundController.stop(context.applicationContext)
         }
     }
 
@@ -474,7 +481,7 @@ fun MainViewScreen(
                             checked = sharingState.settings.sharingEnabled
                         ) { enabled ->
                             if (enabled && !isValidUsername(normalizeUsername(sharingState.settings.username))) {
-                                onOpenSettings()
+                                settingsDialogVisible = true
                                 return@ToggleRow
                             }
                             LocationSharingController.setSharingEnabled(enabled)
@@ -509,6 +516,30 @@ fun MainViewScreen(
                         iconRes = android.R.drawable.ic_menu_myplaces,
                         modifier = Modifier.weight(1f),
                         onClick = { viewContactsDialogVisible = true }
+                    )
+                }
+            }
+        }
+
+        item {
+            UiPerfSection("Main Action Row B") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .uiPerfDraw("Main Action Row B"),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    ActionWidget(
+                        title = "Database",
+                        iconRes = android.R.drawable.ic_menu_manage,
+                        modifier = Modifier.weight(1f),
+                        onClick = { databaseDialogVisible = true }
+                    )
+                    ActionWidget(
+                        title = "Settings",
+                        iconRes = android.R.drawable.ic_menu_preferences,
+                        modifier = Modifier.weight(1f),
+                        onClick = { settingsDialogVisible = true }
                     )
                 }
             }
@@ -606,6 +637,7 @@ fun MainViewScreen(
     if (viewContactsDialogVisible) {
         MainOverlayDialog(
             onDismissRequest = { viewContactsDialogVisible = false },
+            title = "Contacts",
             useContainer = false
         ) {
             ContactsSection(
@@ -648,6 +680,7 @@ fun MainViewScreen(
     if (zonesDialogVisible) {
         MainOverlayDialog(
             onDismissRequest = { zonesDialogVisible = false },
+            title = "Zones",
             useContainer = false
         ) {
             ZonesSection(
@@ -688,6 +721,31 @@ fun MainViewScreen(
                         userRadiusMeters = if (hasRecentMyFix) myFix?.accuracyMeters?.toDouble() else null
                     )
                 }
+            )
+        }
+    }
+
+    if (databaseDialogVisible) {
+        MainOverlayDialog(
+            onDismissRequest = { databaseDialogVisible = false },
+            title = "Database"
+        ) {
+            DatabasePanel(
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+
+    if (settingsDialogVisible) {
+        MainOverlayDialog(
+            onDismissRequest = { settingsDialogVisible = false },
+            title = "Settings"
+        ) {
+            SettingsScreen(
+                settings = settings,
+                onCustomAccentSaved = onCustomAccentSaved,
+                modifier = Modifier.fillMaxWidth(),
+                embeddedInDialog = true
             )
         }
     }
@@ -865,7 +923,9 @@ private fun MainOverlayDialog(
                     onClick = {}
                 )
             if (useContainer) {
-                val contentModifier = baseContentModifier.fillMaxHeight(0.9f)
+                val contentModifier = baseContentModifier
+                    .wrapContentHeight()
+                    .heightIn(max = 680.dp)
                 Card(
                     modifier = contentModifier.border(
                         width = 1.5.dp,
@@ -879,7 +939,8 @@ private fun MainOverlayDialog(
                 ) {
                     Column(
                         modifier = Modifier
-                            .fillMaxSize()
+                            .fillMaxWidth()
+                            .wrapContentHeight()
                             .padding(14.dp),
                         verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
@@ -890,7 +951,7 @@ private fun MainOverlayDialog(
                             )
                         }
                         Column(
-                            modifier = Modifier.weight(1f, fill = true),
+                            modifier = Modifier.fillMaxWidth(),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             content()
@@ -909,11 +970,18 @@ private fun MainOverlayDialog(
                 }
             } else {
                 val contentModifier = baseContentModifier
-                    .wrapContentHeight(unbounded = true)
+                    .wrapContentHeight()
                 Column(
                     modifier = contentModifier.padding(6.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    if (!title.isNullOrBlank()) {
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.padding(start = 6.dp, bottom = 2.dp)
+                        )
+                    }
                     content()
                 }
             }
@@ -2644,7 +2712,7 @@ private suspend fun loadMainHistoryEarliestDateUtc(): LocalDate? {
     val startMs = localDateToUtcStartMillis(todayUtc)
     val endMs = System.currentTimeMillis() + MAIN_HISTORY_DAY_MS
     val rows = runCatching {
-        LocationPersistenceController.readRange(
+        LocationPersistenceController.readHistoryRange(
             startInclusiveMs = startMs,
             endInclusiveMs = endMs
         )
@@ -2667,7 +2735,7 @@ private suspend fun loadMainHistoryHeatmapData(
     val endInclusiveMs = (endExclusiveMs - 1L).coerceAtLeast(startMs)
     val bins = IntArray(MAIN_HISTORY_HEATMAP_BIN_COUNT)
     val samples = runCatching {
-        LocationPersistenceController.readRange(
+        LocationPersistenceController.readHistoryRange(
             startInclusiveMs = startMs,
             endInclusiveMs = endInclusiveMs
         )
@@ -2695,7 +2763,7 @@ private suspend fun loadMainHistoryHeatmapData(
 }
 
 private fun buildMainHistoryTimelineSamples(
-    samples: List<com.example.blackbox.data.locationdb.LocationSampleEntity>,
+    samples: List<com.example.blackbox.data.locationdb.LocationHistorySample>,
     maxPoints: Int = 4_000
 ): List<MainHistoryTimelineSample> {
     if (samples.isEmpty()) return emptyList()

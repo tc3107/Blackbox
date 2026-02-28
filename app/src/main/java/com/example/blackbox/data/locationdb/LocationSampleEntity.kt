@@ -10,7 +10,7 @@ import com.example.blackbox.location.LocationEngineMode
     tableName = "location_samples",
     indices = [
         Index(value = ["received_at_ms"]),
-        Index(value = ["fix_time_ms"])
+        Index(value = ["last_seen_at_ms"])
     ]
 )
 data class LocationSampleEntity(

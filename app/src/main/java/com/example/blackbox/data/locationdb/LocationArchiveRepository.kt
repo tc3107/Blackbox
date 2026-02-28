@@ -378,9 +378,8 @@ class LocationArchiveRepository(
             val db = runCatching {
                 Room.databaseBuilder(appContext, BlackboxDayDb::class.java, dbFile.absolutePath)
                     .openHelperFactory(SupportOpenHelperFactory(key.keyBytes.copyOf()))
-                    .addMigrations(LocationDbMigrations.MIGRATION_1_2)
+                    .addMigrations(*LocationDbMigrations.ALL_MIGRATIONS)
                     .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
-                    .fallbackToDestructiveMigration(dropAllTables = true)
                     .build()
             }.getOrNull() ?: return@forEach
 
@@ -506,9 +505,8 @@ class LocationArchiveRepository(
             val db = runCatching {
                 Room.databaseBuilder(appContext, BlackboxDayDb::class.java, dbFile.absolutePath)
                     .openHelperFactory(SupportOpenHelperFactory(key.keyBytes.copyOf()))
-                    .addMigrations(LocationDbMigrations.MIGRATION_1_2)
+                    .addMigrations(*LocationDbMigrations.ALL_MIGRATIONS)
                     .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
-                    .fallbackToDestructiveMigration(dropAllTables = true)
                     .build()
             }.getOrNull() ?: return@forEach
 

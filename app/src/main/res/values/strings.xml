@@ -10,7 +10,7 @@
     <string name="nav_short_set">Set</string>
     <string name="nav_short_dbg">Dbg</string>
     <string name="menu_open_navigation">Open navigation menu</string>
-    <string name="location_notification_title">Location Tracking Active</string>
+    <string name="location_notification_title">Blackbox Active</string>
     <string name="location_notification_channel_name">Location Tracking</string>
     <string name="location_notification_channel_description">Keeps location service active for logging and live features.</string>
     <string name="location_stop_button">Stop</string>

@@ -7,6 +7,7 @@ import java.io.File
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
+import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -54,7 +55,7 @@ class DailyRoomDbManager(
 
     suspend fun currentDayEntryCount(nowUtc: Instant): Long {
         val db = currentWritableDb(nowUtc)
-        return db.locationSampleDao().countAll()
+        return db.dbMetadataDao().getById()?.rowCount ?: db.locationSampleDao().countAll()
     }
 
     suspend fun checkpointCurrentDay(nowUtc: Instant): LocalDate? {
@@ -157,15 +158,27 @@ class DailyRoomDbManager(
             openWithKey(dbFile = dbFile, keyMaterial = keyMaterial)
         } ?: error("Unable to open daily database for $dayUtc with available key material.")
 
+        val nowMs = System.currentTimeMillis()
         val existingMetadata = opened.db.dbMetadataDao().getById()
-        if (existingMetadata == null) {
-            opened.db.dbMetadataDao().upsert(
-                DbMetadataEntity(
-                    keyId = opened.keyId,
-                    createdAtMs = System.currentTimeMillis()
-                )
+        val normalizedMetadata = if (existingMetadata == null) {
+            DbMetadataEntity(
+                keyId = opened.keyId,
+                createdAtMs = nowMs,
+                dbUuid = UUID.randomUUID().toString(),
+                dayUtc = dayUtc.toString(),
+                updatedAtMs = nowMs
+            )
+        } else {
+            existingMetadata.copy(
+                keyId = opened.keyId,
+                createdAtMs = existingMetadata.createdAtMs.takeIf { it > 0L } ?: nowMs,
+                dbUuid = existingMetadata.dbUuid.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString(),
+                dayUtc = dayUtc.toString(),
+                rowCount = existingMetadata.rowCount.coerceAtLeast(0L),
+                updatedAtMs = nowMs
             )
         }
+        opened.db.dbMetadataDao().upsert(normalizedMetadata)
 
         return opened.copy(dayUtc = dayUtc, file = dbFile)
     }
@@ -185,9 +198,8 @@ class DailyRoomDbManager(
         val db = runCatching {
             Room.databaseBuilder(appContext, BlackboxDayDb::class.java, dbFile.absolutePath)
                 .openHelperFactory(SupportOpenHelperFactory(keyMaterial.keyBytes.copyOf()))
-                .addMigrations(LocationDbMigrations.MIGRATION_1_2)
+                .addMigrations(*LocationDbMigrations.ALL_MIGRATIONS)
                 .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
-                .fallbackToDestructiveMigration(dropAllTables = true)
                 .build()
         }.getOrNull() ?: return null
 

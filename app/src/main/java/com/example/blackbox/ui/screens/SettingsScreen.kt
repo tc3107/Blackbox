@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -39,6 +40,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.example.blackbox.data.locationdb.LocationPersistenceController
 import com.example.blackbox.data.settings.UiSettings
 import com.example.blackbox.sharing.LocationSharingController
 import com.example.blackbox.sharing.MAX_FAST_INTERVAL_MS
@@ -62,7 +64,8 @@ private val SETTINGS_BOTTOM_BAR_SCROLL_CLEARANCE = 104.dp
 fun SettingsScreen(
     settings: UiSettings,
     onCustomAccentSaved: (String?) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    embeddedInDialog: Boolean = false
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -119,9 +122,52 @@ fun SettingsScreen(
         }
     }
 
+    val exportKeyLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val passphrase = backupPassphrase.toCharArray()
+        val confirm = backupPassphraseConfirm.toCharArray()
+        backupPassphrase = ""
+        backupPassphraseConfirm = ""
+        backupAction = null
+        backupDialogError = null
+        scope.launch {
+            val result = LocationPersistenceController.exportKeyBundle(passphrase = passphrase, target = uri)
+            statusMessage = result.fold(
+                onSuccess = { "Key bundle exported." },
+                onFailure = { "Key export failed: ${it.message ?: "unknown"}" }
+            )
+            passphrase.fill('\u0000')
+            confirm.fill('\u0000')
+        }
+    }
+
+    val importKeyLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val passphrase = backupPassphrase.toCharArray()
+        val confirm = backupPassphraseConfirm.toCharArray()
+        backupPassphrase = ""
+        backupPassphraseConfirm = ""
+        backupAction = null
+        backupDialogError = null
+        scope.launch {
+            val result = LocationPersistenceController.importKeyBundle(passphrase = passphrase, source = uri)
+            statusMessage = result.fold(
+                onSuccess = { "Key bundle imported." },
+                onFailure = { "Key import failed: ${it.message ?: "unknown"}" }
+            )
+            passphrase.fill('\u0000')
+            confirm.fill('\u0000')
+        }
+    }
+
     LaunchedEffect(context) {
         withContext(Dispatchers.IO) {
             LocationSharingController.initialize(context.applicationContext)
+            LocationPersistenceController.initialize(context.applicationContext)
         }
     }
 
@@ -138,21 +184,31 @@ fun SettingsScreen(
 
     Column(
         modifier = modifier
-            .fillMaxSize()
+            .then(
+                if (embeddedInDialog) {
+                    Modifier
+                        .fillMaxWidth()
+                        .wrapContentHeight()
+                } else {
+                    Modifier.fillMaxSize()
+                }
+            )
             .verticalScroll(rememberScrollState())
             .padding(
                 start = 20.dp,
-                top = SETTINGS_TOP_BAR_SCROLL_CLEARANCE,
+                top = if (embeddedInDialog) 4.dp else SETTINGS_TOP_BAR_SCROLL_CLEARANCE,
                 end = 20.dp,
-                bottom = SETTINGS_BOTTOM_BAR_SCROLL_CLEARANCE
+                bottom = if (embeddedInDialog) 12.dp else SETTINGS_BOTTOM_BAR_SCROLL_CLEARANCE
             ),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text(
-            text = "Settings",
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold
-        )
+        if (!embeddedInDialog) {
+            Text(
+                text = "Settings",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+        }
 
         OutlinedCard(modifier = Modifier.fillMaxWidth()) {
             Column(
@@ -200,14 +256,14 @@ fun SettingsScreen(
                     .padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("Identity Backup", style = MaterialTheme.typography.titleSmall)
+                Text("Data Backups", style = MaterialTheme.typography.titleSmall)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Button(
                         onClick = {
-                            backupAction = BackupAction.Export
+                            backupAction = BackupAction.ExportIdentity
                             backupPassphrase = ""
                             backupPassphraseConfirm = ""
                             backupDialogError = null
@@ -218,7 +274,7 @@ fun SettingsScreen(
                     }
                     OutlinedButton(
                         onClick = {
-                            backupAction = BackupAction.Import
+                            backupAction = BackupAction.ImportIdentity
                             backupPassphrase = ""
                             backupPassphraseConfirm = ""
                             backupDialogError = null
@@ -226,6 +282,33 @@ fun SettingsScreen(
                         modifier = Modifier.weight(1f)
                     ) {
                         ButtonLabel("Import Identity")
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            backupAction = BackupAction.ExportKey
+                            backupPassphrase = ""
+                            backupPassphraseConfirm = ""
+                            backupDialogError = null
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        ButtonLabel("Export DB Keys")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            backupAction = BackupAction.ImportKey
+                            backupPassphrase = ""
+                            backupPassphraseConfirm = ""
+                            backupDialogError = null
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        ButtonLabel("Import DB Keys")
                     }
                 }
             }
@@ -321,7 +404,14 @@ fun SettingsScreen(
                 backupDialogError = null
             },
             title = {
-                Text(if (action == BackupAction.Export) "Export Identity" else "Import Identity")
+                Text(
+                    when (action) {
+                        BackupAction.ExportIdentity -> "Export Identity"
+                        BackupAction.ImportIdentity -> "Import Identity"
+                        BackupAction.ExportKey -> "Export DB Keys"
+                        BackupAction.ImportKey -> "Import DB Keys"
+                    }
+                )
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -365,10 +455,19 @@ fun SettingsScreen(
                             backupDialogError = "Passphrases must match."
                             return@TextButton
                         }
-                        if (action == BackupAction.Export) {
-                            exportIdentityLauncher.launch("blackbox-identity-bundle.json")
-                        } else {
-                            importIdentityLauncher.launch(arrayOf("application/json"))
+                        when (action) {
+                            BackupAction.ExportIdentity -> {
+                                exportIdentityLauncher.launch("blackbox-identity-bundle.json")
+                            }
+                            BackupAction.ImportIdentity -> {
+                                importIdentityLauncher.launch(arrayOf("application/json"))
+                            }
+                            BackupAction.ExportKey -> {
+                                exportKeyLauncher.launch("blackbox-keybundle-v1.json")
+                            }
+                            BackupAction.ImportKey -> {
+                                importKeyLauncher.launch(arrayOf("application/json"))
+                            }
                         }
                     }
                 ) { Text("Continue") }
@@ -395,8 +494,10 @@ private enum class SharingConfigEditor {
 }
 
 private enum class BackupAction {
-    Export,
-    Import
+    ExportIdentity,
+    ImportIdentity,
+    ExportKey,
+    ImportKey
 }
 
 @Composable

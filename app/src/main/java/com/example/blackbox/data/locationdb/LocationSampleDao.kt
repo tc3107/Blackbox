@@ -64,4 +64,20 @@ interface LocationSampleDao {
         """
     )
     suspend fun getInRange(startInclusiveMs: Long, endInclusiveMs: Long): List<LocationSampleEntity>
+
+    @Query(
+        """
+        SELECT
+            received_at_ms,
+            lat,
+            lon,
+            best_accuracy_m,
+            samples_merged_count
+        FROM location_samples
+        WHERE last_seen_at_ms >= :startInclusiveMs
+          AND received_at_ms <= :endInclusiveMs
+        ORDER BY received_at_ms ASC
+        """
+    )
+    suspend fun getHistoryInRange(startInclusiveMs: Long, endInclusiveMs: Long): List<LocationHistorySample>
 }

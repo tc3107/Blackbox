@@ -166,11 +166,10 @@ class LocationEngineForegroundService : Service() {
         if (!state.engineEnabled) {
             return "Keepalive active. Engine is off."
         }
-        val position = state.bestPositionFix
-        return if (position == null) {
-            "Mode ${state.engineMode.name}. Waiting for valid fix."
+        return if (state.bestPositionFix == null) {
+            "Waiting for valid fix."
         } else {
-            "Mode ${state.engineMode.name}. ${position.provider} ±${position.accuracyMeters.toInt()}m"
+            "Location tracking active."
         }
     }
 

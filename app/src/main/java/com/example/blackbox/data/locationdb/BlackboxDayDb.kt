@@ -9,8 +9,8 @@ import androidx.room.TypeConverters
         LocationSampleEntity::class,
         DbMetadataEntity::class
     ],
-    version = 2,
-    exportSchema = false
+    version = 3,
+    exportSchema = true
 )
 @TypeConverters(LocationDbConverters::class)
 abstract class BlackboxDayDb : RoomDatabase() {
