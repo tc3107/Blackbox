@@ -35,7 +35,7 @@ private const val ENABLE_VERBOSE_PERSIST_LOGS = false
 
 data class LocationPersistenceState(
     val initialized: Boolean = false,
-    val loggingEnabled: Boolean = true,
+    val loggingEnabled: Boolean = false,
     val archiveRootUri: Uri? = null,
     val pendingArchiveCount: Int = 0,
     val liveDayEntryCount: Long = 0L,
@@ -82,7 +82,7 @@ object LocationPersistenceController {
     private var pendingEvent: LocationSampleEvent? = null
     private var archiveRetryJob: Job? = null
     @Volatile
-    private var loggingEnabled: Boolean = true
+    private var loggingEnabled: Boolean = false
 
     fun initialize(context: Context) {
         if (initialized) return
@@ -135,6 +135,16 @@ object LocationPersistenceController {
     }
 
     fun setLoggingEnabled(enabled: Boolean) {
+        if (enabled && _state.value.archiveRootUri == null) {
+            loggingEnabled = false
+            _state.update {
+                it.copy(
+                    loggingEnabled = false,
+                    lastArchiveMessage = "Choose archive folder before enabling location logging."
+                )
+            }
+            return
+        }
         loggingEnabled = enabled
         _state.update {
             it.copy(
@@ -160,12 +170,16 @@ object LocationPersistenceController {
     fun setArchiveTreeUri(uri: Uri?) {
         val repository = archiveRepository ?: return
         repository.setArchiveTreeUri(uri)
+        if (uri == null) {
+            loggingEnabled = false
+        }
         _state.update {
             it.copy(
+                loggingEnabled = if (uri == null) false else it.loggingEnabled,
                 archiveRootUri = repository.getArchiveTreeUri(),
                 pendingArchiveCount = repository.pendingArchiveCount(),
                 lastArchiveMessage = if (uri == null) {
-                    "Archive folder cleared."
+                    "Archive folder cleared. Location logging disabled."
                 } else {
                     "Archive folder updated."
                 },

@@ -282,6 +282,8 @@ fun MainViewScreen(
     var settingsDialogVisible by rememberSaveable { mutableStateOf(false) }
     var settingsDialogInitialEditor by remember { mutableStateOf<SharingConfigEditor?>(null) }
     var settingsQuickFixEditor by remember { mutableStateOf<SharingConfigEditor?>(null) }
+    var loggingFolderInfoDialogVisible by rememberSaveable { mutableStateOf(false) }
+    var enableLoggingAfterFolderSelection by rememberSaveable { mutableStateOf(false) }
     var scanError by rememberSaveable { mutableStateOf<String?>(null) }
     var createZoneDialogVisible by rememberSaveable { mutableStateOf(false) }
     var zoneDialogName by rememberSaveable { mutableStateOf("") }
@@ -339,6 +341,18 @@ fun MainViewScreen(
                 }
                 .onFailure { scanError = it.message ?: "Failed to import location code." }
         }
+    }
+
+    val archiveFolderLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            LocationPersistenceController.setArchiveTreeUri(uri)
+            if (enableLoggingAfterFolderSelection) {
+                LocationPersistenceController.setLoggingEnabled(true)
+            }
+        }
+        enableLoggingAfterFolderSelection = false
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -562,6 +576,11 @@ fun MainViewScreen(
                             title = "Location Logging",
                             checked = persistenceState.loggingEnabled
                         ) { enabled ->
+                            if (enabled && persistenceState.archiveRootUri == null) {
+                                enableLoggingAfterFolderSelection = true
+                                loggingFolderInfoDialogVisible = true
+                                return@ToggleRow
+                            }
                             LocationPersistenceController.setLoggingEnabled(enabled)
                         }
                     }
@@ -806,6 +825,48 @@ fun MainViewScreen(
             DatabasePanel(
                 modifier = Modifier.fillMaxWidth()
             )
+        }
+    }
+
+    if (loggingFolderInfoDialogVisible) {
+        MainOverlayDialog(
+            onDismissRequest = {
+                loggingFolderInfoDialogVisible = false
+                enableLoggingAfterFolderSelection = false
+            },
+            title = "Choose Folder"
+        ) {
+            Text(
+                text = "Location logging needs a database folder to store encrypted files.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = "Tap Continue to choose the folder.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(
+                    onClick = {
+                        loggingFolderInfoDialogVisible = false
+                        enableLoggingAfterFolderSelection = false
+                    }
+                ) {
+                    Text("Cancel")
+                }
+                Button(
+                    onClick = {
+                        loggingFolderInfoDialogVisible = false
+                        archiveFolderLauncher.launch(null)
+                    }
+                ) {
+                    Text("Continue")
+                }
+            }
         }
     }
 
