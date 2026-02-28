@@ -150,6 +150,7 @@ private const val MAIN_HISTORY_HEATMAP_FADE_IN_MS = 540
 private const val MAIN_HISTORY_SELECTORS_FADE_IN_MS = 460
 private const val MAIN_HISTORY_SELECTORS_REVEAL_DELAY_MS = 340L
 private const val MAIN_HISTORY_MAP_PATH_MAX_POINTS = 1_500
+private const val MAIN_HISTORY_PATH_MAX_ACCURACY_M = 100.0
 private const val MAIN_HISTORY_PANEL_EXPAND_ANIM_MS = 180
 private val MAIN_TOP_BAR_SCROLL_CLEARANCE = 16.dp
 private val MAIN_BOTTOM_BAR_SCROLL_CLEARANCE = 120.dp
@@ -1438,7 +1439,9 @@ private fun MainLocationHistoryOverlayPanel(
                 samples = heatmapData?.timelineSamples.orEmpty(),
                 rangeStartMs = minOf(rangeStartMs, rangeEndMs),
                 rangeEndMs = maxOf(rangeStartMs, rangeEndMs)
-            )
+            ).filter { sample ->
+                sample.accuracyRadiusMeters <= MAIN_HISTORY_PATH_MAX_ACCURACY_M
+            }
         }
     }
     val canPlayRange = selectorsVisible && selectedRangeSamples.size >= 2
@@ -2470,8 +2473,9 @@ private fun defaultMainHistoryStartDate(
     earliestDate: LocalDate?,
     todayUtc: LocalDate
 ): LocalDate {
-    val earliest = earliestDate ?: return todayUtc
-    return maxOf(earliest, todayUtc)
+    val defaultStart = todayUtc.minusDays(1)
+    val earliest = earliestDate ?: return defaultStart
+    return maxOf(earliest, defaultStart)
 }
 
 private suspend fun loadMainHistoryEarliestDateUtc(): LocalDate? {

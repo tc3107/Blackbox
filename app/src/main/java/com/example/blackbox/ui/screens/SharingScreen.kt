@@ -7,6 +7,7 @@ import android.content.Intent
 import android.net.Uri
 import android.util.Log
 import android.view.HapticFeedbackConstants
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.expandVertically
@@ -1896,6 +1897,7 @@ fun FullscreenInteractiveMapDialog(
     topOverlay: (@Composable () -> Unit)? = null
 ) {
     val mapView = rememberInteractiveMapViewWithLifecycle()
+    val context = LocalContext.current
     val density = LocalDensity.current
     var mapLibreMap by remember { mutableStateOf<MapLibreMap?>(null) }
     var edgeIndicatorState by remember { mutableStateOf<EdgeIndicatorUiState?>(null) }
@@ -2019,6 +2021,25 @@ fun FullscreenInteractiveMapDialog(
                 map.addOnCameraMoveListener(listener)
                 onDispose {
                     map.removeOnCameraMoveListener(listener)
+                }
+            }
+        }
+        DisposableEffect(mapLibreMap, context) {
+            val map = mapLibreMap
+            if (map == null) {
+                onDispose { }
+            } else {
+                val listener = object : MapLibreMap.OnMapLongClickListener {
+                    override fun onMapLongClick(point: LatLng): Boolean {
+                        val coords = formatLatLon(point.latitude, point.longitude)
+                        copyToClipboard(context, "blackbox_map_coords", coords)
+                        Toast.makeText(context, "Coordinates copied", Toast.LENGTH_SHORT).show()
+                        return true
+                    }
+                }
+                map.addOnMapLongClickListener(listener)
+                onDispose {
+                    map.removeOnMapLongClickListener(listener)
                 }
             }
         }

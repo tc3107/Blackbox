@@ -26,6 +26,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 private const val MAX_WRITE_RATE_MS = 1_000L
+private const val MAX_PERSISTED_ACCURACY_M = 100f
 private const val ARCHIVE_RETRY_INTERVAL_MS = 60_000L
 private const val STARTUP_ARCHIVE_DELAY_MS = 45_000L
 private const val PERSIST_DEBUG_TAG = "BlackboxPersistDebug"
@@ -509,6 +510,12 @@ object LocationPersistenceController {
 
     private suspend fun handleLocationEvent(event: LocationSampleEvent) {
         if (!loggingEnabled) return
+        if (event.accuracyM > MAX_PERSISTED_ACCURACY_M) {
+            debugPersistLog {
+                "Dropping location event due to low accuracy acc=${event.accuracyM}m > ${MAX_PERSISTED_ACCURACY_M}m."
+            }
+            return
+        }
         var shouldPersistImmediately = false
 
         writeThrottleMutex.withLock {

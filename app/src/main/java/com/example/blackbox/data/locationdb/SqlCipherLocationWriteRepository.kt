@@ -11,6 +11,9 @@ class SqlCipherLocationWriteRepository(
     private val dailyDbManager: DailyDbManager
 ) : LocationWriteRepository {
     override suspend fun ingest(event: LocationSampleEvent) {
+        if (event.accuracyM > MAX_PERSISTED_ACCURACY_M) {
+            return
+        }
         val db = dailyDbManager.currentWritableDb(Instant.ofEpochMilli(event.receivedAtMs))
         val dao = db.locationSampleDao()
         val latest = dao.getLatest()
@@ -102,6 +105,7 @@ class SqlCipherLocationWriteRepository(
     }
 
     companion object {
+        private const val MAX_PERSISTED_ACCURACY_M = 100f
         private const val LOW_POWER_MAX_INTERVAL_MS = 30L * 60L * 1_000L
         private const val LOW_POWER_DISTANCE_METERS = 30f
         private const val LOW_POWER_BETTER_ACCURACY_METERS = 20f
