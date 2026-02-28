@@ -1,7 +1,6 @@
 package com.example.blackbox.ui
 
 import android.util.Log
-import androidx.annotation.StringRes
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -32,7 +31,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -41,7 +39,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
-import com.example.blackbox.R
 import com.example.blackbox.debug.MainThreadBlockTracker
 import com.example.blackbox.data.settings.UiSettings
 import com.example.blackbox.sharing.LocationSharingController
@@ -158,25 +155,18 @@ fun BlackboxApp(
                                         .fillMaxWidth()
                                         .windowInsetsPadding(WindowInsets.statusBars)
                                         .height(56.dp)
-                                        .padding(horizontal = 16.dp),
+                                        .padding(start = 20.dp, end = 20.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = stringResource(currentDestination.titleRes),
+                                        text = "BLACKBOX",
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f),
-                                        style = MaterialTheme.typography.titleMedium,
-                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.96f)
-                                    )
-                                    Text(
-                                        text = "BLACKBOX",
-                                        style = MaterialTheme.typography.labelSmall.copy(
+                                        style = MaterialTheme.typography.titleLarge.copy(
                                             fontFamily = FontFamily.Monospace
                                         ),
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.96f),
                                         modifier = Modifier
-                                            .padding(start = 12.dp)
                                             .pointerInput(Unit) {
                                                 detectTapGestures(
                                                     onLongPress = {
@@ -264,16 +254,13 @@ private fun AutoFitTitleText(
 }
 
 private enum class AppDestination(
-    val route: String,
-    @StringRes val titleRes: Int
+    val route: String
 ) {
     MAIN_VIEW(
-        route = "main_view",
-        titleRes = R.string.nav_main_view
+        route = "main_view"
     ),
     DATA_VALUES(
-        route = "data_values",
-        titleRes = R.string.nav_data_values
+        route = "data_values"
     );
 
     companion object {
