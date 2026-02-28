@@ -151,6 +151,7 @@ private const val MAIN_LOW_POWER_LOCATION_EVENT_INTERVAL_MS = 3 * 60_000L
 private const val MAIN_TOGGLE_DEBOUNCE_MS = 120L
 private const val MAIN_SEND_TIMER_TAP_HIGH_DEMAND_WINDOW_MS = 8_000L
 private const val MAIN_SEND_TIMER_TAP_CONSUMER_ID = "main_send_timer_tap"
+private const val MAIN_INITIAL_FIX_BOOTSTRAP_CONSUMER_ID = "ui:main_initial_fix_bootstrap"
 private const val MAIN_MAP_USER_FIX_RECENT_WINDOW_MS = 20 * 60_000L
 private const val MAIN_HISTORY_DAY_MS = 86_400_000L
 private const val MAIN_HISTORY_HEATMAP_BIN_COUNT = 96
@@ -356,6 +357,21 @@ fun MainViewScreen(
 
     LaunchedEffect(locationState.bestPositionFix) {
         locationState.bestPositionFix?.let { lastKnownMapFix = it }
+    }
+
+    LaunchedEffect(permissionGranted, locationState.bestPositionFix) {
+        val needsBootstrapFix = permissionGranted && locationState.bestPositionFix == null
+        if (needsBootstrapFix) {
+            LocationEngine.registerHighDemandConsumer(MAIN_INITIAL_FIX_BOOTSTRAP_CONSUMER_ID)
+        } else {
+            LocationEngine.unregisterHighDemandConsumer(MAIN_INITIAL_FIX_BOOTSTRAP_CONSUMER_ID)
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            LocationEngine.unregisterHighDemandConsumer(MAIN_INITIAL_FIX_BOOTSTRAP_CONSUMER_ID)
+        }
     }
 
     LaunchedEffect(permissionGranted) {
