@@ -406,6 +406,15 @@ fun MainViewScreen(
         }
     }
 
+    LaunchedEffect(sharingState.settings.sharingEnabled, persistenceState.loggingEnabled) {
+        val keepaliveRequired = sharingState.settings.sharingEnabled || persistenceState.loggingEnabled
+        if (keepaliveRequired) {
+            LocationEngineForegroundController.start(context.applicationContext)
+        } else {
+            LocationEngineForegroundController.stop(context.applicationContext)
+        }
+    }
+
     val myCode = sharingState.myContactCode
     val qrImage by produceState<androidx.compose.ui.graphics.ImageBitmap?>(
         initialValue = null,

@@ -56,9 +56,24 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        LocationEngine.setEngineEnabled(true)
+    }
+
     override fun onStop() {
         super.onStop()
         LocationEngine.clearUiHighDemandConsumers()
+        val sharingEnabled = LocationSharingController.state.value.settings.sharingEnabled
+        val loggingEnabled = LocationPersistenceController.state.value.loggingEnabled
+        if (sharingEnabled || loggingEnabled) {
+            LocationEngineForegroundController.start(applicationContext)
+        } else {
+            LocationEngineForegroundController.stop(applicationContext)
+        }
+        if (!sharingEnabled && !loggingEnabled) {
+            LocationEngine.setEngineEnabled(false)
+        }
     }
 
     override fun onDestroy() {
