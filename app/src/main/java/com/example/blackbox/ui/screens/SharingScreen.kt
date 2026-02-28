@@ -704,8 +704,32 @@ fun SharingScreen(modifier: Modifier = Modifier) {
                         },
                         playToggleSignal = contactHistoryPlaybackToggleSignal,
                         playbackCancelSignal = contactHistoryPlaybackCancelSignal,
-                        onMapRenderDataChanged = { contactHistoryMapRenderData = it },
-                        onPlaybackUiStateChanged = { contactHistoryPlaybackUiState = it }
+                        onPathPointsChanged = { pathPoints ->
+                            contactHistoryMapRenderData = if (pathPoints.isEmpty() && contactHistoryMapRenderData?.selectedPoint == null) {
+                                null
+                            } else {
+                                ContactHistoryMapRenderData(
+                                    pathPoints = pathPoints,
+                                    selectedPoint = contactHistoryMapRenderData?.selectedPoint
+                                )
+                            }
+                        },
+                        onSelectedPointChanged = { selectedPoint ->
+                            contactHistoryMapRenderData = if (contactHistoryMapRenderData?.pathPoints.isNullOrEmpty() && selectedPoint == null) {
+                                null
+                            } else {
+                                ContactHistoryMapRenderData(
+                                    pathPoints = contactHistoryMapRenderData?.pathPoints.orEmpty(),
+                                    selectedPoint = selectedPoint
+                                )
+                            }
+                        },
+                        onPlaybackUiStateChanged = { canPlay, isPlaying ->
+                            contactHistoryPlaybackUiState = ContactHistoryPlaybackUiState(
+                                canPlay = canPlay,
+                                isPlaying = isPlaying
+                            )
+                        }
                     )
                 }
             } else {
@@ -769,13 +793,14 @@ fun SharingScreen(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun ContactLocationHistoryOverlayPanel(
+fun ContactLocationHistoryOverlayPanel(
     senderId: String,
     onDismiss: () -> Unit,
     playToggleSignal: Int,
     playbackCancelSignal: Int,
-    onMapRenderDataChanged: (ContactHistoryMapRenderData?) -> Unit,
-    onPlaybackUiStateChanged: (ContactHistoryPlaybackUiState) -> Unit
+    onPathPointsChanged: (List<FullscreenHistoryPathPoint>) -> Unit,
+    onSelectedPointChanged: (FullscreenHistorySelectedPoint?) -> Unit,
+    onPlaybackUiStateChanged: (canPlay: Boolean, isPlaying: Boolean) -> Unit
 ) {
     var expanded by rememberSaveable(senderId) { mutableStateOf(true) }
     var selectedStartFraction by rememberSaveable(senderId) { mutableStateOf(0f) }
@@ -988,30 +1013,25 @@ private fun ContactLocationHistoryOverlayPanel(
         }
     }
 
-    LaunchedEffect(selectorsVisible, decimatedPathPoints, selectedHistoryPoint) {
-        if (!selectorsVisible || (decimatedPathPoints.isEmpty() && selectedHistoryPoint == null)) {
-            onMapRenderDataChanged(null)
-            return@LaunchedEffect
-        }
-        onMapRenderDataChanged(
-            ContactHistoryMapRenderData(
-                pathPoints = decimatedPathPoints,
-                selectedPoint = selectedHistoryPoint
-            )
-        )
+    LaunchedEffect(selectorsVisible, decimatedPathPoints) {
+        val pathPoints = if (selectorsVisible) decimatedPathPoints else emptyList()
+        onPathPointsChanged(pathPoints)
+    }
+    LaunchedEffect(selectorsVisible, selectedHistoryPoint) {
+        val point = if (selectorsVisible) selectedHistoryPoint else null
+        onSelectedPointChanged(point)
     }
     LaunchedEffect(canPlayRange, isPlaying) {
         onPlaybackUiStateChanged(
-            ContactHistoryPlaybackUiState(
-                canPlay = canPlayRange,
-                isPlaying = isPlaying && canPlayRange
-            )
+            canPlayRange,
+            isPlaying && canPlayRange
         )
     }
     DisposableEffect(Unit) {
         onDispose {
-            onMapRenderDataChanged(null)
-            onPlaybackUiStateChanged(ContactHistoryPlaybackUiState(canPlay = false, isPlaying = false))
+            onPathPointsChanged(emptyList())
+            onSelectedPointChanged(null)
+            onPlaybackUiStateChanged(false, false)
         }
     }
 

@@ -11,6 +11,7 @@
     <string name="qr_scanner_manual_message">Paste or type the Blackbox location code, then validate it.</string>
     <string name="qr_scanner_manual_hint">blackbox:v1:…</string>
     <string name="qr_scanner_manual_use_code">Validate and use code</string>
+    <string name="qr_scanner_camera_disabled">Camera access is disabled.</string>
     <string name="qr_scanner_error_validator_init">Could not initialize location code validation.</string>
     <string name="qr_scanner_error_validator_unavailable">Location code validation is unavailable.</string>
     <string name="qr_scanner_error_empty_code">Location code cannot be empty.</string>

@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.DialogInterface
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.os.Bundle
 import android.text.InputType
 import com.example.blackbox.logging.AppLog as Log
@@ -42,6 +43,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 @OptIn(markerClass = [ExperimentalGetImage::class])
 class QrScannerActivity : ComponentActivity() {
     private lateinit var overlayContainer: android.view.View
+    private lateinit var cameraDisabledContainer: android.view.View
     private lateinit var previewView: PreviewView
     private lateinit var manualEntryButton: MaterialButton
     private lateinit var cameraExecutor: ExecutorService
@@ -59,9 +61,10 @@ class QrScannerActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
+            hideCameraDisabledUi()
             startCamera()
         } else {
-            finishWithError("Camera permission denied.")
+            showCameraDisabledUi()
         }
     }
 
@@ -72,6 +75,7 @@ class QrScannerActivity : ComponentActivity() {
         previewView = findViewById(R.id.qrScannerPreview)
         manualEntryButton = findViewById(R.id.qrScannerManualEntryButton)
         overlayContainer = findViewById(R.id.qrScannerOverlayContainer)
+        cameraDisabledContainer = findViewById(R.id.qrScannerCameraDisabledContainer)
         applyStatusBarInsets(overlayContainer)
         scanner = runCatching {
             BarcodeScanning.getClient(
@@ -99,6 +103,7 @@ class QrScannerActivity : ComponentActivity() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
             PackageManager.PERMISSION_GRANTED
         ) {
+            hideCameraDisabledUi()
             startCamera()
         } else {
             requestCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
@@ -149,6 +154,19 @@ class QrScannerActivity : ComponentActivity() {
             },
             ContextCompat.getMainExecutor(this)
         )
+    }
+
+    private fun showCameraDisabledUi() {
+        cameraProvider?.unbindAll()
+        previewView.setBackgroundColor(Color.BLACK)
+        previewView.visibility = android.view.View.VISIBLE
+        overlayContainer.visibility = android.view.View.GONE
+        cameraDisabledContainer.visibility = android.view.View.VISIBLE
+    }
+
+    private fun hideCameraDisabledUi() {
+        cameraDisabledContainer.visibility = android.view.View.GONE
+        overlayContainer.visibility = android.view.View.VISIBLE
     }
 
     private fun analyzeImage(imageProxy: ImageProxy) {

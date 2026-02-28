@@ -50,4 +50,23 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
     </LinearLayout>
+
+    <FrameLayout
+        android:id="@+id/qrScannerCameraDisabledContainer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@android:color/black"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/qrScannerCameraDisabledMessage"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center"
+            android:padding="24dp"
+            android:text="@string/qr_scanner_camera_disabled"
+            android:textColor="@android:color/white"
+            android:textSize="16sp" />
+    </FrameLayout>
 </merge>

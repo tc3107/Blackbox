@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## v1.2.1 - 2026-02-28
+- Fixed main Contacts fullscreen map to use the same 24-hour history overlay as sharing maps, including range selector, heatmap loading pulse, and playback path rendering.
+- Fixed QR scanner permission-denied behavior to show a blank background with a camera-disabled message instead of exiting with an error.
+
 ## v1.2.0 - 2026-02-28
 - Added relay-side 24-hour location history retention per sender, with automatic pruning and latest-entry preservation.
 - Added authenticated relay endpoint for per-sender history pulls (`/v1/location/pull-history`).

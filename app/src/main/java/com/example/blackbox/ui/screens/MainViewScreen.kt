@@ -194,7 +194,8 @@ private data class MainFullscreenMapRequest(
     val targetType: MapTargetType = MapTargetType.USER,
     val userLatitude: Double? = null,
     val userLongitude: Double? = null,
-    val userRadiusMeters: Double? = null
+    val userRadiusMeters: Double? = null,
+    val historySenderId: String? = null
 )
 
 private data class MainViewLocationState(
@@ -750,7 +751,7 @@ fun MainViewScreen(
                 onRemoveContact = { senderId ->
                     LocationSharingController.removeContact(senderId)
                 },
-                onOpenMap = { _, _, lat, lon, radiusMeters ->
+                onOpenMap = { senderId, _, lat, lon, radiusMeters ->
                     val myFix = locationState.bestPositionFix
                     val hasRecentMyFix = myFix != null &&
                         (System.currentTimeMillis() - myFix.receivedAtMillis) <= MAIN_MAP_USER_FIX_RECENT_WINDOW_MS
@@ -761,7 +762,8 @@ fun MainViewScreen(
                         targetType = MapTargetType.CONTACT,
                         userLatitude = if (hasRecentMyFix) myFix?.location?.latitude else null,
                         userLongitude = if (hasRecentMyFix) myFix?.location?.longitude else null,
-                        userRadiusMeters = if (hasRecentMyFix) myFix?.accuracyMeters?.toDouble() else null
+                        userRadiusMeters = if (hasRecentMyFix) myFix?.accuracyMeters?.toDouble() else null,
+                        historySenderId = senderId
                     )
                 }
             )
@@ -957,7 +959,9 @@ fun MainViewScreen(
         val effectiveLatitude = liveUserFix?.location?.latitude ?: request.latitude
         val effectiveLongitude = liveUserFix?.location?.longitude ?: request.longitude
         val effectiveRadiusMeters = liveUserFix?.accuracyMeters?.toDouble() ?: request.radiusMeters
-        val useLocationHistoryOverlay = request.targetType == MapTargetType.USER
+        val useUserHistoryOverlay = request.targetType == MapTargetType.USER
+        val useContactHistoryOverlay = request.targetType == MapTargetType.CONTACT && request.historySenderId != null
+        val useLocationHistoryOverlay = useUserHistoryOverlay || useContactHistoryOverlay
         FullscreenInteractiveMapDialog(
             latitude = effectiveLatitude,
             longitude = effectiveLongitude,
@@ -996,39 +1000,96 @@ fun MainViewScreen(
             },
             followHistorySelectedPoint = useLocationHistoryOverlay,
             offscreenIndicatorLatitude = if (useLocationHistoryOverlay) {
-                (locationState.bestPositionFix ?: lastKnownMapFix)?.location?.latitude
+                if (useContactHistoryOverlay) {
+                    (locationState.bestPositionFix ?: lastKnownMapFix)?.location?.latitude ?: request.userLatitude
+                } else {
+                    (locationState.bestPositionFix ?: lastKnownMapFix)?.location?.latitude
+                }
             } else {
                 null
             },
             offscreenIndicatorLongitude = if (useLocationHistoryOverlay) {
-                (locationState.bestPositionFix ?: lastKnownMapFix)?.location?.longitude
+                if (useContactHistoryOverlay) {
+                    (locationState.bestPositionFix ?: lastKnownMapFix)?.location?.longitude ?: request.userLongitude
+                } else {
+                    (locationState.bestPositionFix ?: lastKnownMapFix)?.location?.longitude
+                }
             } else {
                 request.userLongitude
             },
             secondaryOffscreenIndicatorLatitude = if (useLocationHistoryOverlay) {
-                null
+                if (useContactHistoryOverlay) {
+                    historyMapRenderData?.selectedPoint?.latitude ?: effectiveLatitude
+                } else {
+                    null
+                }
             } else {
                 effectiveLatitude
             },
             secondaryOffscreenIndicatorLongitude = if (useLocationHistoryOverlay) {
-                null
+                if (useContactHistoryOverlay) {
+                    historyMapRenderData?.selectedPoint?.longitude ?: effectiveLongitude
+                } else {
+                    null
+                }
             } else {
                 effectiveLongitude
             },
             showDefaultBackButton = !useLocationHistoryOverlay,
             topOverlay = if (useLocationHistoryOverlay) {
-                {
-                    MainLocationHistoryOverlayPanel(
-                        onDismiss = {
-                            fullscreenMapRequest = null
-                            historyMapRenderData = null
-                            historyPlaybackUiState = MainHistoryPlaybackUiState(canPlay = false, isPlaying = false)
-                        },
-                        playToggleSignal = historyPlaybackToggleSignal,
-                        playbackCancelSignal = historyPlaybackCancelSignal,
-                        onMapRenderDataChanged = { historyMapRenderData = it },
-                        onPlaybackUiStateChanged = { historyPlaybackUiState = it }
-                    )
+                if (useContactHistoryOverlay) {
+                    {
+                        ContactLocationHistoryOverlayPanel(
+                            senderId = request.historySenderId.orEmpty(),
+                            onDismiss = {
+                                fullscreenMapRequest = null
+                                historyMapRenderData = null
+                                historyPlaybackUiState = MainHistoryPlaybackUiState(canPlay = false, isPlaying = false)
+                            },
+                            playToggleSignal = historyPlaybackToggleSignal,
+                            playbackCancelSignal = historyPlaybackCancelSignal,
+                            onPathPointsChanged = { pathPoints ->
+                                historyMapRenderData = if (pathPoints.isEmpty() && historyMapRenderData?.selectedPoint == null) {
+                                    null
+                                } else {
+                                    MainHistoryMapRenderData(
+                                        pathPoints = pathPoints,
+                                        selectedPoint = historyMapRenderData?.selectedPoint
+                                    )
+                                }
+                            },
+                            onSelectedPointChanged = { selectedPoint ->
+                                historyMapRenderData = if (historyMapRenderData?.pathPoints.isNullOrEmpty() && selectedPoint == null) {
+                                    null
+                                } else {
+                                    MainHistoryMapRenderData(
+                                        pathPoints = historyMapRenderData?.pathPoints.orEmpty(),
+                                        selectedPoint = selectedPoint
+                                    )
+                                }
+                            },
+                            onPlaybackUiStateChanged = { canPlay, isPlaying ->
+                                historyPlaybackUiState = MainHistoryPlaybackUiState(
+                                    canPlay = canPlay,
+                                    isPlaying = isPlaying
+                                )
+                            }
+                        )
+                    }
+                } else {
+                    {
+                        MainLocationHistoryOverlayPanel(
+                            onDismiss = {
+                                fullscreenMapRequest = null
+                                historyMapRenderData = null
+                                historyPlaybackUiState = MainHistoryPlaybackUiState(canPlay = false, isPlaying = false)
+                            },
+                            playToggleSignal = historyPlaybackToggleSignal,
+                            playbackCancelSignal = historyPlaybackCancelSignal,
+                            onMapRenderDataChanged = { historyMapRenderData = it },
+                            onPlaybackUiStateChanged = { historyPlaybackUiState = it }
+                        )
+                    }
                 }
             } else {
                 null
