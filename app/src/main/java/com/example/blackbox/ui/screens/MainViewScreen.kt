@@ -72,6 +72,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.key
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -142,13 +143,13 @@ private const val MAIN_SEND_TIMER_TAP_HIGH_DEMAND_WINDOW_MS = 8_000L
 private const val MAIN_SEND_TIMER_TAP_CONSUMER_ID = "main_send_timer_tap"
 private const val MAIN_MAP_USER_FIX_RECENT_WINDOW_MS = 20 * 60_000L
 private const val MAIN_HISTORY_DAY_MS = 86_400_000L
-private const val MAIN_HISTORY_DEFAULT_RANGE_DAYS_MAX = 7L
 private const val MAIN_HISTORY_HEATMAP_BIN_COUNT = 96
 private const val MAIN_HISTORY_HEATMAP_PULSE_DURATION_MS = 1_050
 private const val MAIN_HISTORY_POST_PULSE_GAP_MS = 140L
 private const val MAIN_HISTORY_HEATMAP_FADE_IN_MS = 540
 private const val MAIN_HISTORY_SELECTORS_FADE_IN_MS = 460
 private const val MAIN_HISTORY_SELECTORS_REVEAL_DELAY_MS = 340L
+private const val MAIN_HISTORY_MAP_PATH_MAX_POINTS = 1_500
 private const val MAIN_HISTORY_PANEL_EXPAND_ANIM_MS = 180
 private val MAIN_TOP_BAR_SCROLL_CLEARANCE = 16.dp
 private val MAIN_BOTTOM_BAR_SCROLL_CLEARANCE = 120.dp
@@ -205,7 +206,18 @@ private data class MainHistoryHeatmapData(
 private data class MainHistoryTimelineSample(
     val timestampMs: Long,
     val latitude: Double,
-    val longitude: Double
+    val longitude: Double,
+    val accuracyRadiusMeters: Double
+)
+
+private data class MainHistoryMapRenderData(
+    val pathPoints: List<FullscreenHistoryPathPoint>,
+    val selectedPoint: FullscreenHistorySelectedPoint?
+)
+
+private data class MainHistoryPlaybackUiState(
+    val canPlay: Boolean,
+    val isPlaying: Boolean
 )
 
 @Composable
@@ -251,6 +263,14 @@ fun MainViewScreen(
     var zoneDialogError by rememberSaveable { mutableStateOf<String?>(null) }
     var fullscreenMapRequest by remember {
         mutableStateOf<MainFullscreenMapRequest?>(null)
+    }
+    var historyMapRenderData by remember {
+        mutableStateOf<MainHistoryMapRenderData?>(null)
+    }
+    var historyPlaybackToggleSignal by remember { mutableStateOf(0) }
+    var historyPlaybackCancelSignal by remember { mutableStateOf(0) }
+    var historyPlaybackUiState by remember {
+        mutableStateOf(MainHistoryPlaybackUiState(canPlay = false, isPlaying = false))
     }
 
     val scanQrLauncher = rememberLauncherForActivityResult(
@@ -732,12 +752,58 @@ fun MainViewScreen(
             userLatitude = request.userLatitude,
             userLongitude = request.userLongitude,
             userRadiusMeters = request.userRadiusMeters,
-            onDismiss = { fullscreenMapRequest = null },
+            onDismiss = {
+                fullscreenMapRequest = null
+                historyMapRenderData = null
+                historyPlaybackUiState = MainHistoryPlaybackUiState(canPlay = false, isPlaying = false)
+            },
+            historyPathPoints = if (useLocationHistoryOverlay) {
+                historyMapRenderData?.pathPoints.orEmpty()
+            } else {
+                emptyList()
+            },
+            historySelectedPoint = if (useLocationHistoryOverlay) {
+                historyMapRenderData?.selectedPoint
+            } else {
+                null
+            },
+            showHistorySelectedCenterButton = useLocationHistoryOverlay,
+            showHistoryPlayButton = useLocationHistoryOverlay && historyPlaybackUiState.canPlay,
+            historyPlayRunning = historyPlaybackUiState.isPlaying,
+            onHistoryPlayClick = if (useLocationHistoryOverlay) {
+                { historyPlaybackToggleSignal += 1 }
+            } else {
+                null
+            },
+            onHistoryManualCenterAction = if (useLocationHistoryOverlay) {
+                { historyPlaybackCancelSignal += 1 }
+            } else {
+                null
+            },
+            followHistorySelectedPoint = useLocationHistoryOverlay,
+            offscreenIndicatorLatitude = if (useLocationHistoryOverlay) {
+                (locationState.bestPositionFix ?: lastKnownMapFix)?.location?.latitude
+            } else {
+                null
+            },
+            offscreenIndicatorLongitude = if (useLocationHistoryOverlay) {
+                (locationState.bestPositionFix ?: lastKnownMapFix)?.location?.longitude
+            } else {
+                null
+            },
             showDefaultBackButton = !useLocationHistoryOverlay,
             topOverlay = if (useLocationHistoryOverlay) {
                 {
                     MainLocationHistoryOverlayPanel(
-                        onDismiss = { fullscreenMapRequest = null }
+                        onDismiss = {
+                            fullscreenMapRequest = null
+                            historyMapRenderData = null
+                            historyPlaybackUiState = MainHistoryPlaybackUiState(canPlay = false, isPlaying = false)
+                        },
+                        playToggleSignal = historyPlaybackToggleSignal,
+                        playbackCancelSignal = historyPlaybackCancelSignal,
+                        onMapRenderDataChanged = { historyMapRenderData = it },
+                        onPlaybackUiStateChanged = { historyPlaybackUiState = it }
                     )
                 }
             } else {
@@ -1213,7 +1279,11 @@ private fun isInsideZone(lat: Double?, lon: Double?, zone: ShareZone): Boolean {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MainLocationHistoryOverlayPanel(
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    playToggleSignal: Int,
+    playbackCancelSignal: Int,
+    onMapRenderDataChanged: (MainHistoryMapRenderData?) -> Unit,
+    onPlaybackUiStateChanged: (MainHistoryPlaybackUiState) -> Unit
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     var startDate by remember { mutableStateOf<LocalDate?>(null) }
@@ -1223,6 +1293,7 @@ private fun MainLocationHistoryOverlayPanel(
     var selectedStartFraction by rememberSaveable { mutableStateOf(0f) }
     var selectedEndFraction by rememberSaveable { mutableStateOf(1f) }
     var preciseFraction by rememberSaveable { mutableStateOf(0.5f) }
+    var isPlaying by rememberSaveable { mutableStateOf(false) }
 
     val todayUtc = remember { LocalDate.now(ZoneOffset.UTC) }
     val earliestDate by produceState<LocalDate?>(initialValue = null) {
@@ -1324,6 +1395,28 @@ private fun MainLocationHistoryOverlayPanel(
         }
     }
 
+    val selectedRangeStartMs = remember(effectiveStartDate, effectiveEndDate, selectedStartFraction) {
+        val startDateValue = effectiveStartDate ?: return@remember null
+        val endDateValue = effectiveEndDate ?: return@remember null
+        val windowStartMs = localDateToUtcStartMillis(startDateValue)
+        val windowEndInclusiveMs = localDateToUtcStartMillis(endDateValue.plusDays(1)) - 1L
+        mainHistoryMsForFraction(
+            windowStartMs = windowStartMs,
+            windowEndInclusiveMs = windowEndInclusiveMs,
+            fraction = selectedStartFraction
+        )
+    }
+    val selectedRangeEndMs = remember(effectiveStartDate, effectiveEndDate, selectedEndFraction) {
+        val startDateValue = effectiveStartDate ?: return@remember null
+        val endDateValue = effectiveEndDate ?: return@remember null
+        val windowStartMs = localDateToUtcStartMillis(startDateValue)
+        val windowEndInclusiveMs = localDateToUtcStartMillis(endDateValue.plusDays(1)) - 1L
+        mainHistoryMsForFraction(
+            windowStartMs = windowStartMs,
+            windowEndInclusiveMs = windowEndInclusiveMs,
+            fraction = selectedEndFraction
+        )
+    }
     val preciseSelectedMs = remember(effectiveStartDate, effectiveEndDate, preciseFraction) {
         val startDateValue = effectiveStartDate ?: return@remember null
         val endDateValue = effectiveEndDate ?: return@remember null
@@ -1335,9 +1428,23 @@ private fun MainLocationHistoryOverlayPanel(
             fraction = preciseFraction
         )
     }
-    val preciseTimelineSample = remember(heatmapData, preciseSelectedMs) {
+    val selectedRangeSamples = remember(heatmapData, selectedRangeStartMs, selectedRangeEndMs) {
+        val rangeStartMs = selectedRangeStartMs
+        val rangeEndMs = selectedRangeEndMs
+        if (rangeStartMs == null || rangeEndMs == null) {
+            emptyList()
+        } else {
+            timelineSamplesInRange(
+                samples = heatmapData?.timelineSamples.orEmpty(),
+                rangeStartMs = minOf(rangeStartMs, rangeEndMs),
+                rangeEndMs = maxOf(rangeStartMs, rangeEndMs)
+            )
+        }
+    }
+    val canPlayRange = selectorsVisible && selectedRangeSamples.size >= 2
+    val preciseTimelineSample = remember(selectedRangeSamples, preciseSelectedMs) {
         findNearestTimelineSample(
-            samples = heatmapData?.timelineSamples.orEmpty(),
+            samples = selectedRangeSamples,
             targetUtcMs = preciseSelectedMs
         )
     }
@@ -1346,6 +1453,117 @@ private fun MainLocationHistoryOverlayPanel(
             utcTimeMs = preciseSelectedMs,
             sample = preciseTimelineSample
         )
+    }
+    val decimatedPathPoints by produceState(
+        initialValue = emptyList<FullscreenHistoryPathPoint>(),
+        key1 = selectedRangeSamples
+    ) {
+        value = if (selectedRangeSamples.isEmpty()) {
+            emptyList()
+        } else {
+            withContext(Dispatchers.Default) {
+                decimateHistoryPathPoints(
+                    samples = selectedRangeSamples,
+                    maxPoints = MAIN_HISTORY_MAP_PATH_MAX_POINTS
+                )
+            }
+        }
+    }
+    val selectedHistoryPoint = remember(preciseTimelineSample) {
+        preciseTimelineSample?.let { sample ->
+            FullscreenHistorySelectedPoint(
+                latitude = sample.latitude,
+                longitude = sample.longitude,
+                accuracyRadiusMeters = sample.accuracyRadiusMeters
+            )
+        }
+    }
+
+    LaunchedEffect(playToggleSignal) {
+        if (playToggleSignal <= 0) return@LaunchedEffect
+        if (!canPlayRange) {
+            isPlaying = false
+            return@LaunchedEffect
+        }
+        isPlaying = !isPlaying
+    }
+    LaunchedEffect(playbackCancelSignal) {
+        if (playbackCancelSignal <= 0) return@LaunchedEffect
+        isPlaying = false
+    }
+    LaunchedEffect(canPlayRange) {
+        if (!canPlayRange) {
+            isPlaying = false
+        }
+    }
+    LaunchedEffect(isPlaying, canPlayRange, selectedStartFraction, selectedEndFraction) {
+        if (!isPlaying || !canPlayRange) return@LaunchedEffect
+        val playStart = selectedStartFraction
+        val playEnd = selectedEndFraction
+        if (playEnd <= playStart) {
+            preciseFraction = playStart
+            isPlaying = false
+            return@LaunchedEffect
+        }
+        preciseFraction = playStart
+        val totalSpan = (playEnd - playStart).coerceAtLeast(0.00001f)
+        val remainingSpan = (playEnd - playStart).coerceAtLeast(0f)
+        if (remainingSpan <= 0f) {
+            preciseFraction = playEnd
+            isPlaying = false
+            return@LaunchedEffect
+        }
+        val totalDurationNs = 30_000_000_000L
+        val durationNs = (totalDurationNs.toDouble() * (remainingSpan / totalSpan).toDouble()).toLong()
+            .coerceAtLeast(50_000_000L)
+        val startPrecise = playStart
+        val startNs = withFrameNanos { it }
+        var lastFrameNs = startNs
+        while (isPlaying) {
+            val nowNs = withFrameNanos { it }
+            if (nowNs - lastFrameNs < 16_000_000L) continue
+            lastFrameNs = nowNs
+            val elapsedNs = (nowNs - startNs).coerceAtLeast(0L)
+            val progress = (elapsedNs.toDouble() / durationNs.toDouble()).coerceIn(0.0, 1.0)
+            preciseFraction = startPrecise + ((playEnd - startPrecise) * progress.toFloat())
+            if (preciseFraction >= (playEnd - 0.00001f)) {
+                preciseFraction = playEnd
+                isPlaying = false
+                break
+            }
+            if (progress >= 1.0) {
+                preciseFraction = playEnd
+                isPlaying = false
+                break
+            }
+        }
+    }
+
+    LaunchedEffect(selectorsVisible, decimatedPathPoints, selectedHistoryPoint) {
+        if (!selectorsVisible || (decimatedPathPoints.isEmpty() && selectedHistoryPoint == null)) {
+            onMapRenderDataChanged(null)
+            return@LaunchedEffect
+        }
+        onMapRenderDataChanged(
+            MainHistoryMapRenderData(
+                pathPoints = decimatedPathPoints,
+                selectedPoint = selectedHistoryPoint
+            )
+        )
+    }
+    LaunchedEffect(canPlayRange, isPlaying) {
+        onPlaybackUiStateChanged(
+            MainHistoryPlaybackUiState(
+                canPlay = canPlayRange,
+                isPlaying = isPlaying && canPlayRange
+            )
+        )
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            onMapRenderDataChanged(null)
+            onPlaybackUiStateChanged(MainHistoryPlaybackUiState(canPlay = false, isPlaying = false))
+        }
     }
 
     OutlinedCard(
@@ -1471,6 +1689,7 @@ private fun MainLocationHistoryOverlayPanel(
                         onSelectionStartFractionChange = { selectedStartFraction = it },
                         onSelectionEndFractionChange = { selectedEndFraction = it },
                         onPreciseSelectionFractionChange = { preciseFraction = it },
+                        onManualPreciseSelection = { isPlaying = false },
                         modifier = Modifier.fillMaxWidth()
                     )
                     AnimatedVisibility(
@@ -1670,6 +1889,7 @@ private fun MainHistoryHeatmapSlot(
     onSelectionStartFractionChange: (Float) -> Unit,
     onSelectionEndFractionChange: (Float) -> Unit,
     onPreciseSelectionFractionChange: (Float) -> Unit,
+    onManualPreciseSelection: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val slotShape = RoundedCornerShape(MAIN_HISTORY_TIMELINE_CORNER_RADIUS)
@@ -1696,6 +1916,7 @@ private fun MainHistoryHeatmapSlot(
     val updateStartFraction by rememberUpdatedState(onSelectionStartFractionChange)
     val updateEndFraction by rememberUpdatedState(onSelectionEndFractionChange)
     val updatePreciseFraction by rememberUpdatedState(onPreciseSelectionFractionChange)
+    val notifyManualPreciseSelection by rememberUpdatedState(onManualPreciseSelection)
     val pulseTransition = rememberInfiniteTransition(label = "main_history_heatmap_pulse")
     val pulseAlpha by pulseTransition.animateFloat(
         initialValue = 0.08f,
@@ -1804,6 +2025,9 @@ private fun MainHistoryHeatmapSlot(
                                     } else {
                                         MainHistoryDragTarget.PRECISE
                                     }
+                                    if (activeTarget == MainHistoryDragTarget.PRECISE) {
+                                        notifyManualPreciseSelection()
+                                    }
                                     view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                                     hitStartBoundary = false
                                     hitEndBoundary = false
@@ -1822,6 +2046,7 @@ private fun MainHistoryHeatmapSlot(
                                     change.consume()
                                     val target = activeTarget ?: return@detectDragGestures
                                     val deltaFraction = dragAmount.x / barWidthPx
+                                    val fingerX = change.position.x.coerceIn(0f, barWidthPx)
 
                                     when (target) {
                                         MainHistoryDragTarget.START -> {
@@ -1856,8 +2081,7 @@ private fun MainHistoryHeatmapSlot(
                                     val preciseMinX = (workingStart * barWidthPx) + handleWidthPx + (preciseLineWidthPx * 0.5f)
                                     val preciseMaxX = (workingEnd * barWidthPx) - handleWidthPx - (preciseLineWidthPx * 0.5f)
                                     val nextPreciseX = if (target == MainHistoryDragTarget.PRECISE) {
-                                        ((workingPrecise * barWidthPx) + (deltaFraction * barWidthPx))
-                                            .coerceIn(preciseMinX, preciseMaxX)
+                                        fingerX.coerceIn(preciseMinX, preciseMaxX)
                                     } else {
                                         (workingPrecise * barWidthPx).coerceIn(preciseMinX, preciseMaxX)
                                     }
@@ -2136,6 +2360,84 @@ private fun findNearestTimelineSample(
     }
 }
 
+private fun timelineSamplesInRange(
+    samples: List<MainHistoryTimelineSample>,
+    rangeStartMs: Long,
+    rangeEndMs: Long
+): List<MainHistoryTimelineSample> {
+    if (samples.isEmpty() || rangeEndMs < rangeStartMs) return emptyList()
+    val startIndex = lowerBoundTimelineIndex(samples, rangeStartMs)
+    val endExclusive = upperBoundTimelineIndex(samples, rangeEndMs)
+    if (startIndex >= endExclusive) return emptyList()
+    return samples.subList(startIndex, endExclusive)
+}
+
+private fun lowerBoundTimelineIndex(
+    samples: List<MainHistoryTimelineSample>,
+    targetMs: Long
+): Int {
+    var low = 0
+    var high = samples.size
+    while (low < high) {
+        val mid = (low + high) ushr 1
+        if (samples[mid].timestampMs < targetMs) {
+            low = mid + 1
+        } else {
+            high = mid
+        }
+    }
+    return low.coerceIn(0, samples.size)
+}
+
+private fun upperBoundTimelineIndex(
+    samples: List<MainHistoryTimelineSample>,
+    targetMs: Long
+): Int {
+    var low = 0
+    var high = samples.size
+    while (low < high) {
+        val mid = (low + high) ushr 1
+        if (samples[mid].timestampMs <= targetMs) {
+            low = mid + 1
+        } else {
+            high = mid
+        }
+    }
+    return low.coerceIn(0, samples.size)
+}
+
+private fun decimateHistoryPathPoints(
+    samples: List<MainHistoryTimelineSample>,
+    maxPoints: Int
+): List<FullscreenHistoryPathPoint> {
+    if (samples.isEmpty()) return emptyList()
+    if (samples.size <= maxPoints) {
+        return samples.map { sample ->
+            FullscreenHistoryPathPoint(
+                latitude = sample.latitude,
+                longitude = sample.longitude
+            )
+        }
+    }
+    val pointLimit = maxPoints.coerceAtLeast(2)
+    val step = (samples.size - 1).toDouble() / (pointLimit - 1).toDouble()
+    val output = ArrayList<FullscreenHistoryPathPoint>(pointLimit)
+    var cursor = 0.0
+    repeat(pointLimit) { index ->
+        val sample = if (index == pointLimit - 1) {
+            samples.last()
+        } else {
+            samples[cursor.toInt().coerceIn(0, samples.lastIndex)]
+        }
+        output += FullscreenHistoryPathPoint(
+            latitude = sample.latitude,
+            longitude = sample.longitude
+        )
+        cursor += step
+    }
+    return output
+}
+
 private fun approximateZoneOffsetForSample(sample: MainHistoryTimelineSample): ZoneOffset {
     val estimatedHour = kotlin.math.round(sample.longitude / 15.0)
         .toInt()
@@ -2168,9 +2470,8 @@ private fun defaultMainHistoryStartDate(
     earliestDate: LocalDate?,
     todayUtc: LocalDate
 ): LocalDate {
-    val cappedStart = todayUtc.minusDays(MAIN_HISTORY_DEFAULT_RANGE_DAYS_MAX)
-    val earliest = earliestDate ?: return cappedStart
-    return maxOf(earliest, cappedStart)
+    val earliest = earliestDate ?: return todayUtc
+    return maxOf(earliest, todayUtc)
 }
 
 private suspend fun loadMainHistoryEarliestDateUtc(): LocalDate? {
@@ -2241,7 +2542,7 @@ private suspend fun loadMainHistoryHeatmapData(
 
 private fun buildMainHistoryTimelineSamples(
     samples: List<com.example.blackbox.data.locationdb.LocationSampleEntity>,
-    maxPoints: Int = 512
+    maxPoints: Int = 4_000
 ): List<MainHistoryTimelineSample> {
     if (samples.isEmpty()) return emptyList()
     if (samples.size <= maxPoints) {
@@ -2249,7 +2550,8 @@ private fun buildMainHistoryTimelineSamples(
             MainHistoryTimelineSample(
                 timestampMs = it.receivedAtMs,
                 latitude = it.lat,
-                longitude = it.lon
+                longitude = it.lon,
+                accuracyRadiusMeters = it.bestAccuracyM.toDouble().coerceAtLeast(1.0)
             )
         }
     }
@@ -2261,7 +2563,8 @@ private fun buildMainHistoryTimelineSamples(
         output += MainHistoryTimelineSample(
             timestampMs = sample.receivedAtMs,
             latitude = sample.lat,
-            longitude = sample.lon
+            longitude = sample.lon,
+            accuracyRadiusMeters = sample.bestAccuracyM.toDouble().coerceAtLeast(1.0)
         )
         idx += step
     }

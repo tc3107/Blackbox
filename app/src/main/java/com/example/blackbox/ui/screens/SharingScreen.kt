@@ -76,6 +76,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
@@ -112,6 +113,7 @@ import org.maplibre.android.style.layers.PropertyFactory.lineOpacity
 import org.maplibre.android.style.layers.PropertyFactory.lineWidth
 import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.Feature
+import org.maplibre.geojson.LineString
 import org.maplibre.geojson.Point
 import org.maplibre.geojson.Polygon
 import com.example.blackbox.location.LocationEngine
@@ -171,6 +173,14 @@ private const val FsUserAreaFillLayerId = "bbx_fs_user_area_fill_layer"
 private const val FsUserAreaStrokeLayerId = "bbx_fs_user_area_stroke_layer"
 private const val FsUserCenterOuterLayerId = "bbx_fs_user_center_outer_layer"
 private const val FsUserCenterInnerLayerId = "bbx_fs_user_center_inner_layer"
+private const val FsHistoryPathSourceId = "bbx_fs_history_path_source"
+private const val FsHistoryPathLayerId = "bbx_fs_history_path_layer"
+private const val FsHistoryPointAreaSourceId = "bbx_fs_history_point_area_source"
+private const val FsHistoryPointCenterSourceId = "bbx_fs_history_point_center_source"
+private const val FsHistoryPointAreaFillLayerId = "bbx_fs_history_point_area_fill_layer"
+private const val FsHistoryPointAreaStrokeLayerId = "bbx_fs_history_point_area_stroke_layer"
+private const val FsHistoryPointCenterOuterLayerId = "bbx_fs_history_point_center_outer_layer"
+private const val FsHistoryPointCenterInnerLayerId = "bbx_fs_history_point_center_inner_layer"
 
 private data class FullscreenMapRequest(
     val latitude: Double,
@@ -180,6 +190,29 @@ private data class FullscreenMapRequest(
     val userLatitude: Double? = null,
     val userLongitude: Double? = null,
     val userRadiusMeters: Double? = null
+)
+
+data class FullscreenHistoryPathPoint(
+    val latitude: Double,
+    val longitude: Double
+)
+
+data class FullscreenHistorySelectedPoint(
+    val latitude: Double,
+    val longitude: Double,
+    val accuracyRadiusMeters: Double
+)
+
+private enum class EdgeIndicatorSide {
+    TOP,
+    RIGHT,
+    BOTTOM,
+    LEFT
+}
+
+private data class EdgeIndicatorUiState(
+    val center: Offset,
+    val side: EdgeIndicatorSide
 )
 
 private data class MapCirclePalette(
@@ -1848,6 +1881,16 @@ fun FullscreenInteractiveMapDialog(
     userLatitude: Double? = null,
     userLongitude: Double? = null,
     userRadiusMeters: Double? = null,
+    historyPathPoints: List<FullscreenHistoryPathPoint> = emptyList(),
+    historySelectedPoint: FullscreenHistorySelectedPoint? = null,
+    showHistorySelectedCenterButton: Boolean = false,
+    showHistoryPlayButton: Boolean = false,
+    historyPlayRunning: Boolean = false,
+    onHistoryPlayClick: (() -> Unit)? = null,
+    onHistoryManualCenterAction: (() -> Unit)? = null,
+    followHistorySelectedPoint: Boolean = false,
+    offscreenIndicatorLatitude: Double? = null,
+    offscreenIndicatorLongitude: Double? = null,
     onDismiss: () -> Unit,
     showDefaultBackButton: Boolean = true,
     topOverlay: (@Composable () -> Unit)? = null
@@ -1855,6 +1898,8 @@ fun FullscreenInteractiveMapDialog(
     val mapView = rememberInteractiveMapViewWithLifecycle()
     val density = LocalDensity.current
     var mapLibreMap by remember { mutableStateOf<MapLibreMap?>(null) }
+    var edgeIndicatorState by remember { mutableStateOf<EdgeIndicatorUiState?>(null) }
+    var selectedEdgeIndicatorState by remember { mutableStateOf<EdgeIndicatorUiState?>(null) }
     val fallbackBg = MaterialTheme.colorScheme.background.copy(alpha = 0.95f)
     val hasUserLocation =
         userLatitude != null && userLongitude != null && userRadiusMeters != null
@@ -1900,6 +1945,99 @@ fun FullscreenInteractiveMapDialog(
                     userLongitude = userLongitude,
                     userRadiusMeters = userRadiusMeters
                 )
+            }
+        }
+        LaunchedEffect(mapLibreMap, historyPathPoints) {
+            mapLibreMap?.getStyle { style ->
+                upsertFullscreenHistoryPathLayer(
+                    style = style,
+                    pathPoints = historyPathPoints
+                )
+            }
+        }
+        LaunchedEffect(mapLibreMap, historySelectedPoint) {
+            mapLibreMap?.getStyle { style ->
+                upsertFullscreenHistorySelectedPointLayer(
+                    style = style,
+                    selectedPoint = historySelectedPoint
+                )
+            }
+        }
+        fun computeIndicatorForLatLon(lat: Double?, lon: Double?): EdgeIndicatorUiState? {
+            val map = mapLibreMap
+            if (map == null || lat == null || lon == null) {
+                return null
+            }
+            val width = mapView.width.toFloat()
+            val height = mapView.height.toFloat()
+            if (width <= 0f || height <= 0f) {
+                return null
+            }
+            val targetScreen = map.projection.toScreenLocation(LatLng(lat, lon))
+            val inView = targetScreen.x in 0f..width && targetScreen.y in 0f..height
+            if (inView) {
+                return null
+            }
+            return computeEdgeIndicatorState(
+                center = Offset(width * 0.5f, height * 0.5f),
+                target = Offset(targetScreen.x, targetScreen.y),
+                width = width,
+                height = height
+            )
+        }
+        fun refreshEdgeIndicators() {
+            edgeIndicatorState = computeIndicatorForLatLon(
+                lat = offscreenIndicatorLatitude,
+                lon = offscreenIndicatorLongitude
+            )
+            selectedEdgeIndicatorState = computeIndicatorForLatLon(
+                lat = historySelectedPoint?.latitude,
+                lon = historySelectedPoint?.longitude
+            )
+        }
+        LaunchedEffect(
+            mapLibreMap,
+            offscreenIndicatorLatitude,
+            offscreenIndicatorLongitude,
+            historySelectedPoint
+        ) {
+            refreshEdgeIndicators()
+        }
+        DisposableEffect(
+            mapLibreMap,
+            offscreenIndicatorLatitude,
+            offscreenIndicatorLongitude,
+            historySelectedPoint
+        ) {
+            val map = mapLibreMap
+            if (map == null) {
+                onDispose { }
+            } else {
+                val listener = org.maplibre.android.maps.MapLibreMap.OnCameraMoveListener {
+                    refreshEdgeIndicators()
+                }
+                map.addOnCameraMoveListener(listener)
+                onDispose {
+                    map.removeOnCameraMoveListener(listener)
+                }
+            }
+        }
+        LaunchedEffect(
+            mapLibreMap,
+            followHistorySelectedPoint,
+            historySelectedPoint
+        ) {
+            if (!followHistorySelectedPoint || historySelectedPoint == null) {
+                return@LaunchedEffect
+            }
+            mapLibreMap?.let { map ->
+                val current = map.cameraPosition
+                map.cameraPosition = CameraPosition.Builder(current)
+                    .target(LatLng(historySelectedPoint.latitude, historySelectedPoint.longitude))
+                    .zoom(current.zoom)
+                    .bearing(0.0)
+                    .tilt(0.0)
+                    .build()
             }
         }
 
@@ -1968,6 +2106,11 @@ fun FullscreenInteractiveMapDialog(
                                             userLongitude = userLongitude,
                                             userRadiusMeters = userRadiusMeters
                                         )
+                                        upsertFullscreenHistoryPathLayer(style = it, pathPoints = historyPathPoints)
+                                        upsertFullscreenHistorySelectedPointLayer(
+                                            style = it,
+                                            selectedPoint = historySelectedPoint
+                                        )
                                         map.cameraPosition = CameraPosition.Builder()
                                             .target(LatLng(latitude, longitude))
                                             .zoom(zoomLevel)
@@ -2014,9 +2157,10 @@ fun FullscreenInteractiveMapDialog(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     RoundMapActionButton(
-                        iconRes = android.R.drawable.ic_menu_myplaces,
+                        iconRes = android.R.drawable.ic_menu_mylocation,
                         contentDescription = "Recenter",
                         onClick = {
+                            onHistoryManualCenterAction?.invoke()
                             mapLibreMap?.let { map ->
                                 val current = map.cameraPosition
                                 map.animateCamera(
@@ -2032,11 +2176,39 @@ fun FullscreenInteractiveMapDialog(
                             }
                         }
                     )
+                    if (showHistorySelectedCenterButton && historySelectedPoint != null) {
+                        RoundMapActionButton(
+                            iconRes = android.R.drawable.ic_menu_myplaces,
+                            contentDescription = "Center Selected Point",
+                            onClick = {
+                                onHistoryManualCenterAction?.invoke()
+                                mapLibreMap?.let { map ->
+                                    val current = map.cameraPosition
+                                    map.animateCamera(
+                                        CameraUpdateFactory.newCameraPosition(
+                                            CameraPosition.Builder(current)
+                                                .target(
+                                                    LatLng(
+                                                        historySelectedPoint.latitude,
+                                                        historySelectedPoint.longitude
+                                                    )
+                                                )
+                                                .zoom(zoomLevel)
+                                                .bearing(0.0)
+                                                .tilt(0.0)
+                                                .build()
+                                        )
+                                    )
+                                }
+                            }
+                        )
+                    }
                     if (hasUserLocation) {
                         RoundMapActionButton(
-                            iconRes = android.R.drawable.ic_menu_mylocation,
+                            iconRes = android.R.drawable.ic_menu_compass,
                             contentDescription = "Show My Location",
                             onClick = {
+                                onHistoryManualCenterAction?.invoke()
                                 mapLibreMap?.let { map ->
                                     val current = map.cameraPosition
                                     map.animateCamera(
@@ -2054,9 +2226,118 @@ fun FullscreenInteractiveMapDialog(
                         )
                     }
                 }
+                if (showHistoryPlayButton && onHistoryPlayClick != null) {
+                    RoundMapActionButton(
+                        iconRes = if (historyPlayRunning) {
+                            android.R.drawable.ic_media_pause
+                        } else {
+                            android.R.drawable.ic_media_play
+                        },
+                        contentDescription = if (historyPlayRunning) {
+                            "Pause Selected Range"
+                        } else {
+                            "Play Selected Range"
+                        },
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(14.dp),
+                        onClick = onHistoryPlayClick
+                    )
+                }
+                edgeIndicatorState?.let { indicator ->
+                    OffscreenLocationEdgeGlow(
+                        state = indicator,
+                        glowColor = Color(0xFF5AA4FF),
+                        coreColor = Color(0xFFB7D6FF),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(14.dp)
+                    )
+                }
+                selectedEdgeIndicatorState?.let { indicator ->
+                    OffscreenLocationEdgeGlow(
+                        state = indicator,
+                        glowColor = Color(0xFF41D97A),
+                        coreColor = Color(0xFFB7FFCF),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(14.dp)
+                    )
+                }
             }
         }
     }
+}
+
+@Composable
+private fun OffscreenLocationEdgeGlow(
+    state: EdgeIndicatorUiState,
+    glowColor: Color,
+    coreColor: Color,
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier) {
+        val lineLength = 46.dp.toPx()
+        val glowStroke = 9.dp.toPx()
+        val coreStroke = 2.2.dp.toPx()
+        val halfLen = lineLength * 0.5f
+        val center = state.center
+        val (start, end) = when (state.side) {
+            EdgeIndicatorSide.TOP, EdgeIndicatorSide.BOTTOM -> {
+                Offset(center.x - halfLen, center.y) to Offset(center.x + halfLen, center.y)
+            }
+            EdgeIndicatorSide.LEFT, EdgeIndicatorSide.RIGHT -> {
+                Offset(center.x, center.y - halfLen) to Offset(center.x, center.y + halfLen)
+            }
+        }
+        drawLine(
+            color = glowColor.copy(alpha = 0.38f),
+            start = start,
+            end = end,
+            strokeWidth = glowStroke,
+            cap = StrokeCap.Round
+        )
+        drawLine(
+            color = coreColor,
+            start = start,
+            end = end,
+            strokeWidth = coreStroke,
+            cap = StrokeCap.Round
+        )
+    }
+}
+
+private fun computeEdgeIndicatorState(
+    center: Offset,
+    target: Offset,
+    width: Float,
+    height: Float
+): EdgeIndicatorUiState? {
+    val dx = target.x - center.x
+    val dy = target.y - center.y
+    if (kotlin.math.abs(dx) < 0.0001f && kotlin.math.abs(dy) < 0.0001f) {
+        return null
+    }
+    val halfW = width * 0.5f
+    val halfH = height * 0.5f
+    val tX = if (kotlin.math.abs(dx) < 0.0001f) Float.POSITIVE_INFINITY else halfW / kotlin.math.abs(dx)
+    val tY = if (kotlin.math.abs(dy) < 0.0001f) Float.POSITIVE_INFINITY else halfH / kotlin.math.abs(dy)
+    val t = minOf(tX, tY)
+    val hitX = center.x + (dx * t)
+    val hitY = center.y + (dy * t)
+    val margin = 3f
+    val clampedX = hitX.coerceIn(margin, width - margin)
+    val clampedY = hitY.coerceIn(margin, height - margin)
+    val side = when {
+        kotlin.math.abs(clampedY - margin) < 1f -> EdgeIndicatorSide.TOP
+        kotlin.math.abs(clampedY - (height - margin)) < 1f -> EdgeIndicatorSide.BOTTOM
+        kotlin.math.abs(clampedX - margin) < 1f -> EdgeIndicatorSide.LEFT
+        else -> EdgeIndicatorSide.RIGHT
+    }
+    return EdgeIndicatorUiState(
+        center = Offset(clampedX, clampedY),
+        side = side
+    )
 }
 
 @Composable
@@ -2291,6 +2572,102 @@ private fun upsertFullscreenCircleLayers(
             circleOpacity(if (hasUser) 1f else 0f)
         )
     }
+}
+
+private fun upsertFullscreenHistoryPathLayer(
+    style: Style,
+    pathPoints: List<FullscreenHistoryPathPoint>
+) {
+    val hasPath = pathPoints.size >= 2
+    val pathLineString = if (hasPath) {
+        LineString.fromLngLats(
+            pathPoints.map { point ->
+                Point.fromLngLat(point.longitude, point.latitude)
+            }
+        )
+    } else {
+        LineString.fromLngLats(
+            listOf(
+                Point.fromLngLat(0.0, 0.0),
+                Point.fromLngLat(0.0, 0.0)
+            )
+        )
+    }
+    val pathSource = (style.getSource(FsHistoryPathSourceId) as? GeoJsonSource)
+        ?: GeoJsonSource(FsHistoryPathSourceId, Feature.fromGeometry(pathLineString)).also(style::addSource)
+    pathSource.setGeoJson(Feature.fromGeometry(pathLineString))
+    val pathLayer = (style.getLayer(FsHistoryPathLayerId) as? LineLayer)
+        ?: LineLayer(FsHistoryPathLayerId, FsHistoryPathSourceId).also(style::addLayer)
+    pathLayer.setProperties(
+        lineColor(android.graphics.Color.parseColor("#2D7DFF")),
+        lineOpacity(if (hasPath) 0.94f else 0f),
+        lineWidth(3.2f)
+    )
+}
+
+private fun upsertFullscreenHistorySelectedPointLayer(
+    style: Style,
+    selectedPoint: FullscreenHistorySelectedPoint?
+) {
+    val hasSelectedPoint = selectedPoint != null
+    val fallbackCenter = Point.fromLngLat(0.0, 0.0)
+    val fallbackPolygon = buildMapCirclePolygon(
+        latitude = 0.0,
+        longitude = 0.0,
+        radiusMeters = FULLSCREEN_MAP_MIN_RADIUS_M
+    )
+    val selectedCenter = if (selectedPoint != null) {
+        Point.fromLngLat(selectedPoint.longitude, selectedPoint.latitude)
+    } else {
+        fallbackCenter
+    }
+    val selectedPolygon = if (selectedPoint != null) {
+        buildMapCirclePolygon(
+            latitude = selectedPoint.latitude,
+            longitude = selectedPoint.longitude,
+            radiusMeters = selectedPoint.accuracyRadiusMeters.coerceAtLeast(FULLSCREEN_MAP_MIN_RADIUS_M)
+        )
+    } else {
+        fallbackPolygon
+    }
+
+    val selectedAreaSource = (style.getSource(FsHistoryPointAreaSourceId) as? GeoJsonSource)
+        ?: GeoJsonSource(FsHistoryPointAreaSourceId, Feature.fromGeometry(selectedPolygon)).also(style::addSource)
+    selectedAreaSource.setGeoJson(Feature.fromGeometry(selectedPolygon))
+    val selectedCenterSource = (style.getSource(FsHistoryPointCenterSourceId) as? GeoJsonSource)
+        ?: GeoJsonSource(FsHistoryPointCenterSourceId, Feature.fromGeometry(selectedCenter)).also(style::addSource)
+    selectedCenterSource.setGeoJson(Feature.fromGeometry(selectedCenter))
+
+    val selectedAreaFillLayer = (style.getLayer(FsHistoryPointAreaFillLayerId) as? FillLayer)
+        ?: FillLayer(FsHistoryPointAreaFillLayerId, FsHistoryPointAreaSourceId).also(style::addLayer)
+    selectedAreaFillLayer.setProperties(
+        fillColor(android.graphics.Color.parseColor("#2ECC71")),
+        fillOpacity(if (hasSelectedPoint) 0.24f else 0f)
+    )
+
+    val selectedAreaStrokeLayer = (style.getLayer(FsHistoryPointAreaStrokeLayerId) as? LineLayer)
+        ?: LineLayer(FsHistoryPointAreaStrokeLayerId, FsHistoryPointAreaSourceId).also(style::addLayer)
+    selectedAreaStrokeLayer.setProperties(
+        lineColor(android.graphics.Color.parseColor("#27AE60")),
+        lineOpacity(if (hasSelectedPoint) 0.95f else 0f),
+        lineWidth(2f)
+    )
+
+    val selectedCenterOuterLayer = (style.getLayer(FsHistoryPointCenterOuterLayerId) as? CircleLayer)
+        ?: CircleLayer(FsHistoryPointCenterOuterLayerId, FsHistoryPointCenterSourceId).also(style::addLayer)
+    selectedCenterOuterLayer.setProperties(
+        circleColor(android.graphics.Color.parseColor("#36D67A")),
+        circleOpacity(if (hasSelectedPoint) 1f else 0f),
+        circleRadius(5f)
+    )
+
+    val selectedCenterInnerLayer = (style.getLayer(FsHistoryPointCenterInnerLayerId) as? CircleLayer)
+        ?: CircleLayer(FsHistoryPointCenterInnerLayerId, FsHistoryPointCenterSourceId).also(style::addLayer)
+    selectedCenterInnerLayer.setProperties(
+        circleColor(android.graphics.Color.WHITE),
+        circleOpacity(if (hasSelectedPoint) 1f else 0f),
+        circleRadius(2f)
+    )
 }
 
 private fun buildMapCirclePolygon(
