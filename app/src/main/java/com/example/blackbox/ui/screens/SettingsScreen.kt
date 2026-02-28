@@ -85,7 +85,7 @@ fun SettingsScreen(
     var backupPassphraseConfirm by rememberSaveable { mutableStateOf("") }
     var backupDialogError by rememberSaveable { mutableStateOf<String?>(null) }
 
-    val exportIdentityLauncher = rememberLauncherForActivityResult(
+    val exportContactsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
     ) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -96,17 +96,17 @@ fun SettingsScreen(
         backupAction = null
         backupDialogError = null
         scope.launch {
-            val result = LocationSharingController.exportIdentityBundle(passphrase = passphrase, target = uri)
+            val result = LocationSharingController.exportContactsBundle(passphrase = passphrase, target = uri)
             statusMessage = result.fold(
-                onSuccess = { "Identity bundle exported." },
-                onFailure = { "Identity export failed: ${it.message ?: "unknown"}" }
+                onSuccess = { "Contacts bundle exported." },
+                onFailure = { "Contacts export failed: ${it.message ?: "unknown"}" }
             )
             passphrase.fill('\u0000')
             confirm.fill('\u0000')
         }
     }
 
-    val importIdentityLauncher = rememberLauncherForActivityResult(
+    val importContactsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -117,10 +117,10 @@ fun SettingsScreen(
         backupAction = null
         backupDialogError = null
         scope.launch {
-            val result = LocationSharingController.importIdentityBundle(passphrase = passphrase, source = uri)
+            val result = LocationSharingController.importContactsBundle(passphrase = passphrase, source = uri)
             statusMessage = result.fold(
-                onSuccess = { "Identity bundle imported." },
-                onFailure = { "Identity import failed: ${it.message ?: "unknown"}" }
+                onSuccess = { "Contacts bundle imported." },
+                onFailure = { "Contacts import failed: ${it.message ?: "unknown"}" }
             )
             passphrase.fill('\u0000')
             confirm.fill('\u0000')
@@ -273,25 +273,25 @@ fun SettingsScreen(
                     ) {
                         Button(
                             onClick = {
-                                backupAction = BackupAction.ExportIdentity
+                                backupAction = BackupAction.ExportContacts
                                 backupPassphrase = ""
                                 backupPassphraseConfirm = ""
                                 backupDialogError = null
                             },
                             modifier = Modifier.weight(1f)
                         ) {
-                            ButtonLabel("Export Identity")
+                            ButtonLabel("Export Contacts")
                         }
                         OutlinedButton(
                             onClick = {
-                                backupAction = BackupAction.ImportIdentity
+                                backupAction = BackupAction.ImportContacts
                                 backupPassphrase = ""
                                 backupPassphraseConfirm = ""
                                 backupDialogError = null
                             },
                             modifier = Modifier.weight(1f)
                         ) {
-                            ButtonLabel("Import Identity")
+                            ButtonLabel("Import Contacts")
                         }
                     }
                     Row(
@@ -423,8 +423,8 @@ fun SettingsScreen(
             title = {
                 Text(
                     when (action) {
-                        BackupAction.ExportIdentity -> "Export Identity"
-                        BackupAction.ImportIdentity -> "Import Identity"
+                        BackupAction.ExportContacts -> "Export Contacts"
+                        BackupAction.ImportContacts -> "Import Contacts"
                         BackupAction.ExportKey -> "Export DB Keys"
                         BackupAction.ImportKey -> "Import DB Keys"
                     }
@@ -473,11 +473,11 @@ fun SettingsScreen(
                             return@TextButton
                         }
                         when (action) {
-                            BackupAction.ExportIdentity -> {
-                                exportIdentityLauncher.launch("blackbox-identity-bundle.json")
+                            BackupAction.ExportContacts -> {
+                                exportContactsLauncher.launch("blackbox-contacts-bundle.json")
                             }
-                            BackupAction.ImportIdentity -> {
-                                importIdentityLauncher.launch(arrayOf("application/json"))
+                            BackupAction.ImportContacts -> {
+                                importContactsLauncher.launch(arrayOf("application/json"))
                             }
                             BackupAction.ExportKey -> {
                                 exportKeyLauncher.launch("blackbox-keybundle-v1.json")
@@ -511,8 +511,8 @@ enum class SharingConfigEditor {
 }
 
 private enum class BackupAction {
-    ExportIdentity,
-    ImportIdentity,
+    ExportContacts,
+    ImportContacts,
     ExportKey,
     ImportKey
 }

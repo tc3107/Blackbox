@@ -231,8 +231,17 @@ class SharingCrypto {
         return digest.base64UrlEncode()
     }
 
-    fun encryptIdentityBundle(identity: SharingIdentityState, passphrase: CharArray): String {
-        val payload = json.encodeToString(identity).toByteArray(Charsets.UTF_8)
+    fun encryptContactsBundle(
+        identity: SharingIdentityState,
+        contacts: List<PeerContactState>,
+        passphrase: CharArray
+    ): String {
+        val payload = json.encodeToString(
+            ContactsBundlePayload(
+                identity = identity,
+                contacts = contacts
+            )
+        ).toByteArray(Charsets.UTF_8)
         val salt = ByteArray(PBKDF2_SALT_SIZE).also { secureRandom.nextBytes(it) }
         val nonce = ByteArray(AES_GCM_NONCE_SIZE).also { secureRandom.nextBytes(it) }
         val key = derivePassphraseKey(passphrase, salt, PBKDF2_ITERATIONS)
@@ -251,7 +260,7 @@ class SharingCrypto {
         return json.encodeToString(bundle)
     }
 
-    fun decryptIdentityBundle(bundleJson: String, passphrase: CharArray): SharingIdentityState {
+    fun decryptContactsBundle(bundleJson: String, passphrase: CharArray): ImportedContactsBundle {
         val bundle = json.decodeFromString(IdentityBundle.serializer(), bundleJson)
         require(bundle.bundleVersion == SharingVersions.IDENTITY_BUNDLE_VERSION) { "Unsupported identity bundle version." }
 
@@ -262,12 +271,35 @@ class SharingCrypto {
         val cipher = Cipher.getInstance(AES_GCM_TRANSFORMATION)
         cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(AES_GCM_TAG_BITS, nonce))
         val plaintext = cipher.doFinal(ciphertext)
-        val imported = json.decodeFromString(
-            SharingIdentityState.serializer(),
-            plaintext.toString(Charsets.UTF_8)
+        val payloadText = plaintext.toString(Charsets.UTF_8)
+        val importedPayload = runCatching {
+            json.decodeFromString(
+                ContactsBundlePayload.serializer(),
+                payloadText
+            )
+        }.getOrElse {
+            // Backward compatibility for older exports that stored identity only.
+            ContactsBundlePayload(
+                identity = json.decodeFromString(
+                    SharingIdentityState.serializer(),
+                    payloadText
+                ),
+                contacts = emptyList()
+            )
+        }
+        require(isIdentityValid(importedPayload.identity)) { "Imported contacts bundle is invalid." }
+        return ImportedContactsBundle(
+            identity = importedPayload.identity,
+            contacts = importedPayload.contacts
         )
-        require(isIdentityValid(imported)) { "Imported identity bundle is invalid." }
-        return imported
+    }
+
+    fun encryptIdentityBundle(identity: SharingIdentityState, passphrase: CharArray): String {
+        return encryptContactsBundle(identity = identity, contacts = emptyList(), passphrase = passphrase)
+    }
+
+    fun decryptIdentityBundle(bundleJson: String, passphrase: CharArray): SharingIdentityState {
+        return decryptContactsBundle(bundleJson = bundleJson, passphrase = passphrase).identity
     }
 
     private fun derivePassphraseKey(passphrase: CharArray, salt: ByteArray, iterations: Int): SecretKeySpec {
@@ -409,12 +441,23 @@ class SharingCrypto {
         val createdAtMs: Long
     )
 
+    @Serializable
+    private data class ContactsBundlePayload(
+        val identity: SharingIdentityState,
+        val contacts: List<PeerContactState> = emptyList()
+    )
+
     data class ImportedContactCard(
         val senderId: String,
         val onboardingName: String?,
         val signPublicKeySpkiB64Url: String,
         val encPublicKeysetJson: String,
         val safetyFingerprint: String
+    )
+
+    data class ImportedContactsBundle(
+        val identity: SharingIdentityState,
+        val contacts: List<PeerContactState>
     )
 
     companion object {

@@ -473,34 +473,45 @@ object LocationSharingController {
         }
     }
 
-    suspend fun exportIdentityBundle(passphrase: CharArray, target: Uri): Result<Uri> {
+    suspend fun exportContactsBundle(passphrase: CharArray, target: Uri): Result<Uri> {
         val context = appContext ?: return Result.failure(IllegalStateException("Sharing not initialized."))
         val localCrypto = crypto ?: return Result.failure(IllegalStateException("Sharing not initialized."))
         val identity = snapshot.identity ?: return Result.failure(IllegalStateException("No identity available."))
 
         return runCatching {
-            val bundle = localCrypto.encryptIdentityBundle(identity, passphrase)
+            val bundle = localCrypto.encryptContactsBundle(identity, snapshot.contacts, passphrase)
             context.contentResolver.openOutputStream(target, "w")?.use { output ->
                 output.write(bundle.toByteArray(Charsets.UTF_8))
                 output.flush()
             } ?: error("Failed to open export destination.")
-            setInfo("Identity bundle exported.")
+            setInfo("Contacts bundle exported.")
             target
         }.onFailure {
-            setError(it.message ?: "Identity export failed")
+            setError(it.message ?: "Contacts export failed")
         }
     }
 
-    suspend fun importIdentityBundle(passphrase: CharArray, source: Uri): Result<Unit> {
+    suspend fun importContactsBundle(passphrase: CharArray, source: Uri): Result<Unit> {
         val context = appContext ?: return Result.failure(IllegalStateException("Sharing not initialized."))
         val localCrypto = crypto ?: return Result.failure(IllegalStateException("Sharing not initialized."))
 
         return runCatching {
             val raw = context.contentResolver.openInputStream(source)?.bufferedReader()?.use { it.readText() }
                 ?: error("Failed to open bundle.")
-            val imported = localCrypto.decryptIdentityBundle(raw, passphrase)
+            val imported = localCrypto.decryptContactsBundle(raw, passphrase)
+            val contactsById = linkedMapOf<String, PeerContactState>()
+            imported.contacts.forEach { contact ->
+                if (contact.senderId.isBlank()) return@forEach
+                if (contact.signPublicKeySpkiB64Url.isBlank()) return@forEach
+                if (contact.encPublicKeysetJson.isBlank()) return@forEach
+                if (contact.senderId == imported.identity.senderId) return@forEach
+                contactsById[contact.senderId] = contact
+            }
+            require(isValidContactCount(contactsById.size)) { "Contact limit reached ($CONTACT_LIMIT)." }
+            val importedContacts = contactsById.values.sortedBy { it.addedAtMs }
+            val importedIds = importedContacts.map { it.senderId }.toSet()
             mutateSnapshot { current ->
-                val sameSender = current.identity?.senderId == imported.senderId
+                val sameSender = current.identity?.senderId == imported.identity.senderId
                 val carriedSync = if (sameSender) {
                     // Preserve monotonic counters for same identity to avoid relay sequence conflicts after restore.
                     current.sync
@@ -508,15 +519,17 @@ object LocationSharingController {
                     SharingSyncState()
                 }
                 current.copy(
-                    identity = imported,
-                    contacts = current.contacts.map { it.copy(canReceiveFromMe = false) },
+                    identity = imported.identity,
+                    contacts = importedContacts,
+                    receivedLocations = current.receivedLocations.filter { it.senderId in importedIds },
+                    senderPollStatuses = current.senderPollStatuses.filter { it.senderId in importedIds },
                     pendingPush = null,
                     sync = carriedSync
                 )
             }
-            setInfo("Identity bundle imported.")
+            setInfo("Contacts bundle imported.")
         }.onFailure {
-            setError(normalizeIdentityImportError(it))
+            setError(normalizeContactsImportError(it))
         }
     }
 
@@ -1627,16 +1640,16 @@ object LocationSharingController {
         return maxOf(plusOne, doubled, System.currentTimeMillis())
     }
 
-    private fun normalizeIdentityImportError(throwable: Throwable): String {
+    private fun normalizeContactsImportError(throwable: Throwable): String {
         val message = throwable.message.orEmpty()
         val looksLikeWrongPassphrase =
             message.contains("BAD_DECRYPT", ignoreCase = true) ||
                 message.contains("Tag mismatch", ignoreCase = true) ||
                 message.contains("mac check in GCM failed", ignoreCase = true)
         return if (looksLikeWrongPassphrase) {
-            "Identity import failed: incorrect passphrase or corrupted bundle."
+            "Contacts import failed: incorrect passphrase or corrupted bundle."
         } else {
-            message.ifBlank { "Identity import failed." }
+            message.ifBlank { "Contacts import failed." }
         }
     }
 
