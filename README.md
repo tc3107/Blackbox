@@ -16,6 +16,12 @@ No account is required.
 ## Install
 Releases (APK) are available on this GitHub page.
 
+## Technical Info
+- `app/`: Android client (UI, location engine, encrypted local logging, map/history views, sharing logic).
+- `relay/`: Optional Cloudflare Worker relay for message delivery between peers.
+- Relay design: relay handles transport/state only; shared location payloads are end-to-end encrypted and not readable by the relay.
+- Local data: location history is encrypted on-device and remains local unless you explicitly export/share.
+
 ## Security
 Location sharing is E2EE and local history is encrypted on-device.
 For vulnerability reporting, see [SECURITY.md](SECURITY.md).
