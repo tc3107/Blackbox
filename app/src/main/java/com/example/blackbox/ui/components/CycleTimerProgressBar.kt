@@ -1,5 +1,10 @@
 package com.example.blackbox.ui.components
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -15,9 +20,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.geometry.Size
@@ -25,8 +32,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.withFrameNanos
+import kotlinx.coroutines.delay
 
 private val TimerTrailMinLength: Dp = 14.dp
+private const val TIMER_ACTIVITY_PULSE_DELAY_MS = 250L
+private const val TIMER_ACTIVITY_PULSE_DURATION_MS = 700
 
 @Composable
 fun CycleTimerProgressBar(
@@ -34,6 +44,7 @@ fun CycleTimerProgressBar(
     remainingMs: Long,
     sampleNowMs: Long,
     isActive: Boolean,
+    pulse: Boolean = false,
     modifier: Modifier = Modifier,
     onTap: (() -> Unit)? = null
 ) {
@@ -62,11 +73,13 @@ fun CycleTimerProgressBar(
     } else {
         Modifier
     }
+    val pulseAlpha = rememberTimerActivityPulseAlpha(isPulsing = pulse)
 
     Box(
         modifier = modifier
             .fillMaxWidth()
             .height(12.dp)
+            .alpha(pulseAlpha)
             .clip(shape)
             .border(width = 1.5.dp, color = outlineColor, shape = shape)
             .background(trackColor)
@@ -98,6 +111,40 @@ fun CycleTimerProgressBar(
             )
         }
     }
+}
+
+@Composable
+fun rememberTimerActivityPulseActive(
+    isInProgress: Boolean,
+    delayMs: Long = TIMER_ACTIVITY_PULSE_DELAY_MS
+): Boolean {
+    var pulseActive by remember { mutableStateOf(false) }
+    LaunchedEffect(isInProgress, delayMs) {
+        if (!isInProgress) {
+            pulseActive = false
+            return@LaunchedEffect
+        }
+        pulseActive = false
+        delay(delayMs)
+        pulseActive = true
+    }
+    return pulseActive
+}
+
+@Composable
+fun rememberTimerActivityPulseAlpha(isPulsing: Boolean): Float {
+    if (!isPulsing) return 1f
+    val transition = rememberInfiniteTransition(label = "timerActivityPulse")
+    val alpha by transition.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.40f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = TIMER_ACTIVITY_PULSE_DURATION_MS),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "timerActivityPulseAlpha"
+    )
+    return alpha
 }
 
 @Composable

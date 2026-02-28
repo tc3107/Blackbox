@@ -134,6 +134,8 @@ data class SharingSyncState(
     val relayCheckFailureStreak: Int = 0,
     val pollFailureStreak: Int = 0,
     val pushFailureStreak: Int = 0,
+    val pollRequestInFlight: Boolean = false,
+    val pushRequestInFlight: Boolean = false,
     val pollingActive: Boolean = false,
     val nextSeq: Long = 1L,
     val lastAclSeq: Long = 0L,

@@ -129,6 +129,7 @@ import com.example.blackbox.ui.components.ButtonLabel
 import com.example.blackbox.ui.components.CycleTimerProgressBar
 import com.example.blackbox.ui.components.MapTargetType
 import com.example.blackbox.ui.components.StaticRadiusMapPreview
+import com.example.blackbox.ui.components.rememberTimerActivityPulseActive
 import com.example.blackbox.ui.theme.neomorphicShadow
 import java.time.Instant
 import java.time.ZoneId
@@ -710,7 +711,8 @@ private fun RefreshDelaysCard(
                     failureStreak = sharingState.sync.relayCheckFailureStreak,
                     lastSuccessAtMs = sharingState.sync.lastRelayStatusOkAtMs
                 ),
-                isActive = true
+                isActive = true,
+                isInProgress = sharingState.sync.relayStatusChecking
             )
             DelayProgressRow(
                 label = "Retrieve Locations",
@@ -722,6 +724,7 @@ private fun RefreshDelaysCard(
                     lastSuccessAtMs = sharingState.sync.lastPollSuccessAtMs
                 ),
                 isActive = retrieveWaiting,
+                isInProgress = sharingState.sync.pollRequestInFlight,
                 allowTimerDrivenVisualActive = false
             )
             DelayProgressRow(
@@ -734,6 +737,7 @@ private fun RefreshDelaysCard(
                     lastSuccessAtMs = sharingState.sync.lastPushSuccessAtMs
                 ),
                 isActive = sendWaiting,
+                isInProgress = sharingState.sync.pushRequestInFlight,
                 allowTimerDrivenVisualActive = false
             )
         }
@@ -748,11 +752,13 @@ private fun DelayProgressRow(
     nowMs: Long,
     statusColor: Color,
     isActive: Boolean,
+    isInProgress: Boolean = false,
     allowTimerDrivenVisualActive: Boolean = true
 ) {
     val visualActive = isActive || (
         allowTimerDrivenVisualActive && totalMs > 0L && remainingMs in 1L until totalMs
     )
+    val pulseActive = rememberTimerActivityPulseActive(isInProgress = isInProgress)
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -760,7 +766,12 @@ private fun DelayProgressRow(
         val muted = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
         val effectiveStatusColor = if (visualActive) statusColor else muted
         val labelColor = if (visualActive) MaterialTheme.colorScheme.onSurface else muted
-        val valueColor = if (visualActive) MaterialTheme.colorScheme.onSurfaceVariant else muted
+        val baseValueColor = if (visualActive) MaterialTheme.colorScheme.onSurfaceVariant else muted
+        val valueColor = if (pulseActive) {
+            baseValueColor.copy(alpha = baseValueColor.alpha * 0.55f)
+        } else {
+            baseValueColor
+        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -792,18 +803,26 @@ private fun DelayProgressRow(
             totalMs = totalMs,
             remainingMs = remainingMs,
             nowMs = nowMs,
-            isActive = visualActive
+            isActive = visualActive,
+            pulse = pulseActive
         )
     }
 }
 
 @Composable
-private fun DelayProgressBar(totalMs: Long, remainingMs: Long, nowMs: Long, isActive: Boolean) {
+private fun DelayProgressBar(
+    totalMs: Long,
+    remainingMs: Long,
+    nowMs: Long,
+    isActive: Boolean,
+    pulse: Boolean
+) {
     CycleTimerProgressBar(
         totalMs = totalMs,
         remainingMs = remainingMs,
         sampleNowMs = nowMs,
         isActive = isActive,
+        pulse = pulse,
         onTap = null
     )
 }

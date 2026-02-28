@@ -158,20 +158,18 @@ object LocationSharingController {
     fun onSharingPageVisible(visible: Boolean) {
         scope.launch {
             var changed = false
+            var shouldPoll = false
             stateMutex.withLock {
                 if (pollingVisible == visible) return@withLock
                 pollingVisible = visible
-                updateSyncState { it.copy(pollingActive = visible) }
+                shouldPoll = shouldRunPollingLoop()
+                updateSyncState { it.copy(pollingActive = shouldPoll) }
                 changed = true
             }
             if (!changed) return@launch
             Log.d(SHARING_DEBUG_TAG, "Sharing page visibility changed visible=$visible")
             publishState()
-            if (visible) {
-                startPollingLoop()
-            } else {
-                stopPollingLoop()
-            }
+            updatePollingLoopState()
             updateRelayStatusLoopState()
         }
     }
@@ -179,12 +177,17 @@ object LocationSharingController {
     fun onMainViewVisible(visible: Boolean) {
         scope.launch {
             var changed = false
+            var shouldPoll = false
             stateMutex.withLock {
                 if (mainViewVisible == visible) return@withLock
                 mainViewVisible = visible
+                shouldPoll = shouldRunPollingLoop()
+                updateSyncState { it.copy(pollingActive = shouldPoll) }
                 changed = true
             }
             if (!changed) return@launch
+            publishState()
+            updatePollingLoopState()
             updateRelayStatusLoopState()
         }
     }
@@ -517,8 +520,8 @@ object LocationSharingController {
                     pollNow(trigger = "page_open")
                     while (true) {
                         delay(POLL_INTERVAL_MS)
-                        if (!pollingVisible) {
-                            Log.d(SHARING_DEBUG_TAG, "Poll loop paused: sharing page not visible.")
+                        if (!shouldRunPollingLoop()) {
+                            Log.d(SHARING_DEBUG_TAG, "Poll loop paused: no visible poll surface.")
                             break
                         }
                         pollNow(trigger = "interval")
@@ -543,6 +546,18 @@ object LocationSharingController {
         Log.d(SHARING_DEBUG_TAG, "Stopped poll loop")
     }
 
+    private fun shouldRunPollingLoop(): Boolean {
+        return pollingVisible || mainViewVisible
+    }
+
+    private fun updatePollingLoopState() {
+        if (shouldRunPollingLoop()) {
+            startPollingLoop()
+        } else {
+            stopPollingLoop()
+        }
+    }
+
     private fun startRelayStatusLoop() {
         synchronized(loopJobLock) {
             relayStatusStopJob?.cancel()
@@ -552,14 +567,23 @@ object LocationSharingController {
             lateinit var createdJob: Job
             createdJob = scope.launch {
                 try {
-                    refreshRelayStatus(trigger = "page_open")
+                    var firstCycle = true
+                    var nextCheckAtMs = System.currentTimeMillis()
                     while (true) {
-                        delay(RELAY_STATUS_INTERVAL_MS)
+                        val now = System.currentTimeMillis()
+                        val waitMs = (nextCheckAtMs - now).coerceAtLeast(0L)
+                        if (waitMs > 0L) {
+                            delay(waitMs)
+                        }
                         if (!shouldRunRelayStatusLoop()) {
                             Log.d(SHARING_DEBUG_TAG, "Relay status loop paused: no visible relay status surface.")
                             break
                         }
-                        refreshRelayStatus(trigger = "interval")
+                        val startedAtMs = System.currentTimeMillis()
+                        val trigger = if (firstCycle) "page_open" else "interval"
+                        firstCycle = false
+                        refreshRelayStatus(trigger = trigger)
+                        nextCheckAtMs = startedAtMs + RELAY_STATUS_INTERVAL_MS
                     }
                 } finally {
                     synchronized(loopJobLock) {
@@ -698,6 +722,14 @@ object LocationSharingController {
         val localCrypto = crypto ?: return
         val localSnapshot = snapshot
         val identity = localSnapshot.identity ?: return
+        val pollAttemptAt = System.currentTimeMillis()
+        mutateSyncOnly {
+            it.copy(
+                lastPollAttemptAtMs = pollAttemptAt,
+                pollRequestInFlight = true
+            )
+        }
+        try {
         val networkError = networkPreflightError()
         if (networkError != null) {
             Log.w(
@@ -707,7 +739,6 @@ object LocationSharingController {
             mutateSnapshot {
                 it.copy(
                     sync = it.sync.copy(
-                        lastPollAttemptAtMs = System.currentTimeMillis(),
                         lastPollError = networkError,
                         lastPollErrorAtMs = System.currentTimeMillis(),
                         pollFailureStreak = it.sync.pollFailureStreak + 1
@@ -733,10 +764,6 @@ object LocationSharingController {
             signatureB64Url = selfSignature,
             senderSignPublicKeySpkiB64Url = identity.signPublicKeySpkiB64Url
         )
-
-        mutateSnapshot {
-            it.copy(sync = it.sync.copy(lastPollAttemptAtMs = now))
-        }
 
         val selfStatusResult = localRelay.selfStatus(selfRequest)
         if (selfStatusResult.isFailure) {
@@ -825,6 +852,9 @@ object LocationSharingController {
                 }
                 setError(error)
             }
+        } finally {
+            mutateSyncOnly { it.copy(pollRequestInFlight = false) }
+        }
     }
 
     private suspend fun handlePullSuccess(response: PullBatchResponse, identity: SharingIdentityState) {
@@ -1159,96 +1189,102 @@ object LocationSharingController {
         identity: SharingIdentityState
     ) {
         val localRelay = relayApi ?: return
-        val networkError = networkPreflightError()
-        if (networkError != null) {
-            Log.w(
-                SHARING_DEBUG_TAG,
-                "Push blocked sender=${shortSharingId(identity.senderId)} seq=${claim.seq} reason=$networkError"
+        val pushAttemptAt = System.currentTimeMillis()
+        mutateSyncOnly {
+            it.copy(
+                lastPushAttemptAtMs = pushAttemptAt,
+                pushRequestInFlight = true
             )
-            queuePendingPush(envelope = envelope, claim = claim, reason = networkError)
-            setError(networkError)
-            return
         }
-        val now = System.currentTimeMillis()
-        Log.d(
-            SHARING_DEBUG_TAG,
-            "Sending push sender=${shortSharingId(identity.senderId)} seq=${claim.seq} recipients=${envelope.envelope.recipientCiphertexts.size}"
-        )
-
-        mutateSnapshot {
-            it.copy(sync = it.sync.copy(lastPushAttemptAtMs = now))
-        }
-
-        val aclUpdated = ensureAclUpToDate(identity)
-        if (aclUpdated.isFailure) {
-            Log.e(
-                SHARING_DEBUG_TAG,
-                "ACL sync failed before push sender=${shortSharingId(identity.senderId)} seq=${claim.seq} error=${aclUpdated.exceptionOrNull()?.message}",
-                aclUpdated.exceptionOrNull()
-            )
-            queuePendingPush(envelope = envelope, claim = claim, reason = aclUpdated.exceptionOrNull()?.message)
-            return
-        }
-
-        val request = PushLocationRequest(
-            push = envelope,
-            senderSignPublicKeySpkiB64Url = identity.signPublicKeySpkiB64Url,
-            senderEncPublicKeysetJson = identity.encPublicKeysetJson
-        )
-
-        localRelay.pushLocation(request)
-            .onSuccess {
-                Log.d(
+        try {
+            val networkError = networkPreflightError()
+            if (networkError != null) {
+                Log.w(
                     SHARING_DEBUG_TAG,
-                    "Push success sender=${shortSharingId(identity.senderId)} seq=${claim.seq} storedAtMs=${it.storedAtMs}"
+                    "Push blocked sender=${shortSharingId(identity.senderId)} seq=${claim.seq} reason=$networkError"
                 )
-                mutateSnapshot { current ->
-                    current.copy(
-                        pendingPush = null,
-                        sync = current.sync.copy(
-                            lastPushSuccessAtMs = it.storedAtMs,
-                            lastPushError = null,
-                            lastPushErrorAtMs = null,
-                            pushFailureStreak = 0,
-                            nextSeq = maxOf(current.sync.nextSeq, it.appliedSeq + 1L)
-                        )
-                    )
-                }
-                setInfo("Location pushed successfully.")
+                queuePendingPush(envelope = envelope, claim = claim, reason = networkError)
+                setError(networkError)
+                return
             }
-            .onFailure { throwable ->
-                val failureReason = throwable.message ?: "Push failed"
-                if (isPushSeqConflictError(throwable)) {
-                    val resolved = reconcilePushSeqConflict(
-                        identity = identity,
-                        attemptedSeq = claim.seq,
-                        source = "push_send"
+            Log.d(
+                SHARING_DEBUG_TAG,
+                "Sending push sender=${shortSharingId(identity.senderId)} seq=${claim.seq} recipients=${envelope.envelope.recipientCiphertexts.size}"
+            )
+
+            val aclUpdated = ensureAclUpToDate(identity)
+            if (aclUpdated.isFailure) {
+                Log.e(
+                    SHARING_DEBUG_TAG,
+                    "ACL sync failed before push sender=${shortSharingId(identity.senderId)} seq=${claim.seq} error=${aclUpdated.exceptionOrNull()?.message}",
+                    aclUpdated.exceptionOrNull()
+                )
+                queuePendingPush(envelope = envelope, claim = claim, reason = aclUpdated.exceptionOrNull()?.message)
+                return
+            }
+
+            val request = PushLocationRequest(
+                push = envelope,
+                senderSignPublicKeySpkiB64Url = identity.signPublicKeySpkiB64Url,
+                senderEncPublicKeysetJson = identity.encPublicKeysetJson
+            )
+
+            localRelay.pushLocation(request)
+                .onSuccess {
+                    Log.d(
+                        SHARING_DEBUG_TAG,
+                        "Push success sender=${shortSharingId(identity.senderId)} seq=${claim.seq} storedAtMs=${it.storedAtMs}"
                     )
-                    if (resolved) {
-                        return@onFailure
-                    }
                     mutateSnapshot { current ->
                         current.copy(
-                            pendingPush = current.pendingPush?.takeIf { it.claim.seq > claim.seq },
+                            pendingPush = null,
                             sync = current.sync.copy(
-                                nextSeq = maxOf(current.sync.nextSeq, claim.seq + 1L),
-                                lastPushError = "Dropped stale push after sequence conflict.",
-                                lastPushErrorAtMs = System.currentTimeMillis(),
-                                pushFailureStreak = current.sync.pushFailureStreak + 1
+                                lastPushSuccessAtMs = it.storedAtMs,
+                                lastPushError = null,
+                                lastPushErrorAtMs = null,
+                                pushFailureStreak = 0,
+                                nextSeq = maxOf(current.sync.nextSeq, it.appliedSeq + 1L)
                             )
                         )
                     }
-                    setError("Dropped stale push after sequence conflict. Next push will use a higher sequence.")
-                    return@onFailure
+                    setInfo("Location pushed successfully.")
                 }
-                Log.e(
-                    SHARING_DEBUG_TAG,
-                    "Push failed sender=${shortSharingId(identity.senderId)} seq=${claim.seq} error=$failureReason",
-                    throwable
-                )
-                queuePendingPush(envelope = envelope, claim = claim, reason = failureReason)
-                setError(failureReason)
-            }
+                .onFailure { throwable ->
+                    val failureReason = throwable.message ?: "Push failed"
+                    if (isPushSeqConflictError(throwable)) {
+                        val resolved = reconcilePushSeqConflict(
+                            identity = identity,
+                            attemptedSeq = claim.seq,
+                            source = "push_send"
+                        )
+                        if (resolved) {
+                            return@onFailure
+                        }
+                        mutateSnapshot { current ->
+                            current.copy(
+                                pendingPush = current.pendingPush?.takeIf { it.claim.seq > claim.seq },
+                                sync = current.sync.copy(
+                                    nextSeq = maxOf(current.sync.nextSeq, claim.seq + 1L),
+                                    lastPushError = "Dropped stale push after sequence conflict.",
+                                    lastPushErrorAtMs = System.currentTimeMillis(),
+                                    pushFailureStreak = current.sync.pushFailureStreak + 1
+                                )
+                            )
+                        }
+                        setError("Dropped stale push after sequence conflict. Next push will use a higher sequence.")
+                        return@onFailure
+                    }
+                    Log.e(
+                        SHARING_DEBUG_TAG,
+                        "Push failed sender=${shortSharingId(identity.senderId)} seq=${claim.seq} error=$failureReason",
+                        throwable
+                    )
+                    queuePendingPush(envelope = envelope, claim = claim, reason = failureReason)
+                    setError(failureReason)
+                }
+        } finally {
+            mutateSyncOnly { it.copy(pushRequestInFlight = false) }
+        }
     }
 
     private suspend fun ensureAclUpToDate(identity: SharingIdentityState): Result<Unit> {
@@ -1400,6 +1436,13 @@ object LocationSharingController {
                     senderSignPublicKeySpkiB64Url = identity.signPublicKeySpkiB64Url,
                     senderEncPublicKeysetJson = identity.encPublicKeysetJson
                 )
+                val retryAttemptAt = System.currentTimeMillis()
+                mutateSyncOnly {
+                    it.copy(
+                        lastPushAttemptAtMs = retryAttemptAt,
+                        pushRequestInFlight = true
+                    )
+                }
                 Log.d(
                     SHARING_DEBUG_TAG,
                     "Retrying pending push sender=${shortSharingId(identity.senderId)} seq=${pending.claim.seq} attempt=${pending.attemptCount + 1}"
@@ -1463,6 +1506,7 @@ object LocationSharingController {
                             reason = throwable.message ?: "Retry push failed"
                         )
                     }
+                mutateSyncOnly { it.copy(pushRequestInFlight = false) }
             }
         }
     }
@@ -1673,7 +1717,7 @@ object LocationSharingController {
             contacts = contacts,
             zones = localSnapshot.zones.sortedBy { it.createdAtMs },
             receivedCards = receivedCards,
-            sync = localSnapshot.sync.copy(pollingActive = pollingVisible),
+            sync = localSnapshot.sync.copy(pollingActive = shouldRunPollingLoop()),
             outboundRecipientsCount = contacts.count { it.canReceiveFromMe },
             followingCount = contacts.count { it.iFollow },
             pollingVisible = pollingVisible,

@@ -83,6 +83,7 @@ import com.example.blackbox.ui.components.ButtonLabel
 import com.example.blackbox.ui.components.CycleTimerProgressBar
 import com.example.blackbox.ui.components.MapTargetType
 import com.example.blackbox.ui.components.NeoButtonHapticMode
+import com.example.blackbox.ui.components.rememberTimerActivityPulseActive
 import com.example.blackbox.ui.perf.UiPerfSection
 import com.example.blackbox.ui.perf.uiPerfDraw
 import com.example.blackbox.ui.theme.neomorphicShadow
@@ -95,7 +96,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private const val MAIN_DIALOG_WIDTH_FRACTION = 0.96f
-private const val MAIN_EXPANDED_CONTACT_POLL_INTERVAL_MS = 20_000L
 private const val MAIN_ACTIVE_LOCATION_EVENT_INTERVAL_MS = 1_000L
 private const val MAIN_LOW_POWER_LOCATION_EVENT_INTERVAL_MS = 3 * 60_000L
 private const val MAIN_TOGGLE_DEBOUNCE_MS = 120L
@@ -326,8 +326,7 @@ fun MainViewScreen(
             UiPerfSection("Main Refresh Delays Card") {
                 MainRefreshDelaysCard(
                     sharingState = sharingState,
-                    locationState = locationState,
-                    contactsOpen = viewContactsDialogVisible
+                    locationState = locationState
                 )
             }
         }
@@ -725,8 +724,7 @@ private fun MainOverlayDialog(
 @Composable
 private fun MainRefreshDelaysCard(
     sharingState: com.example.blackbox.sharing.LocationSharingState,
-    locationState: MainViewLocationState,
-    contactsOpen: Boolean
+    locationState: MainViewLocationState
 ) {
     val scope = rememberCoroutineScope()
     var sendTapReleaseJob by remember { mutableStateOf<Job?>(null) }
@@ -736,18 +734,14 @@ private fun MainRefreshDelaysCard(
             LocationEngine.unregisterHighDemandConsumer(MAIN_SEND_TIMER_TAP_CONSUMER_ID)
         }
     }
-    val nowMs by produceState(initialValue = System.currentTimeMillis(), key1 = contactsOpen) {
+    val nowMs by produceState(initialValue = System.currentTimeMillis()) {
         while (true) {
             delay(1_000L)
             value = System.currentTimeMillis()
         }
     }
     val relayTotal = com.example.blackbox.sharing.RELAY_STATUS_INTERVAL_MS
-    val pollTotal = if (contactsOpen) {
-        MAIN_EXPANDED_CONTACT_POLL_INTERVAL_MS
-    } else {
-        com.example.blackbox.sharing.POLL_INTERVAL_MS
-    }
+    val pollTotal = com.example.blackbox.sharing.POLL_INTERVAL_MS
     val isFast =
         (locationState.bestMotionFix?.speedMetersPerSecond ?: -1f) >= sharingState.settings.fastSpeedThresholdMps
     val sendTotal = if (isFast) sharingState.settings.fastIntervalMs else sharingState.settings.normalIntervalMs
@@ -810,6 +804,7 @@ private fun MainRefreshDelaysCard(
                     lastSuccessAtMs = sharingState.sync.lastRelayStatusOkAtMs
                 ),
                 isActive = true,
+                isInProgress = sharingState.sync.relayStatusChecking,
                 onTapAction = { LocationSharingController.manualRelayStatusNow() }
             )
             MainDelayProgressRow(
@@ -822,6 +817,7 @@ private fun MainRefreshDelaysCard(
                     lastSuccessAtMs = sharingState.sync.lastPushSuccessAtMs
                 ),
                 isActive = sendWaiting,
+                isInProgress = sharingState.sync.pushRequestInFlight,
                 allowTimerDrivenVisualActive = false,
                 onTapAction = {
                     LocationEngine.registerHighDemandConsumer(MAIN_SEND_TIMER_TAP_CONSUMER_ID)
@@ -843,6 +839,7 @@ private fun MainRefreshDelaysCard(
                     lastSuccessAtMs = sharingState.sync.lastPollSuccessAtMs
                 ),
                 isActive = retrieveWaiting,
+                isInProgress = sharingState.sync.pollRequestInFlight,
                 allowTimerDrivenVisualActive = false,
                 onTapAction = { LocationSharingController.manualPollNow() }
             )
@@ -858,12 +855,14 @@ private fun MainDelayProgressRow(
     nowMs: Long,
     statusColor: Color,
     isActive: Boolean,
+    isInProgress: Boolean = false,
     allowTimerDrivenVisualActive: Boolean = true,
     onTapAction: () -> Unit
 ) {
     val visualActive = isActive || (
         allowTimerDrivenVisualActive && totalMs > 0L && remainingMs in 1L until totalMs
     )
+    val pulseActive = rememberTimerActivityPulseActive(isInProgress = isInProgress)
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -875,10 +874,15 @@ private fun MainDelayProgressRow(
         } else {
             muted
         }
-        val valueColor = if (visualActive) {
+        val baseValueColor = if (visualActive) {
             MaterialTheme.colorScheme.onSurfaceVariant
         } else {
             muted
+        }
+        val valueColor = if (pulseActive) {
+            baseValueColor.copy(alpha = baseValueColor.alpha * 0.55f)
+        } else {
+            baseValueColor
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -912,6 +916,7 @@ private fun MainDelayProgressRow(
             remainingMs = remainingMs,
             nowMs = nowMs,
             isActive = visualActive,
+            pulse = pulseActive,
             onTapAction = onTapAction
         )
     }
@@ -923,6 +928,7 @@ private fun MainDelayProgressBar(
     remainingMs: Long,
     nowMs: Long,
     isActive: Boolean,
+    pulse: Boolean,
     onTapAction: () -> Unit
 ) {
     CycleTimerProgressBar(
@@ -930,6 +936,7 @@ private fun MainDelayProgressBar(
         remainingMs = remainingMs,
         sampleNowMs = nowMs,
         isActive = isActive,
+        pulse = pulse,
         onTap = onTapAction
     )
 }
