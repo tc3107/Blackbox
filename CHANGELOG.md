@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## v1.1.2 - 2026-02-28
+- Fixed `Retrieve Locations` timer UI to stay at the full interval when retrieve is inactive, instead of counting down while muted.
+- Fixed `Sending Location` timer UI to reset to the full interval when sending is inactive, instead of remaining at `0s`.
+
 ## v1.1.1 - 2026-02-28
 - Renamed sharing backup actions from `Export/Import Identity` to `Export/Import Contacts`.
 - Updated sharing backup file naming to `blackbox-contacts-bundle.json`.
