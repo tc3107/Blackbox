@@ -1,6 +1,7 @@
 package com.example.blackbox.ui
 
 import com.example.blackbox.logging.AppLog as Log
+import androidx.activity.compose.BackHandler
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -53,6 +54,11 @@ import com.example.blackbox.ui.perf.uiPerfDraw
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+
+private const val DEBUG_TITLE_HOLD_DURATION_MS = 4_000L
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -129,6 +135,10 @@ fun BlackboxApp(
         }
     }
 
+    BackHandler(enabled = currentDestination == AppDestination.DATA_VALUES) {
+        currentRoute = AppDestination.MAIN_VIEW.route
+    }
+
     CompositionLocalProvider(LocalRippleConfiguration provides null) {
         ProvideUiPerformanceTracking(
             monitor = uiPerfMonitor,
@@ -169,8 +179,15 @@ fun BlackboxApp(
                                         modifier = Modifier
                                             .pointerInput(Unit) {
                                                 detectTapGestures(
-                                                    onLongPress = {
-                                                        currentRoute = AppDestination.DATA_VALUES.route
+                                                    onPress = {
+                                                        coroutineScope {
+                                                            val holdJob = launch {
+                                                                delay(DEBUG_TITLE_HOLD_DURATION_MS)
+                                                                currentRoute = AppDestination.DATA_VALUES.route
+                                                            }
+                                                            tryAwaitRelease()
+                                                            holdJob.cancel()
+                                                        }
                                                     }
                                                 )
                                             }
