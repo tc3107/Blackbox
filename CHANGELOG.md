@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## v1.2.3 - 2026-03-05
+- Reduced foreground-service notification churn by deduplicating unchanged content and throttling keepalive notification reposts.
+- Improved sharing ACL propagation: outbound authorization changes now sync ACL immediately, and contact removals trigger ACL sync to prevent stale relay permissions.
+- Hardened polling reliability by serializing poll execution and skipping near-duplicate interval polls to avoid overlapping pull/self-status requests.
+- Added richer pull outcome handling with explicit `unauthorized`/`no_data` interpretation and clearer poll status messaging.
+- Added unauthorized self-healing: pull responses with unauthorized senders now trigger a cooldown-limited forced ACL reassert.
+- Hardened ACL sync caching with mutex protection and periodic reassert windows instead of trusting digest cache indefinitely.
+- Reduced repeated sharing info/error log spam by deduplicating identical status/error emissions.
+
 ## v1.2.2 - 2026-02-28
 - Fixed QR scanner launch reliability by adding explicit camera permission preflight before opening scanner activity.
 - Added release-safe QR scanner launch error surfacing in sharing/main dialogs instead of silent no-op behavior.

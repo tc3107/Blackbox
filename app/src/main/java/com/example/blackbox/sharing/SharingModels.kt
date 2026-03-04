@@ -140,7 +140,8 @@ data class SharingSyncState(
     val pollingActive: Boolean = false,
     val nextSeq: Long = 1L,
     val lastAclSeq: Long = 0L,
-    val lastAclDigest: String? = null
+    val lastAclDigest: String? = null,
+    val lastAclSyncedAtMs: Long? = null
 )
 
 @Serializable

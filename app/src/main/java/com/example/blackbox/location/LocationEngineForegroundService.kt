@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.example.blackbox.MainActivity
@@ -21,6 +22,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
@@ -28,6 +30,10 @@ import kotlinx.coroutines.launch
 class LocationEngineForegroundService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var engineStateJob: Job? = null
+    private var pendingNotificationJob: Job? = null
+    private var pendingExpandedText: String? = null
+    private var lastNotifiedExpandedText: String? = null
+    private var lastNotifiedAtElapsedMs: Long = 0L
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -67,6 +73,9 @@ class LocationEngineForegroundService : Service() {
     override fun onDestroy() {
         engineStateJob?.cancel()
         engineStateJob = null
+        pendingNotificationJob?.cancel()
+        pendingNotificationJob = null
+        pendingExpandedText = null
         serviceScope.cancel()
         LocationEngineForegroundController.markStopped("Keepalive stopped.")
         super.onDestroy()
@@ -123,6 +132,8 @@ class LocationEngineForegroundService : Service() {
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
+        lastNotifiedExpandedText = expandedText
+        lastNotifiedAtElapsedMs = SystemClock.elapsedRealtime()
     }
 
     @SuppressLint("MissingPermission")
@@ -130,8 +141,36 @@ class LocationEngineForegroundService : Service() {
         if (!applicationContext.hasNotificationPermission()) {
             return
         }
+
+        if (expandedText == lastNotifiedExpandedText) {
+            return
+        }
+
+        val nowElapsedMs = SystemClock.elapsedRealtime()
+        val elapsedSinceLastNotifyMs = nowElapsedMs - lastNotifiedAtElapsedMs
+        if (lastNotifiedAtElapsedMs > 0L && elapsedSinceLastNotifyMs < MIN_NOTIFY_INTERVAL_MS) {
+            pendingExpandedText = expandedText
+            if (pendingNotificationJob?.isActive != true) {
+                val delayMs = MIN_NOTIFY_INTERVAL_MS - elapsedSinceLastNotifyMs
+                pendingNotificationJob = serviceScope.launch {
+                    delay(delayMs)
+                    val pending = pendingExpandedText ?: return@launch
+                    pendingExpandedText = null
+                    updateNotification(pending)
+                }
+            }
+            return
+        }
+
+        pendingNotificationJob?.cancel()
+        pendingNotificationJob = null
+        pendingExpandedText = null
+
         runCatching {
             NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification(expandedText))
+        }.onSuccess {
+            lastNotifiedExpandedText = expandedText
+            lastNotifiedAtElapsedMs = nowElapsedMs
         }
     }
 
@@ -214,5 +253,6 @@ class LocationEngineForegroundService : Service() {
         const val ACTION_STOP = "com.example.blackbox.locationengine.action.STOP"
         private const val NOTIFICATION_CHANNEL_ID = "location_keepalive_silent_v3"
         private const val NOTIFICATION_ID = 4301
+        private const val MIN_NOTIFY_INTERVAL_MS = 2_000L
     }
 }

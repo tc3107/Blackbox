@@ -32,6 +32,8 @@ import kotlinx.serialization.json.Json
 object LocationSharingController {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val stateMutex = Mutex()
+    private val pollMutex = Mutex()
+    private val aclSyncMutex = Mutex()
     private val json = Json { encodeDefaults = true; explicitNulls = true; ignoreUnknownKeys = true }
 
     private val _state = MutableStateFlow(LocationSharingState())
@@ -57,6 +59,9 @@ object LocationSharingController {
     private val relayStatusTimeoutRetryDelayMs = 1_500L
     private val relayStatusTimeoutUnreachableThreshold = 2
     private val maxAclUpsertAttempts = 4
+    private val pollMinGapMs = 3_000L
+    private val aclReassertIntervalMs = 15 * 60_000L
+    private val forcedAclResyncCooldownMs = 60_000L
 
     private var currentSettings: SharingSettings = SharingSettings()
     private var snapshot: SharingStateSnapshot = SharingStateSnapshot()
@@ -66,6 +71,15 @@ object LocationSharingController {
     private var lastInfo: String = "Sharing subsystem idle."
     private var lastEligibilityDebugReason: String? = null
     private var lastEligibilityDebugAtMs: Long = 0L
+    private var lastForcedAclResyncAtMs: Long = 0L
+
+    private data class PullProcessingSummary(
+        val okCount: Int = 0,
+        val unauthorizedCount: Int = 0,
+        val noDataCount: Int = 0,
+        val errorCount: Int = 0,
+        val unauthorizedSenderIds: Set<String> = emptySet()
+    )
 
     fun initialize(context: Context) {
         if (initialized) return
@@ -351,7 +365,24 @@ object LocationSharingController {
                     }
                 )
             }
-            setInfo("Authorization updated.")
+            val identity = snapshot.identity
+            if (identity == null) {
+                setInfo("Authorization updated.")
+                return@launch
+            }
+
+            val aclSync = ensureAclUpToDate(identity)
+            if (aclSync.isSuccess) {
+                setInfo("Authorization updated and synced.")
+            } else {
+                val reason = aclSync.exceptionOrNull()?.message ?: "unknown error"
+                Log.w(
+                    SHARING_DEBUG_TAG,
+                    "Authorization updated but ACL sync failed sender=${shortSharingId(identity.senderId)} error=$reason",
+                    aclSync.exceptionOrNull()
+                )
+                setInfo("Authorization updated. ACL will sync on next push.")
+            }
         }
     }
 
@@ -401,6 +432,16 @@ object LocationSharingController {
                     receivedLocations = current.receivedLocations.filterNot { it.senderId == senderId },
                     senderPollStatuses = current.senderPollStatuses.filterNot { it.senderId == senderId }
                 )
+            }
+            snapshot.identity?.let { identity ->
+                ensureAclUpToDate(identity)
+                    .onFailure { throwable ->
+                        Log.w(
+                            SHARING_DEBUG_TAG,
+                            "ACL sync after contact removal failed sender=${shortSharingId(identity.senderId)} error=${throwable.message}",
+                            throwable
+                        )
+                    }
             }
             setInfo("Contact removed.")
         }
@@ -824,152 +865,195 @@ object LocationSharingController {
     }
 
     private suspend fun pollNow(trigger: String) {
-        val localRelay = relayApi ?: return
-        val localCrypto = crypto ?: return
-        val localSnapshot = snapshot
-        val identity = localSnapshot.identity ?: return
-        val pollAttemptAt = System.currentTimeMillis()
-        mutateSyncOnly {
-            it.copy(
-                lastPollAttemptAtMs = pollAttemptAt,
-                pollRequestInFlight = true
-            )
-        }
-        try {
-        val networkError = networkPreflightError()
-        if (networkError != null) {
-            Log.w(
-                SHARING_DEBUG_TAG,
-                "Poll blocked trigger=$trigger sender=${shortSharingId(identity.senderId)} reason=$networkError"
-            )
-            mutateSnapshot {
-                it.copy(
-                    sync = it.sync.copy(
-                        lastPollError = networkError,
-                        lastPollErrorAtMs = System.currentTimeMillis(),
-                        pollFailureStreak = it.sync.pollFailureStreak + 1
+        pollMutex.withLock {
+            val localRelay = relayApi ?: return@withLock
+            val localCrypto = crypto ?: return@withLock
+            val localSnapshot = snapshot
+            val identity = localSnapshot.identity ?: return@withLock
+
+            if (trigger == "interval") {
+                val lastAttempt = localSnapshot.sync.lastPollAttemptAtMs
+                val nowMs = System.currentTimeMillis()
+                if (lastAttempt != null && nowMs - lastAttempt < pollMinGapMs) {
+                    Log.d(
+                        SHARING_DEBUG_TAG,
+                        "Poll skipped trigger=$trigger sender=${shortSharingId(identity.senderId)} reason=recent_poll"
                     )
+                    return@withLock
+                }
+            }
+
+            val pollAttemptAt = System.currentTimeMillis()
+            mutateSyncOnly {
+                it.copy(
+                    lastPollAttemptAtMs = pollAttemptAt,
+                    pollRequestInFlight = true
                 )
             }
-            setError(networkError)
-            return
-        }
-        Log.d(
-            SHARING_DEBUG_TAG,
-            "Poll start trigger=$trigger sender=${shortSharingId(identity.senderId)} following=${localSnapshot.contacts.count { it.iFollow }}"
-        )
-
-        val now = System.currentTimeMillis()
-        val selfNonce = randomNonceB64Url()
-        val selfPayload = canonicalSelfStatusMessage(identity.senderId, now, selfNonce)
-        val selfSignature = localCrypto.sign(identity, selfPayload).base64UrlEncode()
-        val selfRequest = SelfStatusRequest(
-            senderId = identity.senderId,
-            timestampMs = now,
-            nonceB64Url = selfNonce,
-            signatureB64Url = selfSignature,
-            senderSignPublicKeySpkiB64Url = identity.signPublicKeySpkiB64Url
-        )
-
-        val selfStatusResult = localRelay.selfStatus(selfRequest)
-        if (selfStatusResult.isFailure) {
-            val error = selfStatusResult.exceptionOrNull()?.message ?: "Self-status failed"
-            Log.e(
-                SHARING_DEBUG_TAG,
-                "Poll self-status failed trigger=$trigger sender=${shortSharingId(identity.senderId)} error=$error",
-                selfStatusResult.exceptionOrNull()
-            )
-            mutateSnapshot {
-                it.copy(
-                    sync = it.sync.copy(
-                        lastPollError = error,
-                        lastPollErrorAtMs = System.currentTimeMillis(),
-                        pollFailureStreak = it.sync.pollFailureStreak + 1
+            try {
+                val networkError = networkPreflightError()
+                if (networkError != null) {
+                    Log.w(
+                        SHARING_DEBUG_TAG,
+                        "Poll blocked trigger=$trigger sender=${shortSharingId(identity.senderId)} reason=$networkError"
                     )
-                )
-            }
-            setError(error)
-            return
-        }
-
-        val followingContacts = snapshot.contacts.filter { it.iFollow }
-        if (followingContacts.isEmpty()) {
-            Log.d(
-                SHARING_DEBUG_TAG,
-                "Poll completed trigger=$trigger sender=${shortSharingId(identity.senderId)} noFollowedSenders=true"
-            )
-            mutateSnapshot {
-                it.copy(
-                    sync = it.sync.copy(
-                        lastPollSuccessAtMs = System.currentTimeMillis(),
-                        lastPollError = null,
-                        lastPollErrorAtMs = null,
-                        pollFailureStreak = 0
-                    )
-                )
-            }
-            setInfo("Poll complete ($trigger): no followed senders.")
-            return
-        }
-
-        val pullNow = System.currentTimeMillis()
-        val pullNonce = randomNonceB64Url()
-        val senderIds = followingContacts.map { it.senderId }.sorted()
-        val pullPayload = canonicalPullMessage(
-            receiverId = identity.senderId,
-            senderIds = senderIds,
-            timestampMs = pullNow,
-            nonceB64Url = pullNonce
-        )
-        val pullSignature = localCrypto.sign(identity, pullPayload).base64UrlEncode()
-        val pullRequest = PullBatchRequest(
-            receiverId = identity.senderId,
-            senderIds = senderIds,
-            timestampMs = pullNow,
-            nonceB64Url = pullNonce,
-            signatureB64Url = pullSignature,
-            receiverSignPublicKeySpkiB64Url = identity.signPublicKeySpkiB64Url
-        )
-
-        localRelay.pullBatch(pullRequest)
-            .onSuccess { response ->
+                    mutateSnapshot {
+                        it.copy(
+                            sync = it.sync.copy(
+                                lastPollError = networkError,
+                                lastPollErrorAtMs = System.currentTimeMillis(),
+                                pollFailureStreak = it.sync.pollFailureStreak + 1
+                            )
+                        )
+                    }
+                    setError(networkError)
+                    return@withLock
+                }
                 Log.d(
                     SHARING_DEBUG_TAG,
-                    "Poll pull success trigger=$trigger sender=${shortSharingId(identity.senderId)} records=${response.records.size}"
+                    "Poll start trigger=$trigger sender=${shortSharingId(identity.senderId)} following=${localSnapshot.contacts.count { it.iFollow }}"
                 )
-                handlePullSuccess(response, identity)
-                setInfo("Poll complete ($trigger).")
-            }
-            .onFailure { throwable ->
-                val error = throwable.message ?: "Pull failed"
-                Log.e(
-                    SHARING_DEBUG_TAG,
-                    "Poll pull failed trigger=$trigger sender=${shortSharingId(identity.senderId)} error=$error",
-                    throwable
+
+                val now = System.currentTimeMillis()
+                val selfNonce = randomNonceB64Url()
+                val selfPayload = canonicalSelfStatusMessage(identity.senderId, now, selfNonce)
+                val selfSignature = localCrypto.sign(identity, selfPayload).base64UrlEncode()
+                val selfRequest = SelfStatusRequest(
+                    senderId = identity.senderId,
+                    timestampMs = now,
+                    nonceB64Url = selfNonce,
+                    signatureB64Url = selfSignature,
+                    senderSignPublicKeySpkiB64Url = identity.signPublicKeySpkiB64Url
                 )
-                mutateSnapshot {
-                    it.copy(
-                        sync = it.sync.copy(
-                            lastPollError = error,
-                            lastPollErrorAtMs = System.currentTimeMillis(),
-                            pollFailureStreak = it.sync.pollFailureStreak + 1
-                        )
+
+                val selfStatusResult = localRelay.selfStatus(selfRequest)
+                if (selfStatusResult.isFailure) {
+                    val error = selfStatusResult.exceptionOrNull()?.message ?: "Self-status failed"
+                    Log.e(
+                        SHARING_DEBUG_TAG,
+                        "Poll self-status failed trigger=$trigger sender=${shortSharingId(identity.senderId)} error=$error",
+                        selfStatusResult.exceptionOrNull()
                     )
+                    mutateSnapshot {
+                        it.copy(
+                            sync = it.sync.copy(
+                                lastPollError = error,
+                                lastPollErrorAtMs = System.currentTimeMillis(),
+                                pollFailureStreak = it.sync.pollFailureStreak + 1
+                            )
+                        )
+                    }
+                    setError(error)
+                    return@withLock
                 }
-                setError(error)
+
+                if (snapshot.contacts.any { it.canReceiveFromMe }) {
+                    val aclSync = ensureAclUpToDate(identity)
+                    if (aclSync.isFailure) {
+                        Log.w(
+                            SHARING_DEBUG_TAG,
+                            "Poll continuing without fresh ACL sender=${shortSharingId(identity.senderId)} error=${aclSync.exceptionOrNull()?.message}",
+                            aclSync.exceptionOrNull()
+                        )
+                    }
+                }
+
+                val followingContacts = snapshot.contacts.filter { it.iFollow }
+                if (followingContacts.isEmpty()) {
+                    Log.d(
+                        SHARING_DEBUG_TAG,
+                        "Poll completed trigger=$trigger sender=${shortSharingId(identity.senderId)} noFollowedSenders=true"
+                    )
+                    mutateSnapshot {
+                        it.copy(
+                            sync = it.sync.copy(
+                                lastPollSuccessAtMs = System.currentTimeMillis(),
+                                lastPollError = null,
+                                lastPollErrorAtMs = null,
+                                pollFailureStreak = 0
+                            )
+                        )
+                    }
+                    setInfo("Poll complete ($trigger): no followed senders.")
+                    return@withLock
+                }
+
+                val pullNow = System.currentTimeMillis()
+                val pullNonce = randomNonceB64Url()
+                val senderIds = followingContacts.map { it.senderId }.sorted()
+                val pullPayload = canonicalPullMessage(
+                    receiverId = identity.senderId,
+                    senderIds = senderIds,
+                    timestampMs = pullNow,
+                    nonceB64Url = pullNonce
+                )
+                val pullSignature = localCrypto.sign(identity, pullPayload).base64UrlEncode()
+                val pullRequest = PullBatchRequest(
+                    receiverId = identity.senderId,
+                    senderIds = senderIds,
+                    timestampMs = pullNow,
+                    nonceB64Url = pullNonce,
+                    signatureB64Url = pullSignature,
+                    receiverSignPublicKeySpkiB64Url = identity.signPublicKeySpkiB64Url
+                )
+
+                localRelay.pullBatch(pullRequest)
+                    .onSuccess { response ->
+                        Log.d(
+                            SHARING_DEBUG_TAG,
+                            "Poll pull success trigger=$trigger sender=${shortSharingId(identity.senderId)} records=${response.records.size}"
+                        )
+                        val summary = handlePullSuccess(response, identity)
+                        if (summary.unauthorizedCount > 0) {
+                            maybeForceAclResyncAfterUnauthorized(identity, summary.unauthorizedSenderIds)
+                            setError(buildUnauthorizedPollMessage(trigger, summary))
+                        } else if (summary.okCount > 0) {
+                            setInfo("Poll complete ($trigger): received ${summary.okCount} update(s).")
+                        } else if (summary.noDataCount > 0 && summary.errorCount == 0) {
+                            setInfo("Poll complete ($trigger): no location updates yet.")
+                        } else {
+                            setInfo("Poll complete ($trigger).")
+                        }
+                    }
+                    .onFailure { throwable ->
+                        val error = throwable.message ?: "Pull failed"
+                        Log.e(
+                            SHARING_DEBUG_TAG,
+                            "Poll pull failed trigger=$trigger sender=${shortSharingId(identity.senderId)} error=$error",
+                            throwable
+                        )
+                        mutateSnapshot {
+                            it.copy(
+                                sync = it.sync.copy(
+                                    lastPollError = error,
+                                    lastPollErrorAtMs = System.currentTimeMillis(),
+                                    pollFailureStreak = it.sync.pollFailureStreak + 1
+                                )
+                            )
+                        }
+                        setError(error)
+                    }
+            } finally {
+                mutateSyncOnly { it.copy(pollRequestInFlight = false) }
             }
-        } finally {
-            mutateSyncOnly { it.copy(pollRequestInFlight = false) }
         }
     }
 
-    private suspend fun handlePullSuccess(response: PullBatchResponse, identity: SharingIdentityState) {
-        val localCrypto = crypto ?: return
+    private suspend fun handlePullSuccess(
+        response: PullBatchResponse,
+        identity: SharingIdentityState
+    ): PullProcessingSummary {
+        val localCrypto = crypto ?: return PullProcessingSummary(errorCount = response.records.size)
         val responseStatusSummary = response.records.groupingBy { it.status }.eachCount()
         Log.d(
             SHARING_DEBUG_TAG,
             "Handling pull payload sender=${shortSharingId(identity.senderId)} statusSummary=$responseStatusSummary"
         )
+        var okCount = 0
+        var unauthorizedCount = 0
+        var noDataCount = 0
+        var errorCount = 0
+        val unauthorizedSenderIds = linkedSetOf<String>()
         mutateSnapshot { current ->
             val contactById = current.contacts.associateBy { it.senderId }
             val receivedBySender = current.receivedLocations.associateBy { it.senderId }.toMutableMap()
@@ -980,6 +1064,7 @@ object LocationSharingController {
             response.records.forEach { record ->
                 val contact = contactById[record.senderId]
                 if (contact == null || !contact.iFollow) {
+                    errorCount += 1
                     pollStatusBySender[record.senderId] = SenderPollStatus(
                         senderId = record.senderId,
                         lastErrorAtMs = now,
@@ -990,10 +1075,25 @@ object LocationSharingController {
 
                 val envelope = record.envelope
                 if (record.status != "ok" || envelope == null) {
+                    val pollError = when (record.status) {
+                        "unauthorized" -> {
+                            unauthorizedCount += 1
+                            unauthorizedSenderIds += record.senderId
+                            "Not authorized by sender. Ask them to enable Sharing for your contact and sync ACL."
+                        }
+                        "no_data" -> {
+                            noDataCount += 1
+                            record.message ?: "No location published yet."
+                        }
+                        else -> {
+                            errorCount += 1
+                            record.message ?: "No data available"
+                        }
+                    }
                     pollStatusBySender[record.senderId] = SenderPollStatus(
                         senderId = record.senderId,
                         lastErrorAtMs = now,
-                        lastError = record.message ?: "No data available"
+                        lastError = pollError
                     )
                     return@forEach
                 }
@@ -1006,6 +1106,7 @@ object LocationSharingController {
                     localCrypto = localCrypto
                 )
                 if (validatedClaim.isFailure) {
+                    errorCount += 1
                     pollStatusBySender[record.senderId] = SenderPollStatus(
                         senderId = record.senderId,
                         lastErrorAtMs = now,
@@ -1017,6 +1118,7 @@ object LocationSharingController {
 
                 val previousSeq = contact.lastSeenSeq ?: -1L
                 if (claim.seq <= previousSeq) {
+                    errorCount += 1
                     pollStatusBySender[record.senderId] = SenderPollStatus(
                         senderId = record.senderId,
                         lastErrorAtMs = now,
@@ -1039,6 +1141,7 @@ object LocationSharingController {
                     lastErrorAtMs = null,
                     lastError = null
                 )
+                okCount += 1
 
                 contactUpdates[record.senderId] = contact.copy(lastSeenSeq = claim.seq, updatedAtMs = now)
             }
@@ -1055,6 +1158,51 @@ object LocationSharingController {
                 )
             )
         }
+        return PullProcessingSummary(
+            okCount = okCount,
+            unauthorizedCount = unauthorizedCount,
+            noDataCount = noDataCount,
+            errorCount = errorCount,
+            unauthorizedSenderIds = unauthorizedSenderIds
+        )
+    }
+
+    private fun buildUnauthorizedPollMessage(
+        trigger: String,
+        summary: PullProcessingSummary
+    ): String {
+        val sampleIds = summary.unauthorizedSenderIds
+            .take(3)
+            .joinToString(", ") { shortSharingId(it) }
+        val suffix = if (summary.unauthorizedSenderIds.size > 3) ", ..." else ""
+        return "Poll complete ($trigger): ${summary.unauthorizedCount} sender(s) unauthorized ($sampleIds$suffix)."
+    }
+
+    private suspend fun maybeForceAclResyncAfterUnauthorized(
+        identity: SharingIdentityState,
+        unauthorizedSenderIds: Set<String>
+    ) {
+        if (unauthorizedSenderIds.isEmpty()) return
+        if (snapshot.contacts.none { it.canReceiveFromMe }) return
+
+        val now = System.currentTimeMillis()
+        if (now - lastForcedAclResyncAtMs < forcedAclResyncCooldownMs) {
+            return
+        }
+        lastForcedAclResyncAtMs = now
+
+        Log.w(
+            SHARING_DEBUG_TAG,
+            "Unauthorized pull result detected sender=${shortSharingId(identity.senderId)} unauthorizedSenders=${unauthorizedSenderIds.joinToString(",") { shortSharingId(it) }} forcingAclResync=true"
+        )
+        ensureAclUpToDate(identity, forceRefresh = true)
+            .onFailure { throwable ->
+                Log.w(
+                    SHARING_DEBUG_TAG,
+                    "Forced ACL resync after unauthorized pull failed sender=${shortSharingId(identity.senderId)} error=${throwable.message}",
+                    throwable
+                )
+            }
     }
 
     private fun decodeAndValidatePulledClaim(
@@ -1386,47 +1534,69 @@ object LocationSharingController {
         }
     }
 
-    private suspend fun ensureAclUpToDate(identity: SharingIdentityState): Result<Unit> {
-        val localRelay = relayApi ?: return Result.failure(IllegalStateException("Relay unavailable."))
-        val localCrypto = crypto ?: return Result.failure(IllegalStateException("Crypto unavailable."))
+    private suspend fun ensureAclUpToDate(
+        identity: SharingIdentityState,
+        forceRefresh: Boolean = false
+    ): Result<Unit> {
+        return aclSyncMutex.withLock {
+            val localRelay = relayApi ?: return@withLock Result.failure(IllegalStateException("Relay unavailable."))
+            val localCrypto = crypto ?: return@withLock Result.failure(IllegalStateException("Crypto unavailable."))
 
-        val receiverIds = snapshot.contacts.filter { it.canReceiveFromMe }.map { it.senderId }.sorted()
-        val digest = digestReceivers(receiverIds)
-        if (snapshot.sync.lastAclDigest == digest && snapshot.sync.lastAclSeq > 0L) {
-            Log.d(
-                SHARING_DEBUG_TAG,
-                "ACL up to date sender=${shortSharingId(identity.senderId)} aclSeq=${snapshot.sync.lastAclSeq} receivers=${receiverIds.size}"
-            )
-            return Result.success(Unit)
-        }
+            val receiverIds = snapshot.contacts.filter { it.canReceiveFromMe }.map { it.senderId }.sorted()
+            val digest = digestReceivers(receiverIds)
+            val now = System.currentTimeMillis()
+            val lastSyncedAtMs = snapshot.sync.lastAclSyncedAtMs
+            val withinRefreshWindow = lastSyncedAtMs != null && now - lastSyncedAtMs < aclReassertIntervalMs
+            if (!forceRefresh &&
+                snapshot.sync.lastAclDigest == digest &&
+                snapshot.sync.lastAclSeq > 0L &&
+                withinRefreshWindow
+            ) {
+                Log.d(
+                    SHARING_DEBUG_TAG,
+                    "ACL up to date sender=${shortSharingId(identity.senderId)} aclSeq=${snapshot.sync.lastAclSeq} receivers=${receiverIds.size}"
+                )
+                return@withLock Result.success(Unit)
+            }
+            if (!forceRefresh &&
+                snapshot.sync.lastAclDigest == digest &&
+                snapshot.sync.lastAclSeq > 0L &&
+                !withinRefreshWindow
+            ) {
+                Log.d(
+                    SHARING_DEBUG_TAG,
+                    "ACL refresh window elapsed sender=${shortSharingId(identity.senderId)} lastSyncedAtMs=$lastSyncedAtMs receivers=${receiverIds.size}"
+                )
+            }
 
-        var aclSeq = initialAclSeqCandidate()
-        var lastFailure: Throwable? = null
-        repeat(maxAclUpsertAttempts) { attemptIndex ->
-            val attempt = attemptAclUpsert(
-                identity = identity,
-                receiverIds = receiverIds,
-                digest = digest,
-                aclSeq = aclSeq,
-                localRelay = localRelay,
-                localCrypto = localCrypto
-            )
-            if (attempt.isSuccess) {
-                return Result.success(Unit)
+            var aclSeq = initialAclSeqCandidate()
+            var lastFailure: Throwable? = null
+            repeat(maxAclUpsertAttempts) { attemptIndex ->
+                val attempt = attemptAclUpsert(
+                    identity = identity,
+                    receiverIds = receiverIds,
+                    digest = digest,
+                    aclSeq = aclSeq,
+                    localRelay = localRelay,
+                    localCrypto = localCrypto
+                )
+                if (attempt.isSuccess) {
+                    return@withLock Result.success(Unit)
+                }
+                val failure = attempt.exceptionOrNull()
+                lastFailure = failure
+                if (!isAclSeqConflictError(failure)) {
+                    return@withLock Result.failure(failure ?: IllegalStateException("ACL upsert failed"))
+                }
+                val nextAclSeq = nextAclSeqAfterConflict(aclSeq)
+                Log.w(
+                    SHARING_DEBUG_TAG,
+                    "ACL seq conflict sender=${shortSharingId(identity.senderId)} attemptedAclSeq=$aclSeq retry=${attemptIndex + 1}/$maxAclUpsertAttempts nextAclSeq=$nextAclSeq"
+                )
+                aclSeq = nextAclSeq
             }
-            val failure = attempt.exceptionOrNull()
-            lastFailure = failure
-            if (!isAclSeqConflictError(failure)) {
-                return Result.failure(failure ?: IllegalStateException("ACL upsert failed"))
-            }
-            val nextAclSeq = nextAclSeqAfterConflict(aclSeq)
-            Log.w(
-                SHARING_DEBUG_TAG,
-                "ACL seq conflict sender=${shortSharingId(identity.senderId)} attemptedAclSeq=$aclSeq retry=${attemptIndex + 1}/$maxAclUpsertAttempts nextAclSeq=$nextAclSeq"
-            )
-            aclSeq = nextAclSeq
+            Result.failure(lastFailure ?: IllegalStateException("ACL upsert failed after retries"))
         }
-        return Result.failure(lastFailure ?: IllegalStateException("ACL upsert failed after retries"))
     }
 
     private suspend fun attemptAclUpsert(
@@ -1463,7 +1633,13 @@ object LocationSharingController {
                 )
                 runCatching {
                     mutateSnapshot { current ->
-                        current.copy(sync = current.sync.copy(lastAclSeq = aclSeq, lastAclDigest = digest))
+                        current.copy(
+                            sync = current.sync.copy(
+                                lastAclSeq = aclSeq,
+                                lastAclDigest = digest,
+                                lastAclSyncedAtMs = System.currentTimeMillis()
+                            )
+                        )
                     }
                 }
                 Unit
@@ -1813,6 +1989,10 @@ object LocationSharingController {
     }
 
     private fun setInfo(message: String) {
+        if (message.isBlank()) return
+        if (lastInfo == message && lastError == null) {
+            return
+        }
         Log.d(SHARING_DEBUG_TAG, "INFO $message")
         lastInfo = message
         if (lastError != null) {
@@ -1822,6 +2002,10 @@ object LocationSharingController {
     }
 
     private fun setError(message: String) {
+        if (message.isBlank()) return
+        if (lastError == message) {
+            return
+        }
         Log.w(SHARING_DEBUG_TAG, "ERROR $message")
         lastError = message
         publishState()
