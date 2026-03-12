@@ -5,6 +5,7 @@ import android.content.ContentValues
 import android.database.sqlite.SQLiteDatabase
 import android.net.Uri
 import com.example.blackbox.logging.AppLog as Log
+import androidx.core.content.edit
 import androidx.core.database.sqlite.transaction
 import com.example.blackbox.location.LocationEngine
 import com.example.blackbox.location.LocationSampleEvent
@@ -32,6 +33,8 @@ private const val ARCHIVE_RETRY_INTERVAL_MS = 60_000L
 private const val STARTUP_ARCHIVE_DELAY_MS = 45_000L
 private const val PERSIST_DEBUG_TAG = "BlackboxPersistDebug"
 private const val ENABLE_VERBOSE_PERSIST_LOGS = false
+private const val LOGGING_PREFS_NAME = "location_logging_preferences"
+private const val KEY_LOGGING_ENABLED = "logging_enabled"
 
 data class LocationPersistenceState(
     val initialized: Boolean = false,
@@ -113,13 +116,24 @@ object LocationPersistenceController {
                 keyManager = localKeyManager,
                 archiveRepository = localArchiveRepository
             )
+            val requestedLoggingEnabled = loggingEnabled || readLoggingEnabledPreference(appContext)
+            val archiveTreeUri = localArchiveRepository.getArchiveTreeUri()
+            loggingEnabled = requestedLoggingEnabled && archiveTreeUri != null
+            if (requestedLoggingEnabled && archiveTreeUri == null) {
+                writeLoggingEnabledPreference(appContext, false)
+            }
 
             _state.value = _state.value.copy(
                 initialized = true,
                 loggingEnabled = loggingEnabled,
-                archiveRootUri = localArchiveRepository.getArchiveTreeUri(),
+                archiveRootUri = archiveTreeUri,
                 pendingArchiveCount = localArchiveRepository.pendingArchiveCount(),
-                lastArchiveMessage = "Persistence initialized."
+                lastArchiveMessage = when {
+                    loggingEnabled -> "Persistence initialized. Location logging restored."
+                    requestedLoggingEnabled && archiveTreeUri == null ->
+                        "Archive folder missing. Location logging disabled."
+                    else -> "Persistence initialized."
+                }
             )
 
             startEventCollector()
@@ -137,6 +151,7 @@ object LocationPersistenceController {
     fun setLoggingEnabled(enabled: Boolean) {
         if (enabled && _state.value.archiveRootUri == null) {
             loggingEnabled = false
+            appContext?.let { writeLoggingEnabledPreference(it, false) }
             _state.update {
                 it.copy(
                     loggingEnabled = false,
@@ -146,6 +161,7 @@ object LocationPersistenceController {
             return
         }
         loggingEnabled = enabled
+        appContext?.let { writeLoggingEnabledPreference(it, enabled) }
         _state.update {
             it.copy(
                 loggingEnabled = enabled,
@@ -172,6 +188,7 @@ object LocationPersistenceController {
         repository.setArchiveTreeUri(uri)
         if (uri == null) {
             loggingEnabled = false
+            appContext?.let { writeLoggingEnabledPreference(it, false) }
         }
         _state.update {
             it.copy(
@@ -678,5 +695,16 @@ object LocationPersistenceController {
     private inline fun debugPersistLog(message: () -> String) {
         if (!ENABLE_VERBOSE_PERSIST_LOGS) return
         Log.d(PERSIST_DEBUG_TAG, message())
+    }
+
+    private fun writeLoggingEnabledPreference(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(LOGGING_PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putBoolean(KEY_LOGGING_ENABLED, enabled)
+        }
+    }
+
+    private fun readLoggingEnabledPreference(context: Context): Boolean {
+        return context.getSharedPreferences(LOGGING_PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_LOGGING_ENABLED, false)
     }
 }

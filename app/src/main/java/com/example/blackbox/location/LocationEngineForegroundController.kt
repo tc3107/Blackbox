@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.content.edit
 import androidx.core.content.ContextCompat
+import com.example.blackbox.logging.AppLog as Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,6 +20,7 @@ data class LocationEngineForegroundState(
 object LocationEngineForegroundController {
     private const val PREFS_NAME = "location_engine_keepalive"
     private const val KEY_ENABLED = "enabled"
+    private const val KEEPALIVE_DEBUG_TAG = "BlackboxKeepalive"
 
     @Volatile
     private var initialized = false
@@ -49,6 +51,42 @@ object LocationEngineForegroundController {
 
     fun start(context: Context) {
         start(context = context, persistPreference = true)
+    }
+
+    fun restoreAfterBoot(context: Context) {
+        val appContext = context.applicationContext
+        if (!readEnabledPreference(appContext)) {
+            Log.d(KEEPALIVE_DEBUG_TAG, "Boot restore skipped: keepalive preference disabled.")
+            updateState(
+                isEnabled = false,
+                isRunning = false,
+                statusMessage = "Keepalive is off."
+            )
+            return
+        }
+        if (!appContext.hasAnyLocationPermission()) {
+            Log.w(KEEPALIVE_DEBUG_TAG, "Boot restore skipped: location permission missing.")
+            updateState(
+                isEnabled = true,
+                isRunning = false,
+                statusMessage = "Keepalive restore skipped: location permission missing."
+            )
+            return
+        }
+        if (!appContext.hasBackgroundLocationPermission()) {
+            Log.w(
+                KEEPALIVE_DEBUG_TAG,
+                "Boot restore skipped: background location permission missing."
+            )
+            updateState(
+                isEnabled = true,
+                isRunning = false,
+                statusMessage = "Keepalive restore skipped: background location permission missing."
+            )
+            return
+        }
+        Log.i(KEEPALIVE_DEBUG_TAG, "Boot restore starting keepalive service.")
+        start(context = appContext, persistPreference = false)
     }
 
     private fun start(
