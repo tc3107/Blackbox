@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## v1.2.4 - 2026-03-12
+- Restored keepalive startup after device boot so background sharing/logging can resume without manually reopening the app.
+- Persisted location logging enablement across cold starts and reboot recovery instead of dropping the toggle back to off.
+- Added safer boot-restore handling when required location/background-location permissions are missing.
+
 ## v1.2.3 - 2026-03-05
 - Reduced foreground-service notification churn by deduplicating unchanged content and throttling keepalive notification reposts.
 - Improved sharing ACL propagation: outbound authorization changes now sync ACL immediately, and contact removals trigger ACL sync to prevent stale relay permissions.
